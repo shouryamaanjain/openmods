@@ -1,0 +1,771 @@
+#!/usr/bin/env bun
+// open-mods: install source-level mods into open-source agent harnesses.
+//
+// A mod is an ordered series of git patches against a pinned upstream commit.
+// Installing one clones the harness, checks out that commit, applies the
+// patches, builds, and links the resulting binary under ~/.open-mods/bin.
+// The stock install of the harness is never touched.
+
+import { $ } from "bun"
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs"
+import { homedir, tmpdir } from "node:os"
+import path from "node:path"
+
+type Harness = {
+  id: string
+  name: string
+  repo: string
+  binary: string
+  requirements?: { command: string; hint: string }[]
+  install: string
+  build: string
+  artifact: string
+  releaseTagPattern?: string
+}
+
+type Mod = {
+  name: string
+  harness: string
+  version: string
+  description: string
+  author?: { name?: string; github?: string; url?: string }
+  license: string
+  tags?: string[]
+  upstream: { ref: string; commit: string }
+  patches: string[]
+  conflicts?: string[]
+  dir: string
+  // "registry": published in the registry. "local": unpublished, from
+  // ~/.open-mods/local/<harness>/<mod>, where authors keep mods they are
+  // still working on or do not want to publish.
+  source: "registry" | "local"
+}
+
+// mods: every installed mod, in apply order. off: the subset built out for now.
+type State = Record<string, { ref: string; commit: string; mods: string[]; off: string[]; artifact: string; enabled: boolean }>
+
+const HOME = process.env.OPEN_MODS_HOME ?? path.join(homedir(), ".open-mods")
+const DEFAULT_REGISTRY = "https://github.com/shouryamaanjain/open-mods"
+const GIT_IDENTITY = {
+  GIT_AUTHOR_NAME: "open-mods",
+  GIT_AUTHOR_EMAIL: "open-mods@localhost",
+  GIT_COMMITTER_NAME: "open-mods",
+  GIT_COMMITTER_EMAIL: "open-mods@localhost",
+}
+
+const args = process.argv.slice(2)
+const flags = new Map<string, string | true>()
+const positional: string[] = []
+for (let i = 0; i < args.length; i++) {
+  const a = args[i]!
+  if (a.startsWith("--")) {
+    const [k, v] = a.slice(2).split("=", 2)
+    if (v !== undefined) flags.set(k!, v)
+    else if (args[i + 1] && !args[i + 1]!.startsWith("--")) flags.set(k!, args[++i]!)
+    else flags.set(k!, true)
+  } else positional.push(a)
+}
+const flag = (k: string) => {
+  const v = flags.get(k)
+  return typeof v === "string" ? v : undefined
+}
+const has = (k: string) => flags.has(k)
+
+const log = (msg: string) => {
+  if (!has("json")) console.log(msg)
+}
+const fail = (msg: string): never => {
+  console.error(`error: ${msg}`)
+  process.exit(1)
+}
+
+// ---------------------------------------------------------------- registry
+
+function registryDir(): string {
+  const explicit = flag("registry") ?? process.env.OPEN_MODS_REGISTRY
+  if (explicit && existsSync(path.join(explicit, "mods"))) return path.resolve(explicit)
+  const local = path.resolve(import.meta.dir, "..", "..")
+  if (existsSync(path.join(local, "mods")) && existsSync(path.join(local, "harnesses"))) return local
+  return path.join(HOME, "registry")
+}
+
+async function ensureRegistry(): Promise<string> {
+  const dir = registryDir()
+  if (existsSync(path.join(dir, "mods"))) return dir
+  const url = flag("registry") ?? process.env.OPEN_MODS_REGISTRY ?? DEFAULT_REGISTRY
+  log(`Fetching registry ${url}`)
+  mkdirSync(path.dirname(dir), { recursive: true })
+  await $`git clone --depth 1 ${url} ${dir}`.quiet()
+  return dir
+}
+
+async function refreshRegistry(): Promise<string> {
+  const dir = await ensureRegistry()
+  if (dir === path.join(HOME, "registry")) {
+    log("Updating registry")
+    await $`git -C ${dir} pull --ff-only`.quiet()
+  }
+  return dir
+}
+
+function loadHarness(reg: string, id: string): Harness {
+  const file = path.join(reg, "harnesses", `${id}.json`)
+  if (!existsSync(file)) fail(`unknown harness "${id}" (no ${file})`)
+  return JSON.parse(readFileSync(file, "utf8"))
+}
+
+const LOCAL = path.join(HOME, "local")
+
+function loadMod(dir: string, source: Mod["source"] = dir.startsWith(LOCAL) ? "local" : "registry"): Mod {
+  const file = path.join(dir, "mod.json")
+  if (!existsSync(file)) fail(`${dir} has no mod.json`)
+  const mod = JSON.parse(readFileSync(file, "utf8"))
+  return { ...mod, dir, source }
+}
+
+function modsUnder(root: string, source: Mod["source"], harness?: string): Mod[] {
+  if (!existsSync(root)) return []
+  return readdirSync(root, { withFileTypes: true })
+    .filter((d) => d.isDirectory() && (!harness || d.name === harness))
+    .flatMap((h) =>
+      readdirSync(path.join(root, h.name), { withFileTypes: true })
+        .filter((d) => d.isDirectory() && existsSync(path.join(root, h.name, d.name, "mod.json")))
+        .map((d) => loadMod(path.join(root, h.name, d.name), source)),
+    )
+}
+
+// Registry mods first, then local ones; a local mod with the same name as a
+// registry mod shadows it, so an author can test a change before publishing.
+function listMods(reg: string, harness?: string): Mod[] {
+  const local = modsUnder(LOCAL, "local", harness)
+  const published = modsUnder(path.join(reg, "mods"), "registry", harness).filter(
+    (m) => !local.some((l) => l.harness === m.harness && l.name === m.name),
+  )
+  return [...published, ...local]
+}
+
+function resolveMod(reg: string, spec: string): Mod {
+  const [harness, name] = spec.includes("/") ? spec.split("/", 2) : [undefined, spec]
+  const found = listMods(reg, harness).filter((m) => m.name === name)
+  if (found.length === 0) fail(`no mod "${spec}" in registry ${reg}`)
+  if (found.length > 1) fail(`"${spec}" is ambiguous; use ${found.map((m) => `${m.harness}/${m.name}`).join(" or ")}`)
+  return found[0]!
+}
+
+function touchedFiles(mod: Mod): string[] {
+  const files = new Set<string>()
+  for (const p of mod.patches) {
+    const text = readFileSync(path.join(mod.dir, p), "utf8")
+    for (const m of text.matchAll(/^diff --git a\/(.+?) b\//gm)) files.add(m[1]!)
+  }
+  return [...files].sort()
+}
+
+// ------------------------------------------------------------------- state
+
+const statePath = path.join(HOME, "state.json")
+const loadState = (): State => {
+  if (!existsSync(statePath)) return {}
+  const raw = JSON.parse(readFileSync(statePath, "utf8")) as Record<string, Partial<State[string]>>
+  // Older state files lack artifact/enabled; derive them so nothing crashes.
+  return Object.fromEntries(
+    Object.entries(raw).map(([id, e]) => [
+      id,
+      {
+        ref: e.ref ?? "",
+        commit: e.commit ?? "",
+        mods: e.mods ?? [],
+        off: e.off ?? [],
+        artifact: e.artifact ?? "",
+        enabled: e.enabled ?? existsSync(path.join(HOME, "bin", id)),
+      },
+    ]),
+  )
+}
+const saveState = (s: State) => {
+  mkdirSync(HOME, { recursive: true })
+  writeFileSync(statePath, JSON.stringify(s, null, 2) + "\n")
+}
+
+// ------------------------------------------------------------------- build
+
+function artifactPath(h: Harness, root: string) {
+  return path.join(root, h.artifact.replaceAll("{os}", process.platform).replaceAll("{arch}", process.arch))
+}
+
+async function checkRequirements(h: Harness) {
+  for (const r of h.requirements ?? []) {
+    if (r.command === "bun") continue // provisioned per release by ensureToolchain
+    if (!Bun.which(r.command)) fail(`${h.name} needs "${r.command}". ${r.hint}`)
+  }
+}
+
+async function ensureCheckout(h: Harness, root: string, commit: string, ref: string) {
+  if (!existsSync(path.join(root, ".git"))) {
+    log(`Cloning ${h.repo} (blobless, this is a one-time cost)`)
+    mkdirSync(path.dirname(root), { recursive: true })
+    await $`git clone --filter=blob:none --no-checkout --no-tags ${h.repo} ${root}`
+  }
+  const have = await $`git -C ${root} cat-file -t ${commit}`.nothrow().quiet()
+  if (have.exitCode !== 0) {
+    log(`Fetching ${ref}`)
+    await $`git -C ${root} fetch --no-tags origin tag ${ref}`.quiet()
+  }
+  await $`git -C ${root} am --abort`.nothrow().quiet()
+  await $`git -C ${root} checkout -q --force --detach ${commit}`
+}
+
+async function applyMods(root: string, mods: Mod[]) {
+  for (const mod of mods) {
+    log(`Applying ${mod.harness}/${mod.name}@${mod.version} (${mod.patches.length} patch${mod.patches.length === 1 ? "" : "es"})`)
+    const files = mod.patches.map((p) => path.join(mod.dir, p))
+    const r = await $`git -C ${root} am -3 --quiet ${files}`.env({ ...process.env, ...GIT_IDENTITY }).nothrow()
+    if (r.exitCode !== 0) {
+      await $`git -C ${root} am --abort`.nothrow().quiet()
+      fail(`${mod.harness}/${mod.name} does not apply cleanly at ${mod.upstream.ref}. It probably conflicts with a mod applied before it.`)
+    }
+  }
+}
+
+// Harness install/build commands run with these set, so a build can stamp
+// itself: OPEN_MODS_HARNESS=opencode OPEN_MODS_REF=v1.18.31
+// OPEN_MODS_VERSION=1.18.31 OPEN_MODS_MODS=vim-keys+quiet-startup
+let buildEnv: Record<string, string> = {}
+
+async function shell(cmd: string, cwd: string) {
+  const proc = Bun.spawn(["sh", "-c", cmd], { cwd, stdio: ["inherit", "inherit", "inherit"], env: { ...process.env, ...buildEnv } })
+  const code = await proc.exited
+  if (code !== 0) fail(`command failed (${code}): ${cmd}`)
+}
+
+// A harness release pins its toolchain (package.json "packageManager":
+// "bun@1.3.14"). Building with a different version can produce a binary that
+// is subtly broken (Bun 1.4.2 miscompiles OpenCode 1.18.31, for one), so the
+// exact pinned version is installed under ~/.open-mods/toolchains and put
+// first on PATH for the build. Nothing global changes.
+async function ensureToolchain(root: string): Promise<string | null> {
+  const pkg = path.join(root, "package.json")
+  if (!existsSync(pkg)) return null
+  const pm = JSON.parse(readFileSync(pkg, "utf8")).packageManager as string | undefined
+  const m = pm?.match(/^bun@(\d+\.\d+\.\d+)/)
+  if (!m) return null
+  const want = m[1]!
+  const have = Bun.which("bun") ? (await $`bun --version`.nothrow().text()).trim() : ""
+  if (have === want) return null
+  const dir = path.join(HOME, "toolchains", `bun-${want}`)
+  const bin = path.join(dir, "bin")
+  if (!existsSync(path.join(bin, "bun"))) {
+    if (process.platform === "win32") fail(`this release needs bun ${want} (you have ${have || "none"}); install it from https://bun.sh`)
+    log(`This release builds with bun ${want} (you have ${have || "none"}); installing it under ${pretty(dir)}`)
+    mkdirSync(dir, { recursive: true })
+    const r = await $`curl -fsSL https://bun.sh/install | BUN_INSTALL=${dir} bash -s ${"bun-v" + want}`.nothrow().quiet()
+    if (r.exitCode !== 0 || !existsSync(path.join(bin, "bun"))) fail(`could not install bun ${want}: ${r.stderr.toString().trim().split("\n").at(-1)}`)
+  }
+  return bin
+}
+
+async function build(h: Harness, root: string) {
+  const toolchain = await ensureToolchain(root)
+  if (toolchain) buildEnv = { ...buildEnv, PATH: `${toolchain}${path.delimiter}${process.env.PATH ?? ""}` }
+  log(`Installing dependencies: ${h.install}`)
+  await shell(h.install, root)
+  log(`Building: ${h.build}`)
+  await shell(h.build, root)
+  const artifact = artifactPath(h, root)
+  if (!existsSync(artifact)) fail(`build finished but ${artifact} does not exist`)
+  return artifact
+}
+
+// ------------------------------------------------------------- switching
+//
+// ~/.open-mods/bin sits first on PATH. A modded build is "on" when its
+// symlink is in that folder and "off" when it is not; either way the stock
+// binary the harness installed is untouched and takes over when we step aside.
+
+const BIN = path.join(HOME, "bin")
+const pretty = (p: string) => p.replace(homedir(), "~")
+
+function switchOn(h: Harness, artifact: string) {
+  mkdirSync(BIN, { recursive: true })
+  const target = path.join(BIN, h.binary)
+  if (existsSync(target)) unlinkSync(target)
+  symlinkSync(artifact, target)
+  return target
+}
+
+function switchOff(h: Harness) {
+  const target = path.join(BIN, h.binary)
+  if (existsSync(target)) unlinkSync(target)
+}
+
+function stockBinary(h: Harness): string | null {
+  const dirs = (process.env.PATH ?? "").split(path.delimiter).filter((d) => d && path.resolve(d) !== BIN)
+  for (const d of dirs) {
+    const candidate = path.join(d, h.binary)
+    if (existsSync(candidate)) return candidate
+  }
+  return null
+}
+
+async function versionOf(bin: string | null) {
+  if (!bin) return null
+  const out = await $`${bin} --version`.nothrow().quiet()
+  return out.exitCode === 0 ? out.stdout.toString().trim().split("\n")[0] ?? null : null
+}
+
+const pathHasBin = () => (process.env.PATH ?? "").split(path.delimiter).some((d) => d && path.resolve(d) === BIN)
+
+// Adds ~/.open-mods/bin to the front of PATH in the user's shell config, once.
+// Returns the file it edited, or null when PATH already had it or --no-path was given.
+function setupPath(): string | null {
+  if (pathHasBin() || has("no-path") || process.platform === "win32") return null
+  const shell = path.basename(process.env.SHELL ?? "")
+  const rc =
+    shell === "zsh"
+      ? path.join(homedir(), ".zshrc")
+      : shell === "fish"
+        ? path.join(homedir(), ".config", "fish", "config.fish")
+        : path.join(homedir(), process.platform === "darwin" ? ".bash_profile" : ".bashrc")
+  const line =
+    shell === "fish"
+      ? `fish_add_path --prepend --move ${pretty(BIN).replace("~", "$HOME")}  # open-mods`
+      : `export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"  # open-mods`
+  const current = existsSync(rc) ? readFileSync(rc, "utf8") : ""
+  if (current.includes("# open-mods")) return null
+  mkdirSync(path.dirname(rc), { recursive: true })
+  writeFileSync(rc, `${current}${current.endsWith("\n") || current === "" ? "" : "\n"}\n# open-mods: modded builds go first; \`open-mods off\` steps aside\n${line}\n`)
+  return rc
+}
+
+function explainSwitch(h: Harness, entry: State[string]) {
+  const stock = stockBinary(h)
+  log("")
+  if (entry.enabled) {
+    const active = entry.mods.filter((m) => !entry.off.includes(m))
+    log(`\`${h.binary}\` now runs ${h.name} ${entry.ref} + ${active.join(" + ")}${entry.off.length ? ` (off: ${entry.off.join(", ")})` : ""}.`)
+    if (stock) log(`Your stock ${h.name} is untouched at ${pretty(stock)}. \`open-mods off\` switches back to it.`)
+  } else {
+    log(`\`${h.binary}\` runs your stock ${h.name} again${stock ? ` (${pretty(stock)})` : ""}. \`open-mods on\` brings the mods back.`)
+  }
+  const edited = entry.enabled ? setupPath() : null
+  if (edited) {
+    log("")
+    log(`Added ${pretty(BIN)} to the front of PATH in ${pretty(edited)}.`)
+    log(`Open a new terminal, or run this in the current one:`)
+    log(`  export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"`)
+  } else if (entry.enabled && !pathHasBin()) {
+    log("")
+    log(`Note: ${pretty(BIN)} is not on PATH in this shell. Open a new terminal, or run:`)
+    log(`  export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"`)
+  }
+}
+
+async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[] = []) {
+  const h = loadHarness(reg, harnessId)
+  await checkRequirements(h)
+  const root = path.join(HOME, "harnesses", harnessId, "src")
+  const state = loadState()
+  if (all.length === 0) {
+    // Last mod gone: leave nothing of it behind. The link, the built binary
+    // and the patched commits all go; the stock harness release is what the
+    // checkout is left pointing at, kept only as a cache for the next install.
+    switchOff(h)
+    const prev = state[harnessId]
+    if (existsSync(path.join(root, ".git"))) {
+      await $`git -C ${root} am --abort`.nothrow().quiet()
+      if (prev?.commit) await $`git -C ${root} checkout -q --force --detach ${prev.commit}`.nothrow().quiet()
+    }
+    const dist = path.dirname(path.dirname(artifactPath(h, root)))
+    if (existsSync(dist)) rmSync(dist, { recursive: true, force: true })
+    delete state[harnessId]
+    saveState(state)
+    log(`Removed the modded ${h.name} build${prev ? ` (${prev.ref} + ${prev.mods.join(" + ")})` : ""}: its link, its binary and its patched commits are gone.`)
+    log(`\`${h.binary}\` runs your stock ${h.name}. The ${h.name} source checkout stays at ${pretty(root)} as a cache; delete it if you want the space back.`)
+    return
+  }
+  const mods = all.filter((m) => !off.includes(m.name))
+  if (mods.length === 0) {
+    switchOff(h)
+    state[harnessId] = { ...(state[harnessId] ?? { ref: all[0]!.upstream.ref, commit: all[0]!.upstream.commit, artifact: "" }), mods: all.map((m) => m.name), off: [...off], enabled: false }
+    saveState(state)
+    log(`Every ${h.name} mod is off (${off.join(", ")}), so \`${h.binary}\` runs your stock ${h.name}. \`open-mods on ${harnessId}/${off[0]}\` brings one back.`)
+    return
+  }
+  const base = mods[0]!.upstream
+  const strays = mods.filter((m) => m.upstream.commit !== base.commit)
+  if (strays.length > 0) {
+    log(
+      `note: ${strays.map((m) => m.name).join(", ")} were authored against a different ${h.name} release than ${mods[0]!.name} (${base.ref}); trying anyway.`,
+    )
+  }
+  await ensureCheckout(h, root, base.commit, base.ref)
+  await applyMods(root, mods)
+  buildEnv = {
+    OPEN_MODS_HARNESS: harnessId,
+    OPEN_MODS_REF: base.ref,
+    OPEN_MODS_VERSION: base.ref.replace(/^v/, ""),
+    OPEN_MODS_MODS: mods.map((m) => m.name).join("+"),
+  }
+  const artifact = await build(h, root)
+  switchOn(h, artifact)
+  state[harnessId] = { ref: base.ref, commit: base.commit, mods: all.map((m) => m.name), off: off.filter((n) => all.some((m) => m.name === n)), artifact, enabled: true }
+  saveState(state)
+  explainSwitch(h, state[harnessId]!)
+}
+
+// ---------------------------------------------------------------- commands
+
+async function cmdList() {
+  const reg = await ensureRegistry()
+  const mods = listMods(reg, positional[1])
+  if (has("json")) return console.log(JSON.stringify(mods.map(({ dir, ...m }) => m), null, 2))
+  if (mods.length === 0) return log("No mods found.")
+  const installed = loadState()
+  const w = Math.max(...mods.map((m) => `${m.harness}/${m.name}`.length))
+  for (const m of mods) {
+    const mark = installed[m.harness]?.mods.includes(m.name) ? "*" : " "
+    log(`${mark} ${`${m.harness}/${m.name}`.padEnd(w)}  ${m.version.padEnd(7)} ${m.upstream.ref.padEnd(9)} ${m.source === "local" ? "(local) " : ""}${m.description}`)
+  }
+  log("")
+  log(`* = installed${mods.some((m) => m.source === "local") ? `   (local) = unpublished, from ${pretty(LOCAL)}` : ""}`)
+}
+
+async function cmdInfo() {
+  const reg = await ensureRegistry()
+  const spec = positional[1] ?? fail("usage: open-mods info <harness>/<mod>")
+  const m = resolveMod(reg, spec)
+  const files = touchedFiles(m)
+  if (has("json")) return console.log(JSON.stringify({ ...m, dir: undefined, touches: files }, null, 2))
+  log(`${m.harness}/${m.name} ${m.version}`)
+  log(`  ${m.description}`)
+  if (m.author?.name) log(`  by ${m.author.name}${m.author.github ? ` (@${m.author.github})` : ""}`)
+  log(`  license ${m.license}`)
+  log(`  built against ${m.harness} ${m.upstream.ref} (${m.upstream.commit.slice(0, 12)})`)
+  if (m.tags?.length) log(`  tags ${m.tags.join(", ")}`)
+  log(`  patches`)
+  for (const p of m.patches) log(`    ${p}`)
+  log(`  touches`)
+  for (const f of files) log(`    ${f}`)
+  log(`  ${m.source === "local" ? "local, unpublished" : "registry"}: ${pretty(m.dir)}`)
+}
+
+async function cmdInstall() {
+  const reg = await ensureRegistry()
+  const specs = positional.slice(1)
+  if (specs.length === 0) fail("install needs a mod to install, e.g. open-mods install opencode/vim-keys. `open-mods list` shows what is available.")
+  const wanted = specs.map((s) => resolveMod(reg, s))
+  const harnessIds = new Set(wanted.map((m) => m.harness))
+  const state = loadState()
+  for (const id of harnessIds) {
+    const current = (state[id]?.mods ?? []).map((n) => resolveMod(reg, `${id}/${n}`))
+    const merged = [...current.filter((c) => !wanted.some((w) => w.name === c.name)), ...wanted.filter((w) => w.harness === id)]
+    for (const m of merged) {
+      const clash = merged.find((o) => o !== m && (m.conflicts?.includes(o.name) || o.conflicts?.includes(m.name)))
+      if (clash) fail(`${m.name} and ${clash.name} are marked as conflicting`)
+    }
+    const off = (state[id]?.off ?? []).filter((n) => !wanted.some((w) => w.name === n))
+    await rebuild(reg, id, merged, off)
+  }
+}
+
+async function cmdUninstall() {
+  const reg = await ensureRegistry()
+  const specs = positional.slice(1)
+  if (specs.length === 0) fail("uninstall needs a mod to remove, e.g. open-mods uninstall opencode/vim-keys. `open-mods status` shows what is installed.")
+  const state = loadState()
+  const byHarness = new Map<string, string[]>()
+  for (const s of specs) {
+    const m = resolveMod(reg, s)
+    byHarness.set(m.harness, [...(byHarness.get(m.harness) ?? []), m.name])
+  }
+  for (const [id, names] of byHarness) {
+    const installed = state[id]?.mods ?? []
+    const missing = names.filter((n) => !installed.includes(n))
+    if (missing.length) fail(`${missing.map((n) => `${id}/${n}`).join(", ")} ${missing.length === 1 ? "is" : "are"} not installed`)
+    const remaining = installed.filter((n) => !names.includes(n)).map((n) => resolveMod(reg, `${id}/${n}`))
+    await rebuild(reg, id, remaining, state[id]?.off ?? [])
+  }
+}
+
+async function cmdStatus() {
+  const reg = await ensureRegistry()
+  const state = loadState()
+  if (has("json")) return console.log(JSON.stringify(state, null, 2))
+  const ids = Object.keys(state)
+  if (ids.length === 0) {
+    log("No mods installed. `open-mods list` shows what is available.")
+    return
+  }
+  for (const id of ids) {
+    const h = loadHarness(reg, id)
+    const e = state[id]!
+    const stock = stockBinary(h)
+    e.artifact ||= artifactPath(h, path.join(HOME, "harnesses", id, "src"))
+    const built = existsSync(e.artifact)
+    const onPath = pathHasBin()
+    const runs = e.enabled && built && onPath ? "modded" : "stock"
+    log(`${h.binary} → ${runs}`)
+    const active = e.mods.filter((m) => !e.off.includes(m))
+    log(`  modded  ${h.name} ${e.ref} + ${active.join(" + ") || "(nothing)"}  ${e.enabled ? "on" : "off (open-mods on)"}${built || !active.length ? "" : "  [not built; run open-mods update]"}`)
+    for (const m of e.off) log(`          ${m} is off (open-mods on ${id}/${m})`)
+    log(`  stock   ${stock ? `${(await versionOf(stock)) ?? "?"}  ${pretty(stock)}` : "not found on PATH"}`)
+    if (e.enabled && !onPath) log(`  note    ${pretty(BIN)} is not on PATH in this shell; open a new terminal or run: export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"`)
+  }
+}
+
+// `on`/`off` with no argument or a harness id switch the whole modded build
+// (instant, no rebuild). With a mod name they build that one mod in or out.
+function modTarget(reg: string, state: State, arg: string | undefined): { id: string; name: string } | null {
+  if (!arg) return null
+  if (arg.includes("/")) {
+    const m = resolveMod(reg, arg)
+    if (!state[m.harness]?.mods.includes(m.name)) fail(`${m.harness}/${m.name} is not installed`)
+    return { id: m.harness, name: m.name }
+  }
+  if (state[arg]) return null
+  const hits = Object.entries(state).filter(([, e]) => e.mods.includes(arg))
+  if (hits.length === 1) return { id: hits[0]![0], name: arg }
+  if (hits.length > 1) fail(`"${arg}" is installed for several harnesses; say ${hits.map(([id]) => `${id}/${arg}`).join(" or ")}`)
+  return fail(`"${arg}" is neither an installed mod nor a harness; \`open-mods status\` lists both`)
+}
+
+async function cmdOn() {
+  const reg = await ensureRegistry()
+  const state = loadState()
+  const target = modTarget(reg, state, positional[1])
+  if (target) {
+    const e = state[target.id]!
+    if (!e.off.includes(target.name)) {
+      log(`${target.id}/${target.name} is already on.`)
+      return
+    }
+    log(`Building ${target.id}/${target.name} back in`)
+    await rebuild(reg, target.id, e.mods.map((n) => resolveMod(reg, `${target.id}/${n}`)), e.off.filter((n) => n !== target.name))
+    return
+  }
+  const ids = positional[1] ? [positional[1]] : Object.keys(state)
+  if (ids.length === 0) fail("nothing to switch on; install a mod first")
+  for (const id of ids) {
+    const e = state[id] ?? fail(`no mods installed for ${id}`)
+    const h = loadHarness(reg, id)
+    if (e.mods.every((m) => e.off.includes(m))) fail(`every ${h.name} mod is off; \`open-mods on ${id}/${e.off[0]}\` builds one back in`)
+    e.artifact ||= artifactPath(h, path.join(HOME, "harnesses", id, "src"))
+    if (!existsSync(e.artifact)) fail(`the modded ${h.name} build is missing; run: open-mods update ${id}`)
+    switchOn(h, e.artifact)
+    e.enabled = true
+    saveState(state)
+    explainSwitch(h, e)
+  }
+}
+
+async function cmdOff() {
+  const reg = await ensureRegistry()
+  const state = loadState()
+  const target = modTarget(reg, state, positional[1])
+  if (target) {
+    const e = state[target.id]!
+    if (e.off.includes(target.name)) {
+      log(`${target.id}/${target.name} is already off.`)
+      return
+    }
+    log(`Building ${target.id}/${target.name} out (it stays installed; \`open-mods on ${target.id}/${target.name}\` restores it)`)
+    await rebuild(reg, target.id, e.mods.map((n) => resolveMod(reg, `${target.id}/${n}`)), [...e.off, target.name])
+    return
+  }
+  const ids = positional[1] ? [positional[1]] : Object.keys(state)
+  if (ids.length === 0) fail("nothing to switch off")
+  for (const id of ids) {
+    const e = state[id] ?? fail(`no mods installed for ${id}`)
+    const h = loadHarness(reg, id)
+    switchOff(h)
+    e.enabled = false
+    saveState(state)
+    explainSwitch(h, e)
+  }
+}
+
+async function cmdUpdate() {
+  const reg = await refreshRegistry()
+  const state = loadState()
+  const ids = positional[1] ? [positional[1]] : Object.keys(state)
+  for (const id of ids) {
+    const mods = (state[id]?.mods ?? []).map((n) => resolveMod(reg, `${id}/${n}`))
+    await rebuild(reg, id, mods, state[id]?.off ?? [])
+  }
+}
+
+// Author command: turn commits on top of a harness release into a mod folder.
+async function cmdPack() {
+  const reg = await ensureRegistry()
+  const checkout = path.resolve(positional[1] ?? ".")
+  const name = flag("name") ?? fail("usage: open-mods pack <harness-checkout> --name <mod-name> [--local] [--harness <id>] [--base <tag>] [--out <dir>]")
+  if (!/^[a-z0-9][a-z0-9-]{1,63}$/.test(name)) fail("mod name must be lowercase letters, digits and hyphens")
+  if (!existsSync(path.join(checkout, ".git"))) fail(`${checkout} is not a git checkout`)
+
+  const remote = (await $`git -C ${checkout} remote get-url origin`.nothrow().text()).trim()
+  const harnesses = readdirSync(path.join(reg, "harnesses"))
+    .filter((f) => f.endsWith(".json"))
+    .map((f) => loadHarness(reg, f.replace(/\.json$/, "")))
+  const harness =
+    (flag("harness") ? harnesses.find((h) => h.id === flag("harness")) : undefined) ??
+    harnesses.find((h) => remote.replace(/\.git$/, "").endsWith(h.repo.replace(/^https?:\/\/(www\.)?github\.com\//, "").replace(/\.git$/, ""))) ??
+    fail(`cannot tell which harness ${checkout} is; pass --harness <id>`)
+
+  const pattern = harness.releaseTagPattern ?? "*"
+  const base = flag("base") ?? (await $`git -C ${checkout} describe --tags --abbrev=0 --match ${pattern} HEAD`.nothrow().text()).trim()
+  if (!base) fail(`no release tag found below HEAD; pass --base <tag>`)
+  const commit = (await $`git -C ${checkout} rev-parse ${base}^{commit}`.text()).trim()
+  const count = Number((await $`git -C ${checkout} rev-list --count ${base}..HEAD`.text()).trim())
+  if (count === 0) fail(`no commits on top of ${base}; commit your changes first`)
+
+  const out = path.resolve(flag("out") ?? (has("local") ? path.join(LOCAL, harness.id, name) : path.join(reg, "mods", harness.id, name)))
+  if (existsSync(out) && !has("force")) fail(`${out} already exists; pass --force to overwrite`)
+  rmSync(path.join(out, "patches"), { recursive: true, force: true })
+  mkdirSync(path.join(out, "patches"), { recursive: true })
+  await $`git -C ${checkout} format-patch --no-signature --no-stat --zero-commit -N -o ${path.join(out, "patches")} ${base}..HEAD`.quiet()
+  const patches = readdirSync(path.join(out, "patches"))
+    .filter((f) => f.endsWith(".patch"))
+    .sort()
+    .map((f) => `patches/${f}`)
+
+  const author = (await $`git -C ${checkout} log -1 --format=%an HEAD`.text()).trim()
+  const existing = existsSync(path.join(out, "mod.json")) ? JSON.parse(readFileSync(path.join(out, "mod.json"), "utf8")) : {}
+  const manifest = {
+    $schema: path.relative(out, path.join(reg, "schema", "mod.schema.json")).replaceAll("\\", "/"),
+    name,
+    harness: harness.id,
+    version: existing.version ?? "0.1.0",
+    description: existing.description ?? "TODO: one line, under 200 characters",
+    author: existing.author ?? { name: author },
+    license: existing.license ?? "MIT",
+    tags: existing.tags ?? [],
+    upstream: { ref: base, commit },
+    patches,
+  }
+  writeFileSync(path.join(out, "mod.json"), JSON.stringify(manifest, null, 2) + "\n")
+  if (!existsSync(path.join(out, "README.md"))) {
+    writeFileSync(
+      path.join(out, "README.md"),
+      `# ${name}\n\nTODO: what this mod changes in ${harness.name}, and why.\n\n## Install\n\n\`\`\`sh\nopen-mods install ${harness.id}/${name}\n\`\`\`\n`,
+    )
+  }
+  log(`Packed ${count} commit${count === 1 ? "" : "s"} on top of ${base} into ${out}`)
+  log(`  ${patches.join("\n  ")}`)
+  if (has("local")) log(`It is a local mod: \`open-mods install ${harness.id}/${name}\` works now, and nothing is published until you pack it into the registry and open a PR.`)
+  else log(`Edit mod.json (description, tags, license) and README.md, then open a PR to the registry.`)
+}
+
+// Author and CI command: does a mod apply (and build) against a given ref?
+async function cmdCheck() {
+  const reg = await ensureRegistry()
+  const spec = positional[1] ?? fail("usage: open-mods check <mod-dir | harness/mod> [--ref <tag>] [--build] [--json]")
+  const mod = existsSync(path.join(spec, "mod.json")) ? loadMod(path.resolve(spec)) : resolveMod(reg, spec)
+  const h = loadHarness(reg, mod.harness)
+  const ref = flag("ref") ?? mod.upstream.ref
+  const root = flag("workspace") ? path.resolve(flag("workspace")!) : path.join(tmpdir(), `open-mods-check-${mod.harness}`)
+  const result: Record<string, unknown> = { mod: `${mod.harness}/${mod.name}`, version: mod.version, ref, touches: touchedFiles(mod) }
+  try {
+    if (!existsSync(path.join(root, ".git"))) {
+      mkdirSync(root, { recursive: true })
+      await $`git clone --filter=blob:none --no-checkout --no-tags ${h.repo} ${root}`.quiet()
+    }
+    await $`git -C ${root} fetch --no-tags origin tag ${ref}`.quiet()
+    await $`git -C ${root} am --abort`.nothrow().quiet()
+    await $`git -C ${root} checkout -q --force --detach ${ref}`
+    result.commit = (await $`git -C ${root} rev-parse HEAD`.text()).trim()
+    const files = mod.patches.map((p) => path.join(mod.dir, p))
+    const am = await $`git -C ${root} am -3 --quiet ${files}`.env({ ...process.env, ...GIT_IDENTITY }).nothrow()
+    result.applies = am.exitCode === 0
+    if (!result.applies) {
+      result.error = (am.stderr.toString() + am.stdout.toString()).trim()
+      await $`git -C ${root} am --abort`.nothrow().quiet()
+    } else if (has("build")) {
+      await checkRequirements(h)
+      buildEnv = { OPEN_MODS_HARNESS: h.id, OPEN_MODS_REF: ref, OPEN_MODS_VERSION: ref.replace(/^v/, ""), OPEN_MODS_MODS: mod.name }
+      const artifact = await build(h, root)
+      result.builds = true
+      result.artifact = artifact
+    }
+  } catch (e) {
+    result.applies ??= false
+    result.error = String(e)
+  }
+  if (has("json")) console.log(JSON.stringify(result, null, 2))
+  else {
+    log(`${result.mod} ${result.version} against ${ref} (${String(result.commit ?? "?").slice(0, 12)})`)
+    log(`  applies: ${result.applies ? "yes" : "NO"}`)
+    if (has("build")) log(`  builds:  ${result.builds ? "yes" : "NO"}`)
+    if (result.error) log(`  ${String(result.error).split("\n").join("\n  ")}`)
+  }
+  if (result.applies !== true || (has("build") && result.builds !== true)) process.exit(1)
+}
+
+async function cmdRegistry() {
+  log(`registry: ${registryDir()}`)
+  log(`home:     ${HOME}`)
+}
+
+const HELP = `open-mods: source-level mods for open-source agent harnesses
+
+usage
+  open-mods list [harness]                  mods in the registry
+  open-mods info <harness>/<mod>            manifest, patches and touched files
+  open-mods install <harness>/<mod> ...     build the harness with these mods and switch it on
+  open-mods uninstall <harness>/<mod> ...   remove mods and rebuild
+  open-mods status                          which build \`opencode\` runs right now
+  open-mods off                             \`opencode\` runs the stock build again (instant)
+  open-mods on                              \`opencode\` runs the modded build again (instant)
+  open-mods off <harness>/<mod>             build that one mod out; it stays installed
+  open-mods on <harness>/<mod>              build it back in
+  open-mods update [harness]                refresh the registry and rebuild
+
+how it works
+  Your stock harness is never modified. The modded build lives in ${pretty(HOME)},
+  and ${pretty(BIN)} sits first on PATH: when a modded build is on, that is
+  what \`opencode\` runs; when it is off, the stock one takes over.
+
+for mod authors
+  open-mods pack <checkout> --name <mod>    turn commits on top of a release tag into a mod folder
+                            --local         ... under ${pretty(LOCAL)} instead, unpublished but installable
+  open-mods check <mod-dir> [--ref <tag>] [--build] [--json]
+                                            does the mod apply (and build) against a release
+
+options
+  --registry <dir|url>    registry to use (default: this repo when run from it, else ${DEFAULT_REGISTRY})
+  --no-path               do not edit your shell config to put ${pretty(BIN)} on PATH
+  --json                  machine-readable output where supported
+
+files
+  ${pretty(BIN)}/<binary>          the modded executable (present only while on)
+  ${pretty(HOME)}/harnesses/<id>/src    the patched checkout
+  ${pretty(HOME)}/state.json            installed mods
+  ${pretty(HOME)}/toolchains/           the exact bun version each harness release pins
+  ${pretty(LOCAL)}/<harness>/<mod>    your own unpublished mods
+`
+
+const commands: Record<string, () => Promise<void>> = {
+  list: cmdList,
+  info: cmdInfo,
+  install: cmdInstall,
+  add: cmdInstall,
+  uninstall: cmdUninstall,
+  remove: cmdUninstall,
+  rm: cmdUninstall,
+  status: cmdStatus,
+  installed: cmdStatus,
+  on: cmdOn,
+  off: cmdOff,
+  update: cmdUpdate,
+  pack: cmdPack,
+  check: cmdCheck,
+  registry: cmdRegistry,
+}
+
+const cmd = positional[0]
+if (!cmd || cmd === "help" || has("help")) {
+  console.log(HELP)
+} else if (commands[cmd]) {
+  await commands[cmd]!()
+} else {
+  fail(`unknown command "${cmd}"\n\n${HELP}`)
+}
