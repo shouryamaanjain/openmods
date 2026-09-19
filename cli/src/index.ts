@@ -293,11 +293,62 @@ async function build(h: Harness, root: string) {
 const BIN = path.join(HOME, "bin")
 const pretty = (p: string) => p.replace(homedir(), "~")
 
+// The launcher is what `opencode` runs. It starts the modded binary at once
+// and, at most once a day, refreshes the registry in the background. When a
+// newer harness release is supported by every installed mod, the next launch
+// asks whether to update. It never rebuilds without a yes.
+function launcherOf(h: Harness, artifact: string) {
+  const cli = Bun.which("open-mods") ?? `${process.execPath} ${path.resolve(import.meta.path)}`
+  return `#!/bin/sh
+# open-mods launcher for ${h.binary}. \`open-mods off\` removes it; the stock ${h.name} is untouched.
+HARNESS=${h.id}
+REAL=${JSON.stringify(artifact)}
+OM=${JSON.stringify(HOME)}
+CLI=${JSON.stringify(cli)}
+NOTE="$OM/updates/$HARNESS"
+NOW=$(date +%s)
+
+# Refresh the note in the background once a day; never delays startup.
+if [ -z "$OPEN_MODS_NO_CHECK" ]; then
+  LAST=$(cat "$NOTE.checked" 2>/dev/null || echo 0)
+  if [ $((NOW - LAST)) -gt 86400 ]; then
+    mkdir -p "$OM/updates" && echo "$NOW" > "$NOTE.checked"
+    ( $CLI check-updates "$HARNESS" >/dev/null 2>&1 & )
+  fi
+fi
+
+# Ask only at an interactive terminal, and not more than once a day after a no.
+if [ -t 0 ] && [ -t 1 ] && [ -z "$OPEN_MODS_NO_PROMPT" ] && [ -f "$NOTE" ]; then
+  . "$NOTE"
+  SNOOZED=$(cat "$NOTE.snooze" 2>/dev/null || echo 0)
+  if [ -n "$AVAILABLE" ] && [ "$AVAILABLE" != "$CURRENT" ] && [ $((NOW - SNOOZED)) -gt 86400 ]; then
+    if [ "$ALL_SUPPORT" = 1 ]; then
+      printf '%s\n' "${h.name} $AVAILABLE is out and all your mods support it ($MODS). You are on $CURRENT."
+      printf '%s' "Update now? It rebuilds ${h.name}, which takes a few minutes. [y/N] "
+      read -r ANSWER
+      case "$ANSWER" in
+        y|Y|yes|YES)
+          if $CLI update "$HARNESS"; then rm -f "$NOTE"; else
+            printf '%s\n' "Update failed; starting your current build. Run \"open-mods update $HARNESS\" to try again."
+          fi ;;
+        *) echo "$NOW" > "$NOTE.snooze" ;;
+      esac
+    else
+      printf '%s\n' "${h.name} $AVAILABLE is out. Not every mod supports it yet ($BLOCKED), so you stay on $CURRENT."
+      echo "$NOW" > "$NOTE.snooze"
+    fi
+  fi
+fi
+
+exec "$REAL" "$@"
+`
+}
+
 function switchOn(h: Harness, artifact: string) {
   mkdirSync(BIN, { recursive: true })
   const target = path.join(BIN, h.binary)
   if (existsSync(target)) unlinkSync(target)
-  symlinkSync(artifact, target)
+  writeFileSync(target, launcherOf(h, artifact), { mode: 0o755 })
   return target
 }
 
@@ -726,6 +777,50 @@ async function cmdCheck() {
   if (result.applies !== true || (has("build") && result.builds !== true)) process.exit(1)
 }
 
+// Compare what is installed with what the registry now says, and leave a
+// note for the launcher. Runs in the background from the launcher once a
+// day; safe to run by hand.
+const releaseKey = (ref: string) => ref.replace(/^v/, "").split(/[.+-]/).map((x) => Number(x) || 0)
+const newerRelease = (a: string, b: string) => {
+  const [x, y] = [releaseKey(a), releaseKey(b)]
+  for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0)
+  return false
+}
+
+async function cmdCheckUpdates() {
+  const reg = await refreshRegistry()
+  const state = loadState()
+  const ids = positional[1] ? [positional[1]] : Object.keys(state)
+  mkdirSync(path.join(HOME, "updates"), { recursive: true })
+  for (const id of ids) {
+    const e = state[id]
+    const note = path.join(HOME, "updates", id)
+    if (!e) {
+      rmSync(note, { force: true })
+      continue
+    }
+    const active = e.mods.filter((n) => !e.off.includes(n)).map((n) => resolveMod(reg, `${id}/${n}`))
+    const refs = [...new Set(active.map((m) => m.upstream.ref))]
+    const newest = refs.reduce((a, b) => (newerRelease(b, a) ? b : a), e.ref)
+    const behind = active.filter((m) => m.upstream.ref !== newest)
+    const changed = active.some((m) => m.upstream.commit !== e.commit || e.hashes[m.name] !== patchHash(m))
+    // The launcher sources this file, so every value is single-quoted.
+    const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
+    const lines = [
+      `CURRENT=${q(e.ref)}`,
+      `AVAILABLE=${q(changed ? newest : "")}`,
+      `ALL_SUPPORT=${behind.length === 0 ? 1 : 0}`,
+      `MODS=${q(active.map((m) => m.name).join(", "))}`,
+      `BLOCKED=${q(behind.map((m) => `${m.name} is for ${m.upstream.ref}`).join(", "))}`,
+      `CHECKED=${Math.floor(Date.now() / 1000)}`,
+    ]
+    writeFileSync(note, lines.join("\n") + "\n")
+    writeFileSync(`${note}.checked`, `${Math.floor(Date.now() / 1000)}\n`)
+    if (has("json")) console.log(JSON.stringify({ current: e.ref, available: changed ? newest : "", allSupport: behind.length === 0, mods: active.map((m) => m.name), blocked: behind.map((m) => m.name) }))
+    else log(changed ? `${id}: ${newest} available${behind.length ? `, blocked by ${behind.map((m) => m.name).join(", ")}` : ", all mods support it"}` : `${id}: up to date (${e.ref})`)
+  }
+}
+
 async function cmdRegistry() {
   log(`registry: ${registryDir()}`)
   log(`home:     ${HOME}`)
@@ -744,11 +839,16 @@ usage
   open-mods off <harness>/<mod>             build that one mod out; it stays installed
   open-mods on <harness>/<mod>              build it back in
   open-mods update [harness]                refresh the registry; rebuild if a mod or its release changed
+  open-mods check-updates [harness]         what the launcher does once a day: note whether an update is available
 
 how it works
   Your stock harness is never modified. The modded build lives in ${pretty(HOME)},
   and ${pretty(BIN)} sits first on PATH: when a modded build is on, that is
   what \`opencode\` runs; when it is off, the stock one takes over.
+  The \`opencode\` there is a small launcher: it starts your build at once and,
+  once a day, checks the registry in the background. When a newer release is
+  supported by all your mods, the next launch asks before updating.
+  OPEN_MODS_NO_PROMPT=1 silences the question; OPEN_MODS_NO_CHECK=1 the check.
 
 for mod authors
   open-mods pack <checkout> --name <mod>    turn commits on top of a release tag into a mod folder
@@ -785,6 +885,7 @@ const commands: Record<string, () => Promise<void>> = {
   pack: cmdPack,
   check: cmdCheck,
   registry: cmdRegistry,
+  "check-updates": cmdCheckUpdates,
 }
 
 const cmd = positional[0]
