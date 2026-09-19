@@ -1,0 +1,29 @@
+name: harness build
+
+# Builds a harness from source on a GitHub runner, with no mod applied. Run
+# it by hand to prove a harness definition works in CI before any mod for
+# it is published, and after changing how a harness builds.
+
+on:
+  workflow_dispatch:
+    inputs:
+      harness:
+        description: "Harness id, e.g. opencode or codex"
+        required: true
+      ref:
+        description: "Release tag to build, e.g. v1.18.31 or rust-v0.155.1"
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup || true
+      - name: Build ${{ inputs.harness }} at ${{ inputs.ref }}
+        run: bun cli/src/index.ts check --harness ${{ inputs.harness }} --ref ${{ inputs.ref }} --build --json

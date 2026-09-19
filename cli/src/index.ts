@@ -766,8 +766,24 @@ async function cmdPack() {
 // Author and CI command: does a mod apply (and build) against a given ref?
 async function cmdCheck() {
   const reg = await ensureRegistry()
-  const spec = positional[1] ?? fail("usage: open-mods check <mod-dir | harness/mod> [--ref <tag>] [--build] [--json]")
-  const mod = existsSync(path.join(spec, "mod.json")) ? loadMod(path.resolve(spec)) : resolveMod(reg, spec)
+  // `check --harness <id> --ref <tag> --build` builds the stock harness with no
+  // mod: the smoke test for a harness definition, on any machine or in CI.
+  const bare = flag("harness")
+  const spec = positional[1] ?? (bare ? undefined : fail("usage: open-mods check <mod-dir | harness/mod> [--ref <tag>] [--build] [--json]\n       open-mods check --harness <id> [--ref <tag>] [--build] [--json]"))
+  const mod: Mod = spec
+    ? existsSync(path.join(spec, "mod.json"))
+      ? loadMod(path.resolve(spec))
+      : resolveMod(reg, spec)
+    : {
+        name: "(stock)",
+        harness: bare!,
+        description: "",
+        license: "",
+        upstream: { ref: flag("ref") ?? fail("--harness needs --ref <tag>"), commit: "" },
+        patches: [],
+        dir: "",
+        source: "registry",
+      }
   const h = loadHarness(reg, mod.harness)
   const ref = flag("ref") ?? mod.upstream.ref
   const root = flag("workspace") ? path.resolve(flag("workspace")!) : path.join(tmpdir(), `open-mods-check-${mod.harness}`)
@@ -782,7 +798,9 @@ async function cmdCheck() {
     await $`git -C ${root} checkout -q --force --detach ${ref}`
     result.commit = (await $`git -C ${root} rev-parse HEAD`.text()).trim()
     const files = mod.patches.map((p) => path.join(mod.dir, p))
-    const am = await $`git -C ${root} am -3 --quiet ${files}`.env({ ...process.env, ...GIT_IDENTITY }).nothrow().quiet()
+    const am = files.length
+      ? await $`git -C ${root} am -3 --quiet ${files}`.env({ ...process.env, ...GIT_IDENTITY }).nothrow().quiet()
+      : { exitCode: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) }
     result.applies = am.exitCode === 0
     if (!result.applies) {
       result.error = (am.stderr.toString() + am.stdout.toString()).trim()
@@ -897,6 +915,8 @@ for mod authors
                             --local         ... under ${pretty(LOCAL)} instead, unpublished but installable
   open-mods check <mod-dir> [--ref <tag>] [--build] [--json]
                                             does the mod apply (and build) against a release
+  open-mods check --harness <id> --ref <tag> --build
+                                            build the stock harness: the smoke test for a harness definition
 
 options
   --registry <dir|url>    registry to use (default: this repo when run from it, else ${DEFAULT_REGISTRY})
