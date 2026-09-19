@@ -7,8 +7,7 @@ Claude Code has Mods: plugins that reach into the harness and change how it beha
 OpenMods is that layer. A mod is a set of git patches against a pinned release of a harness. Installing a mod clones the harness, applies the patches, builds it, and gives you a modded binary. Your stock install is never touched.
 
 ```sh
-git clone https://github.com/shouryamaanjain/open-mods
-cd open-mods && bun link ./cli      # or: alias open-mods="bun $PWD/cli/src/index.ts"
+curl -fsSL https://raw.githubusercontent.com/shouryamaanjain/open-mods/main/install.sh | sh
 
 open-mods list
 open-mods install opencode/<mod>
@@ -21,7 +20,7 @@ open-mods uninstall opencode/<mod>  # gone
 
 Your stock OpenCode is never modified. `install` builds a separate modded binary and puts it first on PATH. `off` steps aside so the stock one runs; `on` steps back in. `open-mods status` tells you which one `opencode` runs right now.
 
-Requirements: `git` and `bun` to run the CLI. Each harness release pins the exact Bun it builds with, and the CLI installs that version under `~/.open-mods/toolchains` for the build, so your own Bun is never changed. The first install of a harness clones and builds it, which takes a few minutes. Later installs reuse the checkout.
+The installer clones the registry under `~/.open-mods`, puts an `open-mods` command in `~/.open-mods/bin`, and installs Bun if you do not have it. Working on the registry itself? `bun link ./cli` from a checkout does the same with your working copy. Requirements: `git` and `bun` to run the CLI. Each harness release pins the exact Bun it builds with, and the CLI installs that version under `~/.open-mods/toolchains` for the build, so your own Bun is never changed. The first install of a harness clones and builds it, which takes a few minutes. Later installs reuse the checkout.
 
 ## Harnesses
 
@@ -103,7 +102,7 @@ A fork is a snapshot. It goes stale silently, it can't be combined with another 
 
 ## Security
 
-A mod is code that runs with your permissions, like any program you build from source. Before installing one, read its patches. `open-mods info` lists the touched files, and each mod's page links the diff. CI builds every mod from its patches, so a listing never ships a binary that differs from its source.
+A mod is code that runs with your permissions, like any program you build from source. Before installing one, read its patches. `open-mods info` lists the touched files, and each mod's page shows the diff. Nothing is prebuilt: your machine compiles the harness from its release plus the patches, so what you read is what you run. [SECURITY.md](SECURITY.md) has the details and how to report a problem.
 
 ## License
 
