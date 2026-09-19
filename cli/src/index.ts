@@ -757,8 +757,14 @@ async function cmdPack() {
       `# ${name}\n\nTODO: what this mod changes in ${harness.name}, and why.\n\n## Install\n\n\`\`\`sh\nopen-mods install ${harness.id}/${name}\n\`\`\`\n`,
     )
   }
-  log(`Packed ${count} commit${count === 1 ? "" : "s"} on top of ${base} into ${out}`)
+  log(`Packed ${count} commit${count === 1 ? "" : "s"} on top of ${rel(base)} into ${out}`)
   log(`  ${patches.join("\n  ")}`)
+  // A lockfile in a patch is nearly always build noise, and two mods that
+  // both carry one cannot stack. Say so; the author decides.
+  const lockfiles = touchedFiles({ ...manifest, dir: out, source: "local" } as Mod).filter((f) => /(^|\/)(Cargo\.lock|bun\.lock|bun\.lockb|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|go\.sum)$/.test(f))
+  if (lockfiles.length) {
+    log(`warning: the patches change ${lockfiles.join(", ")}. That is usually a build side effect, not part of the mod, and mods that both touch a lockfile cannot be installed together. Reset the file to the release and commit again unless the mod really needs it.`)
+  }
   if (has("local")) log(`It is a local mod: \`open-mods install ${harness.id}/${name}\` works now, and nothing is published until you pack it into the registry and open a PR.`)
   else log(`Edit mod.json (description, tags, license) and README.md, then open a PR to the registry.`)
 }
