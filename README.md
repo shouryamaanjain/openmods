@@ -30,7 +30,7 @@ The installer clones the registry under `~/.open-mods`, puts an `open-mods` comm
 | `codex` | [openai/codex](https://github.com/openai/codex) | supported |
 | `fx` | [vercel-labs/fx](https://github.com/vercel-labs/fx) | planned |
 
-Anything open source with a build command can be a harness. See [`harnesses/`](harnesses). Each harness builds with its own toolchain: OpenCode with the Bun version its release pins, which the CLI installs for you; Codex with Rust, where `rustup` picks up the toolchain the release pins on its own. A Codex build from source takes about twenty minutes, and a rebuild after a change nearly as long again, because its release profile links with LTO.
+Anything open source with a build command can be a harness. See [`harnesses/`](harnesses). Each harness builds with its own toolchain: OpenCode with the Bun version its release pins, which the CLI installs for you; Codex with Rust, where `rustup` picks up the toolchain the release pins on its own. A Codex build from source takes about seventeen minutes the first time, most of it compiling dependencies, and about six minutes for a rebuild after a mod changes. OpenMods builds Codex without link-time optimization, which its own releases use; that costs a few percent of runtime speed and some binary size, and turns a seventeen-minute rebuild into six.
 
 ## Mods
 
