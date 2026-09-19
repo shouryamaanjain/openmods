@@ -1,0 +1,11 @@
+{
+  "name": "open-mods-registry",
+  "private": true,
+  "type": "module",
+  "workspaces": ["cli"],
+  "scripts": {
+    "open-mods": "bun cli/src/index.ts",
+    "typecheck": "bun run --cwd cli typecheck",
+    "validate": "bun script/validate.ts"
+  }
+}

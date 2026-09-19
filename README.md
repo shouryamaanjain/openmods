@@ -1,0 +1,90 @@
+# OpenMods
+
+Source-level mods for open-source agent harnesses.
+
+Claude Code has Mods: plugins that reach into the harness and change how it behaves and what it shows. Open-source harnesses like [OpenCode](https://github.com/anomalyco/opencode) don't need a plugin API for that. You can clone the repo, change anything, and build. What's missing is a way to share those changes so other people can install them without redoing the work.
+
+OpenMods is that layer. A mod is a set of git patches against a pinned release of a harness. Installing a mod clones the harness, applies the patches, builds it, and gives you a modded binary. Your stock install is never touched.
+
+```sh
+git clone https://github.com/shouryamaanjain/open-mods
+cd open-mods && bun link ./cli      # or: alias open-mods="bun $PWD/cli/src/index.ts"
+
+open-mods list
+open-mods install opencode/<mod>
+opencode                            # a real OpenCode release with the mod built in
+open-mods off                       # opencode is stock again
+open-mods on                        # and back
+open-mods off opencode/<mod>        # keep it installed, build it out
+open-mods uninstall opencode/<mod>  # gone
+```
+
+Your stock OpenCode is never modified. `install` builds a separate modded binary and puts it first on PATH. `off` steps aside so the stock one runs; `on` steps back in. `open-mods status` tells you which one `opencode` runs right now.
+
+Requirements: `git` and `bun` to run the CLI. Each harness release pins the exact Bun it builds with, and the CLI installs that version under `~/.open-mods/toolchains` for the build, so your own Bun is never changed. The first install of a harness clones and builds it, which takes a few minutes. Later installs reuse the checkout.
+
+## Harnesses
+
+| harness | repo | status |
+| --- | --- | --- |
+| `opencode` | [anomalyco/opencode](https://github.com/anomalyco/opencode) | supported |
+| `codex` | [openai/codex](https://github.com/openai/codex) | planned |
+| `fx` | [vercel-labs/fx](https://github.com/vercel-labs/fx) | planned |
+
+Anything open source with a build command can be a harness. See [`harnesses/`](harnesses).
+
+## Mods
+
+The registry lives under [`mods/<harness>/<mod>`](mods). Run `open-mods list` for what is published, or `open-mods info <harness>/<mod>` to see exactly which files a mod touches before you build it.
+
+Mods you are still working on, or do not want to publish, go under `~/.open-mods/local/<harness>/<mod>`. The CLI lists and installs them like registry mods, marked `(local)`.
+
+## How it works
+
+```
+mods/opencode/<mod>/
+  mod.json          name, version, license, pinned upstream ref + commit
+  patches/0001-…    git format-patch output, applied in order with git am
+  README.md
+```
+
+`open-mods install` does the mechanical part:
+
+1. Blobless clone of the harness into `~/.open-mods/harnesses/<id>/src`.
+2. Check out the commit the mods were written against.
+3. `git am -3` each mod's patches, in the order you listed them.
+4. Run the harness's own install and build commands, with the exact toolchain version that release pins. Building OpenCode 1.18.31 with Bun 1.4 instead of its pinned 1.3.14 produces a binary that logs errors on every launch, so this is not optional.
+5. Link the built binary as `~/.open-mods/bin/<binary>` and, the first time, add that folder to the front of PATH in your shell config. The build is stamped, so `opencode --version` reports the release plus the mods, e.g. `1.18.31+vim-keys`.
+
+`off` removes the link, so `opencode` falls through to the stock binary the harness installed. `on` restores it. Neither rebuilds anything. Pass `--no-path` if you would rather manage PATH yourself.
+
+`uninstall` rebuilds without the mod. When the last mod for a harness goes, the link, the built binary and the patched commits go with it, and the checkout is reset to the stock release. It is kept only as a cache so the next install does not clone and install dependencies again; delete `~/.open-mods/harnesses/<id>` if you want the space back.
+
+Several mods stack on the same checkout. If two of them edit the same lines, the second one fails to apply and nothing is built.
+
+Mods are pinned to a release tag because harnesses move fast. CI re-checks every mod against the latest release nightly, so a listing tells you whether it still applies.
+
+## Making a mod
+
+```sh
+git clone https://github.com/anomalyco/opencode && cd opencode
+git checkout v1.18.31            # the release you want to mod
+# ... change anything, then commit as many times as you like ...
+open-mods pack . --name my-mod --local   # installable now from ~/.open-mods/local, not published
+open-mods pack . --name my-mod           # writes mods/opencode/my-mod/ into the registry
+open-mods check mods/opencode/my-mod --build
+```
+
+Then open a pull request. [CONTRIBUTING.md](CONTRIBUTING.md) has the details.
+
+## Why patches and not forks
+
+A fork is a snapshot. It goes stale silently, it can't be combined with another fork, and reviewing it means diffing two whole repositories. A patch series is small, readable on the listing page, applies to the release it names, and stacks with other patches until two of them disagree. It is the format Debian, Nix, and Homebrew have used for decades for exactly this problem.
+
+## Security
+
+A mod is code that runs with your permissions, like any program you build from source. Before installing one, read its patches. `open-mods info` lists the touched files, and each mod's page links the diff. CI builds every mod from its patches, so a listing never ships a binary that differs from its source.
+
+## License
+
+MIT. Each mod carries its own license in `mod.json`; each harness keeps its upstream license.
