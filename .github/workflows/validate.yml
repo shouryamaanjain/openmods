@@ -1,0 +1,57 @@
+name: validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run validate
+
+  changed-mods:
+    runs-on: ubuntu-latest
+    needs: lint
+    outputs:
+      mods: ${{ steps.list.outputs.mods }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: list
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          else
+            base="${{ github.event.before }}"
+          fi
+          mods=$(git diff --name-only "$base" HEAD -- mods harnesses cli \
+            | grep -E '^mods/[^/]+/[^/]+/' | cut -d/ -f1-3 | sort -u \
+            | { [ -s /dev/stdin ] && cat || ls mods/*/*/mod.json 2>/dev/null | xargs -n1 dirname; } \
+            | jq -R . | jq -sc .)
+          echo "mods=$mods" >> "$GITHUB_OUTPUT"
+          echo "checking: $mods"
+
+  check:
+    runs-on: ubuntu-latest
+    needs: changed-mods
+    if: ${{ needs.changed-mods.outputs.mods != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        mod: ${{ fromJson(needs.changed-mods.outputs.mods) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Apply and build ${{ matrix.mod }}
+        run: bun cli/src/index.ts check ${{ matrix.mod }} --build
