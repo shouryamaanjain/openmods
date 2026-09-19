@@ -8,12 +8,21 @@
   "language": "Rust",
   "binary": "codex",
   "requirements": [
-    { "command": "rustup", "hint": "Install Rust with rustup from https://rustup.rs; rustup picks up the toolchain each release pins" },
-    { "command": "cargo", "hint": "Install Rust with rustup from https://rustup.rs" },
-    { "command": "git", "hint": "Install git" }
+    {
+      "command": "rustup",
+      "hint": "Install Rust with rustup from https://rustup.rs; rustup picks up the toolchain each release pins"
+    },
+    {
+      "command": "cargo",
+      "hint": "Install Rust with rustup from https://rustup.rs"
+    },
+    {
+      "command": "git",
+      "hint": "Install git"
+    }
   ],
   "install": "true",
-  "build": "cd codex-rs && cargo build --release -p codex-cli --bin codex",
+  "build": "cd codex-rs && sed -i.open-mods.bak '1,/^version = \"/s/^version = \"[^\"]*\"/version = \"'\"${OPEN_MODS_VERSION}+${OPEN_MODS_MODS}\"'\"/' Cargo.toml && rm -f Cargo.toml.open-mods.bak && cargo build --release -p codex-cli --bin codex",
   "artifact": "codex-rs/target/release/codex",
   "releaseTagPattern": "rust-v[0-9]*"
 }

@@ -24,6 +24,7 @@ const flag = (k: string) => {
 const has = (k: string) => args.includes(`--${k}`)
 const root = path.resolve(flag("registry") ?? path.resolve(import.meta.dir, ".."))
 
+const rel = (ref: string) => ref.replace(/^[^0-9]*/, "")
 const releaseKey = (ref: string) => ref.replace(/^[^0-9]*/, "").split(/[.+-]/).map((x) => Number(x) || 0)
 const newer = (a: string, b: string) => {
   const [x, y] = [releaseKey(a), releaseKey(b)]
@@ -101,10 +102,10 @@ async function issueFor(modPath: string, mod: any, ref: string, error: string) {
   const repo = process.env.GITHUB_REPOSITORY
   if (!repo) return
   const harness = readJson(path.join(root, "harnesses", `${mod.harness}.json`))
-  const title = `${mod.harness}/${mod.name} does not support ${harness.name} ${ref}`
+  const title = `${mod.harness}/${mod.name} does not support ${harness.name} ${rel(ref)}`
   const who = maintainersOf(mod).join(" ")
   const body = [
-    `${who} ${harness.name} ${ref} is out and \`${mod.harness}/${mod.name}\` no longer applies or builds on it. It stays listed for ${mod.upstream.ref} until this is fixed.`,
+    `${who} ${harness.name} ${rel(ref)} (tag \`${ref}\`) is out and \`${mod.harness}/${mod.name}\` no longer applies or builds on it. It stays listed for ${rel(mod.upstream.ref)} until this is fixed.`,
     "",
     "To fix it, rebase the patches on the new release and open a PR:",
     "",
@@ -124,7 +125,7 @@ async function issueFor(modPath: string, mod: any, ref: string, error: string) {
   const existing = (await $`gh issue list --repo ${repo} --state open --search ${JSON.stringify(title) + " in:title"} --json number,title`.nothrow().text()).trim()
   const open = existing ? (JSON.parse(existing) as { number: number; title: string }[]).find((i) => i.title === title) : undefined
   if (open) {
-    await $`gh issue comment ${String(open.number)} --repo ${repo} --body ${`Still failing on ${ref} as of ${new Date().toISOString().slice(0, 10)}.`}`.nothrow()
+    await $`gh issue comment ${String(open.number)} --repo ${repo} --body ${`Still failing on ${rel(ref)} as of ${new Date().toISOString().slice(0, 10)}.`}`.nothrow()
     return `#${open.number} (already open)`
   }
   const url = (await $`gh issue create --repo ${repo} --title ${title} --body ${body} --label conflict`.nothrow().text()).trim()
@@ -164,7 +165,7 @@ async function apply() {
     }
   }
   const n = (k: number, word: string) => `${k} ${word}${k === 1 ? "" : "s"}`
-  const title = `${harnessName} ${ref}: ${n(bumped.length, "mod")} now support${bumped.length === 1 ? "s" : ""} it, ${broken.length} ${broken.length === 1 ? "does" : "do"} not`
+  const title = `${harnessName} ${rel(ref)}: ${n(bumped.length, "mod")} now support${bumped.length === 1 ? "s" : ""} it, ${broken.length} ${broken.length === 1 ? "does" : "do"} not`
   const body = [
     ...(bumped.length ? [`Supports it: ${bumped.join(", ")}`] : []),
     ...(broken.length ? [`Needs a maintainer: ${broken.join(", ")}`] : []),

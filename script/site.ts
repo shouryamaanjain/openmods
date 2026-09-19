@@ -44,6 +44,7 @@ type Mod = {
 
 const readJson = (f: string) => JSON.parse(readFileSync(f, "utf8"))
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!)
+const rel = (ref: string) => ref.replace(/^[^0-9]*/, "")
 const releaseKey = (ref: string) => ref.replace(/^[^0-9]*/, "").split(/[.+-]/).map((x) => Number(x) || 0)
 const newer = (a: string, b: string) => {
   const [x, y] = [releaseKey(a), releaseKey(b)]
@@ -249,8 +250,8 @@ const behind = (m: Mod) => {
 const badge = (m: Mod) => {
   const latest = harnessOf(m.harness).latest ?? ""
   return behind(m)
-    ? `<span class="badge behind" title="Latest ${esc(harnessOf(m.harness).name)} is ${esc(latest)}">${esc(m.upstream.ref)} · behind</span>`
-    : `<span class="badge ok" title="Latest ${esc(harnessOf(m.harness).name)} release">${esc(m.upstream.ref)}</span>`
+    ? `<span class="badge behind" title="Latest ${esc(harnessOf(m.harness).name)} is ${esc(rel(latest))}">${esc(rel(m.upstream.ref))} · behind</span>`
+    : `<span class="badge ok" title="Latest ${esc(harnessOf(m.harness).name)} release">${esc(rel(m.upstream.ref))}</span>`
 }
 const maintainers = (m: Mod) => m.maintainers ?? (m.author?.github ? [m.author.github] : [])
 const modUrl = (m: Mod, depth: number) => `${"../".repeat(depth)}mods/${m.harness}/${m.name}/`
@@ -292,7 +293,7 @@ function home() {
 <p>A mod is a set of patches against a release of a harness like OpenCode. Install one and your <code>opencode</code> becomes that release with the mod built in. Your stock install is never touched, and you can switch back any time.</p>
 <div class="cmd"><span class="dollar">$</span><span>open-mods install &lt;harness&gt;/&lt;mod&gt;</span></div>
 <div class="chips">
-${harnesses.map((h) => `<a class="chip" href="harnesses/${h.id}/">${esc(h.name)} · ${esc(h.latest ?? "")}</a>`).join("")}
+${harnesses.map((h) => `<a class="chip" href="harnesses/${h.id}/">${esc(h.name)} · ${esc(rel(h.latest ?? ""))}</a>`).join("")}
 ${PLANNED.map((p) => `<span class="chip dim" title="Planned">${esc(p.name)} · planned</span>`).join("")}
 </div>
 </div></section>
@@ -317,8 +318,8 @@ function modPage(m: Mod) {
   const removed = m.files.reduce((n, f) => n + f.removed, 0)
   const issues = `https://github.com/${REPO}/issues?q=${encodeURIComponent(`is:issue is:open "${m.harness}/${m.name} does not support"`)}`
   const notice = behind(m)
-    ? `<div class="notice behind">This mod is for ${esc(h.name)} <b>${esc(m.upstream.ref)}</b>. The latest release is <b>${esc(h.latest ?? "")}</b>${m.status && !m.status.ok && m.status.tested === h.latest ? `, and CI found it no longer applies or builds there` : ""}. Installing it builds ${esc(m.upstream.ref)}, which still works. <a href="${issues}">Open issues</a> · <a href="../../../make-a-mod/#updating-a-mod-for-a-new-release">How to rebase it</a></div>`
-    : `<div class="notice ok">Works on the latest ${esc(h.name)} release, ${esc(m.upstream.ref)}.</div>`
+    ? `<div class="notice behind">This mod is for ${esc(h.name)} <b>${esc(rel(m.upstream.ref))}</b>. The latest release is <b>${esc(rel(h.latest ?? ""))}</b>${m.status && !m.status.ok && m.status.tested === h.latest ? `, and CI found it no longer applies or builds there` : ""}. Installing it builds ${esc(rel(m.upstream.ref))}, which still works. <a href="${issues}">Open issues</a> · <a href="../../../make-a-mod/#updating-a-mod-for-a-new-release">How to rebase it</a></div>`
+    : `<div class="notice ok">Works on the latest ${esc(h.name)} release, ${esc(rel(m.upstream.ref))}.</div>`
   const files = m.files
     .map((f) => `<div><span>${esc(f.path)}${f.isNew ? ' <span class="badge local">new</span>' : ""}</span><span><span class="plus">+${f.added}</span> <span class="minus">−${f.removed}</span></span></div>`)
     .join("")
@@ -330,7 +331,7 @@ function modPage(m: Mod) {
 <p class="lead">${esc(m.description)}</p>
 <div class="cmd block"><span class="dollar">$</span><span>${esc(installCmd(m))}</span></div>
 <div class="stats">
-<div class="stat"><b>${esc(m.upstream.ref)}</b><span>${esc(h.name)} release</span></div>
+<div class="stat"><b>${esc(rel(m.upstream.ref))}</b><span>${esc(h.name)} release</span></div>
 <div class="stat"><b>${m.files.length}</b><span>file${m.files.length === 1 ? "" : "s"} touched</span></div>
 <div class="stat"><b><span class="plus">+${added}</span> <span class="minus">−${removed}</span></b><span>lines</span></div>
 <div class="stat"><b>${m.patches.length}</b><span>patch${m.patches.length === 1 ? "" : "es"}</span></div>
@@ -345,7 +346,8 @@ ${notice}
 <section><h3>Details</h3><div class="kv">
 <span>License</span><div>${esc(m.license)}</div>
 <span>Maintainer${maintainers(m).length === 1 ? "" : "s"}</span><div>${maintainers(m).map((u) => `<a href="https://github.com/${esc(u)}">@${esc(u)}</a>`).join(", ") || esc(m.author?.name ?? "—")}</div>
-${m.upstream.commit ? `<span>Commit</span><div><a href="${esc(h.repo)}/commit/${esc(m.upstream.commit)}"><code>${esc(m.upstream.commit.slice(0, 10))}</code></a></div>` : ""}
+${m.upstream.commit ? `<span>Tag</span><div><code>${esc(m.upstream.ref)}</code></div>
+<span>Commit</span><div><a href="${esc(h.repo)}/commit/${esc(m.upstream.commit)}"><code>${esc(m.upstream.commit.slice(0, 10))}</code></a></div>` : ""}
 ${m.tags?.length ? `<span>Tags</span><div>${m.tags.map(esc).join(", ")}</div>` : ""}
 </div></section>
 <section><h3>Links</h3><ul>
@@ -366,7 +368,7 @@ ${m.tags?.length ? `<span>Tags</span><div>${m.tags.map(esc).join(", ")}</div>` :
 function harnessIndex() {
   const rows = [
     ...harnesses.map(
-      (h) => `<tr class="mod"><td class="name"><a href="${h.id}/">${esc(h.name)}</a><div class="desc">${esc(h.language ?? "")}</div></td><td><span class="badge ok">${esc(h.latest ?? "")}</span></td><td class="num">${mods.filter((m) => m.harness === h.id).length}</td></tr>`,
+      (h) => `<tr class="mod"><td class="name"><a href="${h.id}/">${esc(h.name)}</a><div class="desc">${esc(h.language ?? "")}</div></td><td><span class="badge ok">${esc(rel(h.latest ?? ""))}</span></td><td class="num">${mods.filter((m) => m.harness === h.id).length}</td></tr>`,
     ),
     ...PLANNED.map((p) => `<tr><td class="name"><a href="${esc(p.repo)}">${esc(p.name)}</a><div class="desc">Planned. Open source, so it can be a harness; it needs a definition and one mod.</div></td><td><span class="badge local">planned</span></td><td class="num">0</td></tr>`),
   ].join("")
@@ -384,7 +386,7 @@ function harnessPage(h: Harness) {
   const body = `<div class="wrap page"><main>
 <div class="crumbs"><a href="../">harnesses</a> / ${esc(h.id)}</div>
 <h1 class="title">${esc(h.name)}</h1>
-<p class="lead">${esc(h.language ?? "")}. Latest release <b>${esc(h.latest ?? "")}</b>.</p>
+<p class="lead">${esc(h.language ?? "")}. Latest release <b>${esc(rel(h.latest ?? ""))}</b> (tag <code>${esc(h.latest ?? "")}</code>).</p>
 <div class="cmd block"><span class="dollar">$</span><span>open-mods install ${esc(h.id)}/&lt;mod&gt;</span></div>
 <h2>Mods for ${esc(h.name)}</h2>
 ${list.length ? `<div class="table"><table><tbody>${rows}</tbody></table></div>` : `<div class="empty">No mods yet. <a href="../../make-a-mod/">Make the first one.</a></div>`}
@@ -428,5 +430,5 @@ for (const m of mods) write(`mods/${m.harness}/${m.name}/index.html`, modPage(m)
 write("make-a-mod/index.html", makePage())
 write(".nojekyll", "")
 if (process.env.SITE_DOMAIN) write("CNAME", process.env.SITE_DOMAIN.trim() + "\n")
-write("index.json", JSON.stringify({ generated: new Date().toISOString(), harnesses: harnesses.map((h) => ({ id: h.id, name: h.name, latest: h.latest })), mods: mods.map((m) => ({ harness: m.harness, name: m.name, description: m.description, for: m.upstream.ref, behind: behind(m), files: m.files.length })) }, null, 2))
+write("index.json", JSON.stringify({ generated: new Date().toISOString(), harnesses: harnesses.map((h) => ({ id: h.id, name: h.name, latest: rel(h.latest ?? ""), tag: h.latest })), mods: mods.map((m) => ({ harness: m.harness, name: m.name, description: m.description, for: rel(m.upstream.ref), tag: m.upstream.ref, behind: behind(m), files: m.files.length })) }, null, 2))
 console.log(`site: ${mods.length} mod${mods.length === 1 ? "" : "s"}, ${harnesses.length} harness${harnesses.length === 1 ? "" : "es"} → ${path.relative(process.cwd(), out) || "."}`)

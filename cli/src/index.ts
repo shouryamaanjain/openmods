@@ -44,6 +44,9 @@ type Mod = {
 type State = Record<string, { ref: string; commit: string; mods: string[]; off: string[]; hashes: Record<string, string>; artifact: string; enabled: boolean }>
 
 const HOME = process.env.OPEN_MODS_HOME ?? path.join(homedir(), ".open-mods")
+// A release as people see it: "1.18.31" for the tag v1.18.31, "0.155.1" for
+// rust-v0.155.1. The tag itself stays raw in mod.json and in git commands.
+const rel = (ref: string) => ref.replace(/^[^0-9]*/, "")
 const DEFAULT_REGISTRY = "https://github.com/shouryamaanjain/open-mods"
 const GIT_IDENTITY = {
   GIT_AUTHOR_NAME: "open-mods",
@@ -237,7 +240,8 @@ async function applyMods(root: string, mods: Mod[]) {
 
 // Harness install/build commands run with these set, so a build can stamp
 // itself: OPEN_MODS_HARNESS=opencode OPEN_MODS_REF=v1.18.31
-// OPEN_MODS_VERSION=1.18.31 OPEN_MODS_MODS=vim-keys+quiet-startup
+// OPEN_MODS_VERSION=1.18.31 OPEN_MODS_MODS=vim-keys.quiet-startup
+// (dot-separated, so "${OPEN_MODS_VERSION}+${OPEN_MODS_MODS}" is valid semver)
 let buildEnv: Record<string, string> = {}
 
 async function shell(cmd: string, cwd: string) {
@@ -418,7 +422,7 @@ function explainSwitch(h: Harness, entry: State[string]) {
   log("")
   if (entry.enabled) {
     const active = entry.mods.filter((m) => !entry.off.includes(m))
-    log(`\`${h.binary}\` now runs ${h.name} ${entry.ref} + ${active.join(" + ")}${entry.off.length ? ` (off: ${entry.off.join(", ")})` : ""}.`)
+    log(`\`${h.binary}\` now runs ${h.name} ${rel(entry.ref)} + ${active.join(" + ")}${entry.off.length ? ` (off: ${entry.off.join(", ")})` : ""}.`)
     if (stock) log(`Your stock ${h.name} is untouched at ${pretty(stock)}. \`open-mods off\` switches back to it.`)
   } else {
     log(`\`${h.binary}\` runs your stock ${h.name} again${stock ? ` (${pretty(stock)})` : ""}. \`open-mods on\` brings the mods back.`)
@@ -456,7 +460,7 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     rmSync(path.join(HOME, "harnesses", harnessId, "builds"), { recursive: true, force: true })
     delete state[harnessId]
     saveState(state)
-    log(`Removed the modded ${h.name} build${prev ? ` (${prev.ref} + ${prev.mods.join(" + ")})` : ""}: its link, its binary and its patched commits are gone.`)
+    log(`Removed the modded ${h.name} build${prev ? ` (${rel(prev.ref)} + ${prev.mods.join(" + ")})` : ""}: its link, its binary and its patched commits are gone.`)
     log(`\`${h.binary}\` runs your stock ${h.name}. The ${h.name} source checkout stays at ${pretty(root)} as a cache; delete it if you want the space back.`)
     return
   }
@@ -472,7 +476,7 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
   const strays = mods.filter((m) => m.upstream.commit !== base.commit)
   if (strays.length > 0) {
     log(
-      `note: ${strays.map((m) => m.name).join(", ")} were authored against a different ${h.name} release than ${mods[0]!.name} (${base.ref}); trying anyway.`,
+      `note: ${strays.map((m) => m.name).join(", ")} were authored against a different ${h.name} release than ${mods[0]!.name} (${rel(base.ref)}); trying anyway.`,
     )
   }
   await ensureCheckout(h, root, base.commit, base.ref)
@@ -481,9 +485,9 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     OPEN_MODS_HARNESS: harnessId,
     OPEN_MODS_REF: base.ref,
     OPEN_MODS_VERSION: base.ref.replace(/^[^0-9]*/, ""),
-    OPEN_MODS_MODS: mods.map((m) => m.name).join("+"),
+    OPEN_MODS_MODS: mods.map((m) => m.name).join("."),
   }
-  const artifact = keepBuild(h, harnessId, await build(h, root), `${base.ref}+${mods.map((m) => m.name).join("+")}`)
+  const artifact = keepBuild(h, harnessId, await build(h, root), `${rel(base.ref)}+${mods.map((m) => m.name).join(".")}`)
   switchOn(h, artifact)
   state[harnessId] = {
     ref: base.ref,
@@ -509,7 +513,7 @@ async function cmdList() {
   const w = Math.max(...mods.map((m) => `${m.harness}/${m.name}`.length))
   for (const m of mods) {
     const mark = installed[m.harness]?.mods.includes(m.name) ? "*" : " "
-    log(`${mark} ${`${m.harness}/${m.name}`.padEnd(w)}  ${m.upstream.ref.padEnd(9)} ${m.source === "local" ? "(local) " : ""}${m.description}`)
+    log(`${mark} ${`${m.harness}/${m.name}`.padEnd(w)}  ${rel(m.upstream.ref).padEnd(9)} ${m.source === "local" ? "(local) " : ""}${m.description}`)
   }
   log("")
   log(`* = installed${mods.some((m) => m.source === "local") ? `   (local) = unpublished, from ${pretty(LOCAL)}` : ""}`)
@@ -521,11 +525,11 @@ async function cmdInfo() {
   const m = resolveMod(reg, spec)
   const files = touchedFiles(m)
   if (has("json")) return console.log(JSON.stringify({ ...m, dir: undefined, touches: files }, null, 2))
-  log(`${m.harness}/${m.name} for ${m.harness} ${m.upstream.ref}`)
+  log(`${m.harness}/${m.name} for ${m.harness} ${rel(m.upstream.ref)}`)
   log(`  ${m.description}`)
   if (m.author?.name) log(`  by ${m.author.name}${m.author.github ? ` (@${m.author.github})` : ""}`)
   log(`  license ${m.license}`)
-  log(`  built against ${m.harness} ${m.upstream.ref} (${m.upstream.commit.slice(0, 12)})`)
+  log(`  built against ${m.harness} ${rel(m.upstream.ref)} (tag ${m.upstream.ref}, ${m.upstream.commit.slice(0, 12)})`)
   if (m.tags?.length) log(`  tags ${m.tags.join(", ")}`)
   log(`  patches`)
   for (const p of m.patches) log(`    ${p}`)
@@ -591,7 +595,7 @@ async function cmdStatus() {
     const runs = e.enabled && built && onPath ? "modded" : "stock"
     log(`${h.binary} → ${runs}`)
     const active = e.mods.filter((m) => !e.off.includes(m))
-    log(`  modded  ${h.name} ${e.ref} + ${active.join(" + ") || "(nothing)"}  ${e.enabled ? "on" : "off (open-mods on)"}${built || !active.length ? "" : "  [not built; run open-mods update]"}`)
+    log(`  modded  ${h.name} ${rel(e.ref)} + ${active.join(" + ") || "(nothing)"}  ${e.enabled ? "on" : "off (open-mods on)"}${built || !active.length ? "" : "  [not built; run open-mods update]"}`)
     for (const m of e.off) log(`          ${m} is off (open-mods on ${id}/${m})`)
     log(`  stock   ${stock ? `${(await versionOf(stock)) ?? "?"}  ${pretty(stock)}` : "not found on PATH"}`)
     if (e.enabled && !onPath) log(`  note    ${pretty(BIN)} is not on PATH in this shell; open a new terminal or run: export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"`)
@@ -683,7 +687,7 @@ async function cmdUpdate() {
       active.length > 0 &&
       active.every((m) => m.upstream.commit === e.commit && e.hashes[m.name] === patchHash(m))
     if (same && !has("force")) {
-      log(`${loadHarness(reg, id).name} ${e.ref} + ${active.map((m) => m.name).join(" + ")} is already up to date.`)
+      log(`${loadHarness(reg, id).name} ${rel(e.ref)} + ${active.map((m) => m.name).join(" + ")} is already up to date.`)
       continue
     }
     await rebuild(reg, id, mods, e?.off ?? [])
@@ -787,7 +791,7 @@ async function cmdCheck() {
   }
   if (has("json")) console.log(JSON.stringify(result, null, 2))
   else {
-    log(`${result.mod} (made for ${result.madeFor}) against ${ref} (${String(result.commit ?? "?").slice(0, 12)})`)
+    log(`${result.mod} (made for ${rel(String(result.madeFor))}) against ${rel(ref)} (${String(result.commit ?? "?").slice(0, 12)})`)
     log(`  applies: ${result.applies ? "yes" : "NO"}`)
     if (has("build")) log(`  builds:  ${result.builds ? "yes" : "NO"}`)
     if (result.error) log(`  ${String(result.error).split("\n").join("\n  ")}`)
@@ -825,17 +829,17 @@ async function cmdCheckUpdates() {
     // The launcher sources this file, so every value is single-quoted.
     const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
     const lines = [
-      `CURRENT=${q(e.ref)}`,
-      `AVAILABLE=${q(changed ? newest : "")}`,
+      `CURRENT=${q(rel(e.ref))}`,
+      `AVAILABLE=${q(changed ? rel(newest) : "")}`,
       `ALL_SUPPORT=${behind.length === 0 ? 1 : 0}`,
       `MODS=${q(active.map((m) => m.name).join(", "))}`,
-      `BLOCKED=${q(behind.map((m) => `${m.name} is for ${m.upstream.ref}`).join(", "))}`,
+      `BLOCKED=${q(behind.map((m) => `${m.name} is for ${rel(m.upstream.ref)}`).join(", "))}`,
       `CHECKED=${Math.floor(Date.now() / 1000)}`,
     ]
     writeFileSync(note, lines.join("\n") + "\n")
     writeFileSync(`${note}.checked`, `${Math.floor(Date.now() / 1000)}\n`)
     if (has("json")) console.log(JSON.stringify({ current: e.ref, available: changed ? newest : "", allSupport: behind.length === 0, mods: active.map((m) => m.name), blocked: behind.map((m) => m.name) }))
-    else log(changed ? `${id}: ${newest} available${behind.length ? `, blocked by ${behind.map((m) => m.name).join(", ")}` : ", all mods support it"}` : `${id}: up to date (${e.ref})`)
+    else log(changed ? `${id}: ${rel(newest)} available${behind.length ? `, blocked by ${behind.map((m) => m.name).join(", ")}` : ", all mods support it"}` : `${id}: up to date (${rel(e.ref)})`)
   }
 }
 

@@ -19,7 +19,7 @@ describe("stacking", () => {
   test("two mods that touch different files install together", async () => {
     const r = await cli(sb, "install", "fake/greeting", "fake/readme")
     expect(r.code).toBe(0)
-    expect(r.out).toContain("v1.0.0 + greeting + readme")
+    expect(r.out).toContain("1.0.0 + greeting + readme")
     expect(await greeting(sb)).toBe("hello from greeting")
   })
   test("a mod that rewrites the same lines as an installed one is refused, and the build stays", async () => {
@@ -37,7 +37,7 @@ describe("stacking", () => {
   test("uninstalling one of two keeps the other", async () => {
     const r = await cli(sb, "uninstall", "fake/readme")
     expect(r.code).toBe(0)
-    expect(r.out).toContain("v1.0.0 + greeting")
+    expect(r.out).toContain("1.0.0 + greeting")
     expect(await greeting(sb)).toBe("hello from greeting")
   })
 })
