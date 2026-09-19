@@ -26,7 +26,6 @@ type Harness = {
 type Mod = {
   name: string
   harness: string
-  version: string
   description: string
   author?: { name?: string; github?: string; url?: string }
   license: string
@@ -42,7 +41,7 @@ type Mod = {
 }
 
 // mods: every installed mod, in apply order. off: the subset built out for now.
-type State = Record<string, { ref: string; commit: string; mods: string[]; off: string[]; artifact: string; enabled: boolean }>
+type State = Record<string, { ref: string; commit: string; mods: string[]; off: string[]; hashes: Record<string, string>; artifact: string; enabled: boolean }>
 
 const HOME = process.env.OPEN_MODS_HOME ?? path.join(homedir(), ".open-mods")
 const DEFAULT_REGISTRY = "https://github.com/shouryamaanjain/open-mods"
@@ -152,6 +151,14 @@ function resolveMod(reg: string, spec: string): Mod {
   return found[0]!
 }
 
+// A mod's version is the harness release it supports (mod.upstream.ref), so
+// a code change at the same release is noticed by hashing the patches.
+function patchHash(mod: Mod): string {
+  const hasher = new Bun.CryptoHasher("sha256")
+  for (const p of mod.patches) hasher.update(readFileSync(path.join(mod.dir, p)))
+  return hasher.digest("hex").slice(0, 16)
+}
+
 function touchedFiles(mod: Mod): string[] {
   const files = new Set<string>()
   for (const p of mod.patches) {
@@ -176,6 +183,7 @@ const loadState = (): State => {
         commit: e.commit ?? "",
         mods: e.mods ?? [],
         off: e.off ?? [],
+        hashes: e.hashes ?? {},
         artifact: e.artifact ?? "",
         enabled: e.enabled ?? existsSync(path.join(HOME, "bin", id)),
       },
@@ -217,7 +225,7 @@ async function ensureCheckout(h: Harness, root: string, commit: string, ref: str
 
 async function applyMods(root: string, mods: Mod[]) {
   for (const mod of mods) {
-    log(`Applying ${mod.harness}/${mod.name}@${mod.version} (${mod.patches.length} patch${mod.patches.length === 1 ? "" : "es"})`)
+    log(`Applying ${mod.harness}/${mod.name} (${mod.patches.length} patch${mod.patches.length === 1 ? "" : "es"})`)
     const files = mod.patches.map((p) => path.join(mod.dir, p))
     const r = await $`git -C ${root} am -3 --quiet ${files}`.env({ ...process.env, ...GIT_IDENTITY }).nothrow()
     if (r.exitCode !== 0) {
@@ -386,7 +394,7 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
   const mods = all.filter((m) => !off.includes(m.name))
   if (mods.length === 0) {
     switchOff(h)
-    state[harnessId] = { ...(state[harnessId] ?? { ref: all[0]!.upstream.ref, commit: all[0]!.upstream.commit, artifact: "" }), mods: all.map((m) => m.name), off: [...off], enabled: false }
+    state[harnessId] = { ...(state[harnessId] ?? { ref: all[0]!.upstream.ref, commit: all[0]!.upstream.commit, artifact: "" }), mods: all.map((m) => m.name), off: [...off], hashes: {}, enabled: false }
     saveState(state)
     log(`Every ${h.name} mod is off (${off.join(", ")}), so \`${h.binary}\` runs your stock ${h.name}. \`open-mods on ${harnessId}/${off[0]}\` brings one back.`)
     return
@@ -408,7 +416,15 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
   }
   const artifact = await build(h, root)
   switchOn(h, artifact)
-  state[harnessId] = { ref: base.ref, commit: base.commit, mods: all.map((m) => m.name), off: off.filter((n) => all.some((m) => m.name === n)), artifact, enabled: true }
+  state[harnessId] = {
+    ref: base.ref,
+    commit: base.commit,
+    mods: all.map((m) => m.name),
+    off: off.filter((n) => all.some((m) => m.name === n)),
+    hashes: Object.fromEntries(mods.map((m) => [m.name, patchHash(m)])),
+    artifact,
+    enabled: true,
+  }
   saveState(state)
   explainSwitch(h, state[harnessId]!)
 }
@@ -424,7 +440,7 @@ async function cmdList() {
   const w = Math.max(...mods.map((m) => `${m.harness}/${m.name}`.length))
   for (const m of mods) {
     const mark = installed[m.harness]?.mods.includes(m.name) ? "*" : " "
-    log(`${mark} ${`${m.harness}/${m.name}`.padEnd(w)}  ${m.version.padEnd(7)} ${m.upstream.ref.padEnd(9)} ${m.source === "local" ? "(local) " : ""}${m.description}`)
+    log(`${mark} ${`${m.harness}/${m.name}`.padEnd(w)}  ${m.upstream.ref.padEnd(9)} ${m.source === "local" ? "(local) " : ""}${m.description}`)
   }
   log("")
   log(`* = installed${mods.some((m) => m.source === "local") ? `   (local) = unpublished, from ${pretty(LOCAL)}` : ""}`)
@@ -436,7 +452,7 @@ async function cmdInfo() {
   const m = resolveMod(reg, spec)
   const files = touchedFiles(m)
   if (has("json")) return console.log(JSON.stringify({ ...m, dir: undefined, touches: files }, null, 2))
-  log(`${m.harness}/${m.name} ${m.version}`)
+  log(`${m.harness}/${m.name} for ${m.harness} ${m.upstream.ref}`)
   log(`  ${m.description}`)
   if (m.author?.name) log(`  by ${m.author.name}${m.author.github ? ` (@${m.author.github})` : ""}`)
   log(`  license ${m.license}`)
@@ -589,8 +605,19 @@ async function cmdUpdate() {
   const state = loadState()
   const ids = positional[1] ? [positional[1]] : Object.keys(state)
   for (const id of ids) {
-    const mods = (state[id]?.mods ?? []).map((n) => resolveMod(reg, `${id}/${n}`))
-    await rebuild(reg, id, mods, state[id]?.off ?? [])
+    const e = state[id]
+    const mods = (e?.mods ?? []).map((n) => resolveMod(reg, `${id}/${n}`))
+    const active = mods.filter((m) => !e?.off.includes(m.name))
+    const same =
+      e &&
+      existsSync(e.artifact) &&
+      active.length > 0 &&
+      active.every((m) => m.upstream.commit === e.commit && e.hashes[m.name] === patchHash(m))
+    if (same && !has("force")) {
+      log(`${loadHarness(reg, id).name} ${e.ref} + ${active.map((m) => m.name).join(" + ")} is already up to date.`)
+      continue
+    }
+    await rebuild(reg, id, mods, e?.off ?? [])
   }
 }
 
@@ -634,7 +661,6 @@ async function cmdPack() {
     $schema: path.relative(out, path.join(reg, "schema", "mod.schema.json")).replaceAll("\\", "/"),
     name,
     harness: harness.id,
-    version: existing.version ?? "0.1.0",
     description: existing.description ?? "TODO: one line, under 200 characters",
     author: existing.author ?? { name: author },
     license: existing.license ?? "MIT",
@@ -663,7 +689,7 @@ async function cmdCheck() {
   const h = loadHarness(reg, mod.harness)
   const ref = flag("ref") ?? mod.upstream.ref
   const root = flag("workspace") ? path.resolve(flag("workspace")!) : path.join(tmpdir(), `open-mods-check-${mod.harness}`)
-  const result: Record<string, unknown> = { mod: `${mod.harness}/${mod.name}`, version: mod.version, ref, touches: touchedFiles(mod) }
+  const result: Record<string, unknown> = { mod: `${mod.harness}/${mod.name}`, madeFor: mod.upstream.ref, ref, touches: touchedFiles(mod) }
   try {
     if (!existsSync(path.join(root, ".git"))) {
       mkdirSync(root, { recursive: true })
@@ -692,7 +718,7 @@ async function cmdCheck() {
   }
   if (has("json")) console.log(JSON.stringify(result, null, 2))
   else {
-    log(`${result.mod} ${result.version} against ${ref} (${String(result.commit ?? "?").slice(0, 12)})`)
+    log(`${result.mod} (made for ${result.madeFor}) against ${ref} (${String(result.commit ?? "?").slice(0, 12)})`)
     log(`  applies: ${result.applies ? "yes" : "NO"}`)
     if (has("build")) log(`  builds:  ${result.builds ? "yes" : "NO"}`)
     if (result.error) log(`  ${String(result.error).split("\n").join("\n  ")}`)
@@ -717,7 +743,7 @@ usage
   open-mods on                              \`opencode\` runs the modded build again (instant)
   open-mods off <harness>/<mod>             build that one mod out; it stays installed
   open-mods on <harness>/<mod>              build it back in
-  open-mods update [harness]                refresh the registry and rebuild
+  open-mods update [harness]                refresh the registry; rebuild if a mod or its release changed
 
 how it works
   Your stock harness is never modified. The modded build lives in ${pretty(HOME)},

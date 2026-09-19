@@ -4,7 +4,7 @@
   "title": "OpenMods mod manifest",
   "description": "A mod is an ordered series of git patches against a pinned commit of an open-source agent harness.",
   "type": "object",
-  "required": ["name", "harness", "version", "description", "license", "upstream", "patches"],
+  "required": ["name", "harness", "description", "license", "upstream", "patches"],
   "additionalProperties": false,
   "properties": {
     "$schema": { "type": "string" },
@@ -16,11 +16,6 @@
     "harness": {
       "type": "string",
       "description": "Id of a harness defined in harnesses/<id>.json."
-    },
-    "version": {
-      "type": "string",
-      "pattern": "^\\d+\\.\\d+\\.\\d+$",
-      "description": "Semver of the mod itself."
     },
     "description": { "type": "string", "maxLength": 200 },
     "author": {
@@ -44,7 +39,7 @@
       "required": ["ref", "commit"],
       "additionalProperties": false,
       "properties": {
-        "ref": { "type": "string", "description": "The harness release tag the patches were authored against, e.g. v1.18.31." },
+        "ref": { "type": "string", "description": "The harness release this mod supports, e.g. v1.18.31. This is the mod's version; CI moves it forward when the patches still apply and build on a newer release." },
         "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$", "description": "The exact commit that ref pointed at." }
       }
     },

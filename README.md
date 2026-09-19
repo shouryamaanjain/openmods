@@ -43,7 +43,7 @@ Mods you are still working on, or do not want to publish, go under `~/.open-mods
 
 ```
 mods/opencode/<mod>/
-  mod.json          name, version, license, pinned upstream ref + commit
+  mod.json          name, license, the harness release it supports (its version)
   patches/0001-…    git format-patch output, applied in order with git am
   README.md
 ```
