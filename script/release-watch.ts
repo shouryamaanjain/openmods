@@ -24,7 +24,7 @@ const flag = (k: string) => {
 const has = (k: string) => args.includes(`--${k}`)
 const root = path.resolve(flag("registry") ?? path.resolve(import.meta.dir, ".."))
 
-const releaseKey = (ref: string) => ref.replace(/^v/, "").split(/[.+-]/).map((x) => Number(x) || 0)
+const releaseKey = (ref: string) => ref.replace(/^[^0-9]*/, "").split(/[.+-]/).map((x) => Number(x) || 0)
 const newer = (a: string, b: string) => {
   const [x, y] = [releaseKey(a), releaseKey(b)]
   for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0)

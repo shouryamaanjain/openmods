@@ -44,7 +44,7 @@ type Mod = {
 
 const readJson = (f: string) => JSON.parse(readFileSync(f, "utf8"))
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!)
-const releaseKey = (ref: string) => ref.replace(/^v/, "").split(/[.+-]/).map((x) => Number(x) || 0)
+const releaseKey = (ref: string) => ref.replace(/^[^0-9]*/, "").split(/[.+-]/).map((x) => Number(x) || 0)
 const newer = (a: string, b: string) => {
   const [x, y] = [releaseKey(a), releaseKey(b)]
   for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0)
@@ -124,7 +124,7 @@ for (const h of harnesses) h.latest = await latestRelease(h, mods.filter((m) => 
 const PLANNED = [
   { id: "codex", name: "Codex CLI", repo: "https://github.com/openai/codex" },
   { id: "fx", name: "fx", repo: "https://github.com/vercel-labs/fx" },
-]
+].filter((p) => !harnesses.some((h) => h.id === p.id))
 
 // ------------------------------------------------------------------ html
 

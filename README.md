@@ -27,10 +27,10 @@ The installer clones the registry under `~/.open-mods`, puts an `open-mods` comm
 | harness | repo | status |
 | --- | --- | --- |
 | `opencode` | [anomalyco/opencode](https://github.com/anomalyco/opencode) | supported |
-| `codex` | [openai/codex](https://github.com/openai/codex) | planned |
+| `codex` | [openai/codex](https://github.com/openai/codex) | supported |
 | `fx` | [vercel-labs/fx](https://github.com/vercel-labs/fx) | planned |
 
-Anything open source with a build command can be a harness. See [`harnesses/`](harnesses).
+Anything open source with a build command can be a harness. See [`harnesses/`](harnesses). Each harness builds with its own toolchain: OpenCode with the Bun version its release pins, which the CLI installs for you; Codex with Rust, where `rustup` picks up the toolchain the release pins on its own. A Codex build from source takes about twenty minutes the first time.
 
 ## Mods
 

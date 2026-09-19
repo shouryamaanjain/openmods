@@ -480,7 +480,7 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
   buildEnv = {
     OPEN_MODS_HARNESS: harnessId,
     OPEN_MODS_REF: base.ref,
-    OPEN_MODS_VERSION: base.ref.replace(/^v/, ""),
+    OPEN_MODS_VERSION: base.ref.replace(/^[^0-9]*/, ""),
     OPEN_MODS_MODS: mods.map((m) => m.name).join("+"),
   }
   const artifact = keepBuild(h, harnessId, await build(h, root), `${base.ref}+${mods.map((m) => m.name).join("+")}`)
@@ -776,7 +776,7 @@ async function cmdCheck() {
       await $`git -C ${root} am --abort`.nothrow().quiet()
     } else if (has("build")) {
       await checkRequirements(h)
-      buildEnv = { OPEN_MODS_HARNESS: h.id, OPEN_MODS_REF: ref, OPEN_MODS_VERSION: ref.replace(/^v/, ""), OPEN_MODS_MODS: mod.name }
+      buildEnv = { OPEN_MODS_HARNESS: h.id, OPEN_MODS_REF: ref, OPEN_MODS_VERSION: ref.replace(/^[^0-9]*/, ""), OPEN_MODS_MODS: mod.name }
       const artifact = await build(h, root)
       result.builds = true
       result.artifact = artifact
@@ -798,7 +798,7 @@ async function cmdCheck() {
 // Compare what is installed with what the registry now says, and leave a
 // note for the launcher. Runs in the background from the launcher once a
 // day; safe to run by hand.
-const releaseKey = (ref: string) => ref.replace(/^v/, "").split(/[.+-]/).map((x) => Number(x) || 0)
+const releaseKey = (ref: string) => ref.replace(/^[^0-9]*/, "").split(/[.+-]/).map((x) => Number(x) || 0)
 const newerRelease = (a: string, b: string) => {
   const [x, y] = [releaseKey(a), releaseKey(b)]
   for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0)
