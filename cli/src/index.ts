@@ -7,7 +7,7 @@
 // The stock install of the harness is never touched.
 
 import { $ } from "bun"
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs"
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import path from "node:path"
 
@@ -284,6 +284,23 @@ async function build(h: Harness, root: string) {
   return artifact
 }
 
+// A harness's build script may wipe its output folder before compiling, so
+// a build that fails would leave nothing to run. Each successful build is
+// copied to its own folder and the launcher points there; the previous copy
+// stays until the new one exists, then the rest are cleared out.
+function keepBuild(h: Harness, harnessId: string, artifact: string, stamp: string) {
+  const builds = path.join(HOME, "harnesses", harnessId, "builds")
+  const name = stamp.replace(/[^A-Za-z0-9._+-]/g, "_")
+  const dest = path.join(builds, name)
+  rmSync(dest, { recursive: true, force: true })
+  mkdirSync(dest, { recursive: true })
+  cpSync(path.dirname(artifact), dest, { recursive: true })
+  const kept = path.join(dest, path.basename(artifact))
+  if (!existsSync(kept)) fail(`could not copy the build to ${dest}`)
+  for (const d of readdirSync(builds)) if (d !== name) rmSync(path.join(builds, d), { recursive: true, force: true })
+  return kept
+}
+
 // ------------------------------------------------------------- switching
 //
 // ~/.open-mods/bin sits first on PATH. A modded build is "on" when its
@@ -436,6 +453,7 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     }
     const dist = path.dirname(path.dirname(artifactPath(h, root)))
     if (existsSync(dist)) rmSync(dist, { recursive: true, force: true })
+    rmSync(path.join(HOME, "harnesses", harnessId, "builds"), { recursive: true, force: true })
     delete state[harnessId]
     saveState(state)
     log(`Removed the modded ${h.name} build${prev ? ` (${prev.ref} + ${prev.mods.join(" + ")})` : ""}: its link, its binary and its patched commits are gone.`)
@@ -465,7 +483,7 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     OPEN_MODS_VERSION: base.ref.replace(/^v/, ""),
     OPEN_MODS_MODS: mods.map((m) => m.name).join("+"),
   }
-  const artifact = await build(h, root)
+  const artifact = keepBuild(h, harnessId, await build(h, root), `${base.ref}+${mods.map((m) => m.name).join("+")}`)
   switchOn(h, artifact)
   state[harnessId] = {
     ref: base.ref,
@@ -751,7 +769,7 @@ async function cmdCheck() {
     await $`git -C ${root} checkout -q --force --detach ${ref}`
     result.commit = (await $`git -C ${root} rev-parse HEAD`.text()).trim()
     const files = mod.patches.map((p) => path.join(mod.dir, p))
-    const am = await $`git -C ${root} am -3 --quiet ${files}`.env({ ...process.env, ...GIT_IDENTITY }).nothrow()
+    const am = await $`git -C ${root} am -3 --quiet ${files}`.env({ ...process.env, ...GIT_IDENTITY }).nothrow().quiet()
     result.applies = am.exitCode === 0
     if (!result.applies) {
       result.error = (am.stderr.toString() + am.stdout.toString()).trim()
@@ -864,6 +882,7 @@ options
 files
   ${pretty(BIN)}/<binary>          the modded executable (present only while on)
   ${pretty(HOME)}/harnesses/<id>/src    the patched checkout
+  ${pretty(HOME)}/harnesses/<id>/builds the current modded build (kept until a newer one succeeds)
   ${pretty(HOME)}/state.json            installed mods
   ${pretty(HOME)}/toolchains/           the exact bun version each harness release pins
   ${pretty(LOCAL)}/<harness>/<mod>    your own unpublished mods
