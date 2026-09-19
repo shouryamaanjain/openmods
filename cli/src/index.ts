@@ -807,7 +807,8 @@ async function cmdCheck() {
       await clearApplyState(root)
     } else if (has("build")) {
       await checkRequirements(h)
-      buildEnv = { OPEN_MODS_HARNESS: h.id, OPEN_MODS_REF: ref, OPEN_MODS_VERSION: ref.replace(/^[^0-9]*/, ""), OPEN_MODS_MODS: mod.name }
+      // The stamp must be valid semver build metadata: mod names are, "(stock)" is not.
+      buildEnv = { OPEN_MODS_HARNESS: h.id, OPEN_MODS_REF: ref, OPEN_MODS_VERSION: rel(ref), OPEN_MODS_MODS: mod.patches.length ? mod.name : "stock" }
       const artifact = await build(h, root)
       result.builds = true
       result.artifact = artifact
