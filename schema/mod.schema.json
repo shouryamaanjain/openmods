@@ -4,10 +4,19 @@
   "title": "OpenMods mod manifest",
   "description": "A mod is an ordered series of git patches against a pinned commit of an open-source agent harness.",
   "type": "object",
-  "required": ["name", "harness", "description", "license", "upstream", "patches"],
+  "required": [
+    "name",
+    "harness",
+    "description",
+    "license",
+    "upstream",
+    "patches"
+  ],
   "additionalProperties": false,
   "properties": {
-    "$schema": { "type": "string" },
+    "$schema": {
+      "type": "string"
+    },
     "name": {
       "type": "string",
       "pattern": "^[a-z0-9][a-z0-9-]{1,63}$",
@@ -17,42 +26,81 @@
       "type": "string",
       "description": "Id of a harness defined in harnesses/<id>.json."
     },
-    "description": { "type": "string", "maxLength": 200 },
+    "description": {
+      "type": "string",
+      "maxLength": 200
+    },
     "author": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "name": { "type": "string" },
-        "github": { "type": "string" },
-        "url": { "type": "string" }
+        "name": {
+          "type": "string"
+        },
+        "github": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
       }
     },
-    "license": { "type": "string", "description": "SPDX identifier, e.g. MIT." },
-    "homepage": { "type": "string" },
+    "license": {
+      "type": "string",
+      "description": "SPDX identifier, e.g. MIT."
+    },
+    "homepage": {
+      "type": "string"
+    },
     "tags": {
       "type": "array",
-      "items": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9-]+$"
+      },
       "uniqueItems": true
     },
     "upstream": {
       "type": "object",
-      "required": ["ref", "commit"],
+      "required": [
+        "ref",
+        "commit"
+      ],
       "additionalProperties": false,
       "properties": {
-        "ref": { "type": "string", "description": "The harness release this mod supports, e.g. v1.18.31. This is the mod's version; CI moves it forward when the patches still apply and build on a newer release." },
-        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$", "description": "The exact commit that ref pointed at." }
+        "ref": {
+          "type": "string",
+          "description": "The harness release this mod supports, e.g. v1.18.31. This is the mod's version; CI moves it forward when the patches still apply and build on a newer release."
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$",
+          "description": "The exact commit that ref pointed at."
+        }
       }
     },
     "patches": {
       "type": "array",
       "minItems": 1,
-      "items": { "type": "string", "pattern": "^patches/\\d{4}-[A-Za-z0-9._-]+\\.patch$" },
+      "items": {
+        "type": "string",
+        "pattern": "^patches/\\d{4}-[A-Za-z0-9._-]+\\.patch$"
+      },
       "description": "Applied in order with git am. Generate with git format-patch."
     },
     "conflicts": {
       "type": "array",
-      "items": { "type": "string" },
+      "items": {
+        "type": "string"
+      },
       "description": "Mods in the same harness known not to stack with this one."
+    },
+    "maintainers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "GitHub handles CI mentions when a new harness release breaks this mod. Defaults to author.github."
     }
   }
 }

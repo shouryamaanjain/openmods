@@ -1,0 +1,95 @@
+name: release watch
+
+# Every hour: has any harness published a new release? If so, test every mod
+# for it against that release. Mods that still apply and build get their
+# supported release moved forward (their version bump). Mods that do not keep
+# their current release, get a status.json the site shows in yellow, and an
+# issue that mentions their maintainers.
+
+on:
+  schedule:
+    - cron: "7 * * * *"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Test against this release tag instead of the newest one"
+        required: false
+      harness:
+        description: "Only this harness id"
+        required: false
+
+concurrency:
+  group: release-watch
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      latest: ${{ steps.plan.outputs.latest }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - id: plan
+        run: |
+          bun script/release-watch.ts plan \
+            ${{ inputs.ref && format('--ref {0}', inputs.ref) || '' }} \
+            ${{ inputs.harness && format('--harness {0}', inputs.harness) || '' }}
+
+  check:
+    runs-on: ubuntu-latest
+    needs: plan
+    if: ${{ needs.plan.outputs.matrix != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: ${{ matrix.mod }} on ${{ matrix.ref }}
+        run: |
+          mkdir -p results
+          bun cli/src/index.ts check ${{ matrix.mod }} --ref ${{ matrix.ref }} --build --json \
+            > "results/$(echo '${{ matrix.mod }}' | tr / _).json" || true
+          cat results/*.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: result-${{ strategy.job-index }}
+          path: results/*.json
+
+  apply:
+    runs-on: ubuntu-latest
+    needs: check
+    if: ${{ always() && needs.plan.outputs.matrix != '[]' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: result-*
+          merge-multiple: true
+          path: results
+      - name: Bump what passed, mark what failed, tell maintainers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bun script/release-watch.ts apply results --issues
+      - name: Commit
+        run: |
+          git config user.name "open-mods bot"
+          git config user.email "bot@open-mods"
+          git add mods
+          git diff --cached --quiet && exit 0
+          git commit -F results/COMMIT_MSG
+          git push
