@@ -21,7 +21,10 @@ mkdir -p "$OM/bin"
 if [ -d "$OM/registry/.git" ]; then
   git -C "$OM/registry" pull -q --ff-only || true
 else
-  git clone -q --depth 1 "$REG" "$OM/registry"
+  case "$REG" in
+    http*|git@*|ssh://*) git clone -q --depth 1 "$REG" "$OM/registry" ;;
+    *) git clone -q "$REG" "$OM/registry" ;;
+  esac
 fi
 
 cat > "$OM/bin/open-mods" <<'WRAP'
