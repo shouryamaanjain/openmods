@@ -40,6 +40,9 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     needs: build
+    # GitHub Pages needs a public repo on the free plan. Until the repo is
+    # public the build job still proves the site generates; only the deploy waits.
+    if: ${{ !github.event.repository.private }}
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
