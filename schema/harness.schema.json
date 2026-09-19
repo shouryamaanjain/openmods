@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/shouryamaanjain/open-mods/main/schema/harness.schema.json",
+  "title": "OpenMods harness definition",
+  "type": "object",
+  "required": ["id", "name", "repo", "binary", "install", "build", "artifact"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+    "name": { "type": "string" },
+    "repo": { "type": "string", "format": "uri", "description": "Git URL of the upstream harness." },
+    "homepage": { "type": "string" },
+    "license": { "type": "string" },
+    "language": { "type": "string" },
+    "binary": { "type": "string", "description": "Name of the executable the harness installs, e.g. opencode." },
+    "requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["command", "hint"],
+        "properties": {
+          "command": { "type": "string" },
+          "hint": { "type": "string" }
+        }
+      }
+    },
+    "install": { "type": "string", "description": "Shell command run in the checkout root before building." },
+    "build": { "type": "string", "description": "Shell command run in the checkout root that produces the artifact." },
+    "artifact": {
+      "type": "string",
+      "description": "Path of the built executable relative to the checkout root. {os} and {arch} are substituted with Node's process.platform and process.arch."
+    },
+    "releaseTagPattern": { "type": "string", "description": "Glob for release tags, used by the compatibility checker." }
+  }
+}
