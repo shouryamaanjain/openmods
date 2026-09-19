@@ -51,6 +51,8 @@ This clones the harness into a temp directory, applies your patches at the pinne
 
 One mod per PR. The PR description should say what the mod does and include a screenshot or recording if it changes the UI.
 
+A mod changes the harness itself. That is the whole point: it reaches what plugins, skills and MCP servers cannot. A submission that only adds a skill, a plugin or an MCP server belongs in that system's own channel, such as npm, skills.sh or the harness's config, and will be pointed there. If your mod adds a new tool or behavior the agent needs to know about, describe it in the harness's own source, where its built-in tools are described, rather than shipping a skill beside it.
+
 Reviewers look for:
 
 - Patches that apply at the pinned commit and build.
