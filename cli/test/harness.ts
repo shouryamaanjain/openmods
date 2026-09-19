@@ -76,6 +76,7 @@ export async function createHarness(sb: Sandbox, opts: { build?: string } = {}) 
       repo: sb.harness,
       binary: "greet",
       install: "true",
+      typecheck: "sh -n greet.sh",
       build: opts.build ?? "mkdir -p out/bin && cp greet.sh out/bin/greet && chmod +x out/bin/greet",
       artifact: "out/bin/greet",
       releaseTagPattern: "v*",

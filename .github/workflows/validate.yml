@@ -54,5 +54,21 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup || true
+      - id: harness
+        run: echo "id=$(echo '${{ matrix.mod }}' | cut -d/ -f2)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.bun/install/cache
+            work/${{ steps.harness.outputs.id }}/codex-rs/target
+            work/${{ steps.harness.outputs.id }}/node_modules
+          key: build-${{ steps.harness.outputs.id }}-pr-${{ github.sha }}
+          restore-keys: |
+            build-${{ steps.harness.outputs.id }}-
+      # The one full build per mod: on its pull request. The release watch typechecks afterwards.
       - name: Apply and build ${{ matrix.mod }}
-        run: bun cli/src/index.ts check ${{ matrix.mod }} --build
+        run: bun cli/src/index.ts check ${{ matrix.mod }} --build --workspace work/${{ steps.harness.outputs.id }}

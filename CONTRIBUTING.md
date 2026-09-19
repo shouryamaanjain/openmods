@@ -45,7 +45,7 @@ open-mods pack ../opencode --name my-mod           # ready to publish
 open-mods check mods/opencode/my-mod --build
 ```
 
-This clones the harness into a temp directory, applies your patches at the pinned commit, and builds. CI runs the same command on every pull request.
+This clones the harness into a temp directory, applies your patches at the pinned commit, and builds. CI runs the same command on every pull request. `--typecheck` instead of `--build` is the quick version, and what the release watch runs against each new release.
 
 ## 4. Open a pull request
 
@@ -73,4 +73,4 @@ Open a PR. Mods have no version number of their own: a mod is "for OpenCode 1.19
 
 ## Adding a harness
 
-Add `harnesses/<id>.json` following `schema/harness.schema.json`. It needs the git URL, the install and build commands, and the path of the built executable. Open a PR with one example mod so the pipeline is exercised end to end.
+Add `harnesses/<id>.json` following `schema/harness.schema.json`. It needs the git URL, the install, typecheck and build commands, and the path of the built executable. Open a PR with one example mod so the pipeline is exercised end to end.

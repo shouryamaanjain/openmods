@@ -8,10 +8,17 @@
   "language": "TypeScript (Bun, SolidJS, opentui)",
   "binary": "opencode",
   "requirements": [
-    { "command": "bun", "hint": "Install Bun from https://bun.sh (the exact version a release pins is provisioned automatically)" },
-    { "command": "git", "hint": "Install git" }
+    {
+      "command": "bun",
+      "hint": "Install Bun from https://bun.sh (the exact version a release pins is provisioned automatically)"
+    },
+    {
+      "command": "git",
+      "hint": "Install git"
+    }
   ],
   "install": "bun install",
+  "typecheck": "bun run typecheck",
   "build": "OPENCODE_VERSION=\"${OPEN_MODS_VERSION}+${OPEN_MODS_MODS}\" OPENCODE_CHANNEL=open-mods bun run packages/opencode/script/build.ts --single --skip-install",
   "artifact": "packages/opencode/dist/opencode-{os}-{arch}/bin/opencode",
   "releaseTagPattern": "v*"

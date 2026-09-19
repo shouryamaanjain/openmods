@@ -18,6 +18,7 @@ type Harness = {
   binary: string
   requirements?: { command: string; hint: string }[]
   install: string
+  typecheck?: string
   build: string
   artifact: string
   releaseTagPattern?: string
@@ -253,10 +254,12 @@ async function applyMods(root: string, mods: Mod[]) {
 // (dot-separated, so "${OPEN_MODS_VERSION}+${OPEN_MODS_MODS}" is valid semver)
 let buildEnv: Record<string, string> = {}
 
+class CommandFailed extends Error {}
+
 async function shell(cmd: string, cwd: string) {
   const proc = Bun.spawn(["sh", "-c", cmd], { cwd, stdio: ["inherit", "inherit", "inherit"], env: { ...process.env, ...buildEnv } })
   const code = await proc.exited
-  if (code !== 0) fail(`command failed (${code}): ${cmd}`)
+  if (code !== 0) throw new CommandFailed(`command failed (${code}): ${cmd}`)
 }
 
 // A harness release pins its toolchain (package.json "packageManager":
@@ -283,6 +286,18 @@ async function ensureToolchain(root: string): Promise<string | null> {
     if (r.exitCode !== 0 || !existsSync(path.join(bin, "bun"))) fail(`could not install bun ${want}: ${r.stderr.toString().trim().split("\n").at(-1)}`)
   }
   return bin
+}
+
+// The compiler's front half: verifies every name, type and signature a mod
+// relies on without producing a binary. Minutes instead of the full build.
+async function typecheck(h: Harness, root: string) {
+  const cmd = h.typecheck ?? fail(`${h.name} has no typecheck command in its harness definition`)
+  const toolchain = await ensureToolchain(root)
+  if (toolchain) buildEnv = { ...buildEnv, PATH: `${toolchain}${path.delimiter}${process.env.PATH ?? ""}` }
+  log(`Installing dependencies: ${h.install}`)
+  await shell(h.install, root)
+  log(`Typechecking: ${cmd}`)
+  await shell(cmd, root)
 }
 
 async function build(h: Harness, root: string) {
@@ -496,7 +511,8 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     OPEN_MODS_VERSION: base.ref.replace(/^[^0-9]*/, ""),
     OPEN_MODS_MODS: mods.map((m) => m.name).join("."),
   }
-  const artifact = keepBuild(h, harnessId, await build(h, root), `${rel(base.ref)}+${mods.map((m) => m.name).join(".")}`)
+  const built = await build(h, root).catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)))
+  const artifact = keepBuild(h, harnessId, built, `${rel(base.ref)}+${mods.map((m) => m.name).join(".")}`)
   switchOn(h, artifact)
   state[harnessId] = {
     ref: base.ref,
@@ -775,7 +791,7 @@ async function cmdCheck() {
   // `check --harness <id> --ref <tag> --build` builds the stock harness with no
   // mod: the smoke test for a harness definition, on any machine or in CI.
   const bare = flag("harness")
-  const spec = positional[1] ?? (bare ? undefined : fail("usage: open-mods check <mod-dir | harness/mod> [--ref <tag>] [--build] [--json]\n       open-mods check --harness <id> [--ref <tag>] [--build] [--json]"))
+  const spec = positional[1] ?? (bare ? undefined : fail("usage: open-mods check <mod-dir | harness/mod> [--ref <tag>] [--typecheck | --build] [--json]\n       open-mods check --harness <id> [--ref <tag>] [--typecheck | --build] [--json]"))
   const mod: Mod = spec
     ? existsSync(path.join(spec, "mod.json"))
       ? loadMod(path.resolve(spec))
@@ -811,26 +827,42 @@ async function cmdCheck() {
     if (!result.applies) {
       result.error = (am.stderr.toString() + am.stdout.toString()).trim()
       await clearApplyState(root)
-    } else if (has("build")) {
+    } else if (has("build") || has("typecheck")) {
       await checkRequirements(h)
       // The stamp must be valid semver build metadata: mod names are, "(stock)" is not.
       buildEnv = { OPEN_MODS_HARNESS: h.id, OPEN_MODS_REF: ref, OPEN_MODS_VERSION: rel(ref), OPEN_MODS_MODS: mod.patches.length ? mod.name : "stock" }
-      const artifact = await build(h, root)
-      result.builds = true
-      result.artifact = artifact
+      if (has("typecheck")) {
+        try {
+          await typecheck(h, root)
+          result.typechecks = true
+        } catch (e) {
+          result.typechecks = false
+          result.error = e instanceof Error ? e.message : String(e)
+        }
+      }
+      if (has("build") && result.typechecks !== false) {
+        try {
+          result.artifact = await build(h, root)
+          result.builds = true
+        } catch (e) {
+          result.builds = false
+          result.error = e instanceof Error ? e.message : String(e)
+        }
+      }
     }
   } catch (e) {
     result.applies ??= false
-    result.error = String(e)
+    result.error = e instanceof Error ? e.message : String(e)
   }
   if (has("json")) console.log(JSON.stringify(result, null, 2))
   else {
     log(`${result.mod} (made for ${rel(String(result.madeFor))}) against ${rel(ref)} (${String(result.commit ?? "?").slice(0, 12)})`)
-    log(`  applies: ${result.applies ? "yes" : "NO"}`)
-    if (has("build")) log(`  builds:  ${result.builds ? "yes" : "NO"}`)
+    log(`  applies:    ${result.applies ? "yes" : "NO"}`)
+    if (has("typecheck")) log(`  typechecks: ${result.typechecks ? "yes" : "NO"}`)
+    if (has("build")) log(`  builds:     ${result.builds ? "yes" : "NO"}`)
     if (result.error) log(`  ${String(result.error).split("\n").join("\n  ")}`)
   }
-  if (result.applies !== true || (has("build") && result.builds !== true)) process.exit(1)
+  if (result.applies !== true || (has("typecheck") && result.typechecks !== true) || (has("build") && result.builds !== true)) process.exit(1)
 }
 
 // Compare what is installed with what the registry now says, and leave a
@@ -920,8 +952,8 @@ how it works
 for mod authors
   open-mods pack <checkout> --name <mod>    turn commits on top of a release tag into a mod folder
                             --local         ... under ${pretty(LOCAL)} instead, unpublished but installable
-  open-mods check <mod-dir> [--ref <tag>] [--build] [--json]
-                                            does the mod apply (and build) against a release
+  open-mods check <mod-dir> [--ref <tag>] [--typecheck | --build] [--json]
+                                            does the mod apply, typecheck (minutes) or build (long) against a release
   open-mods check --harness <id> --ref <tag> --build
                                             build the stock harness: the smoke test for a harness definition
 

@@ -66,9 +66,12 @@ Several mods stack on the same checkout. If two of them edit the same lines, the
 A mod is "for" one harness release, and that release is the mod's version. Harnesses move fast, so the registry follows them without waiting for anyone:
 
 1. A job runs every hour and notices when a harness publishes a new release.
-2. Every mod for that harness is applied to the new release and built, in CI.
-3. A mod that passes gets its release moved forward in `mod.json`. That is the whole version bump; the mod's code did not change.
-4. A mod that fails keeps its current release and gets a `status.json` saying which release it does not support. The listing shows it in yellow, and the bot opens an issue that mentions the mod's maintainers with the error and the steps to rebase.
+2. The stock harness is built once at that release, to prove the harness definition still works there. If it does not, every mod for it is held where it is until the definition is fixed.
+3. Every mod for that harness is applied to the new release and typechecked, one job per mod. A typecheck is the compiler's front half: it verifies every name, type and signature the mod relies on, in minutes, without producing a binary. A full build per mod runs once, on its pull request.
+4. A mod that passes gets its release moved forward in `mod.json`. That is the whole version bump; the mod's code did not change.
+5. A mod that fails keeps its current release and gets a `status.json` saying which release it does not support. The listing shows it in yellow, and the bot opens an issue that mentions the mod's maintainers with the error and the steps to rebase.
+
+Compiled dependencies are cached between runs, so a check starts from warm.
 
 On your machine, the `opencode` command in `~/.open-mods/bin` is a small launcher. It starts your build immediately and, once a day, refreshes the registry in the background. When a newer release is supported by every mod you have installed, the next launch asks:
 

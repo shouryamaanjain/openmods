@@ -86,10 +86,13 @@ async function plan() {
       matrix.push({ mod: path.relative(root, dir), harness: h.id, ref })
     }
   }
-  const out = { latest, matrix }
+  // One stock build per harness that has mods to test: proves the harness
+  // still builds at the new release, once, instead of once per mod.
+  const harnessMatrix = [...new Set(matrix.map((m) => m.harness))].map((harness) => ({ harness, ref: latest[harness]! }))
+  const out = { latest, matrix, harnesses: harnessMatrix }
   console.log(JSON.stringify(out, null, 2))
   if (process.env.GITHUB_OUTPUT) {
-    writeFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify(matrix)}\nlatest=${JSON.stringify(latest)}\n`, { flag: "a" })
+    writeFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify(matrix)}\nharnesses=${JSON.stringify(harnessMatrix)}\nlatest=${JSON.stringify(latest)}\n`, { flag: "a" })
   }
 }
 
@@ -137,8 +140,20 @@ async function apply() {
   const files = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".json")) : []
   const bumped: string[] = []
   const broken: string[] = []
+  const held: string[] = []
   let harnessName = ""
   let ref = ""
+  // Stock harness builds come first: a harness whose own build failed at the
+  // new release holds its mods where they are, and records why.
+  const harnessOk = new Map<string, boolean>()
+  for (const f of files) {
+    const r = readJson(path.join(dir, f))
+    if (r?.mod !== undefined || !r?.harness) continue
+    const ok = r.builds === true
+    harnessOk.set(r.harness, ok)
+    const hFile = path.join(root, "harnesses", `${r.harness}.status.json`)
+    writeJson(hFile, { tested: r.ref, builds: ok, error: ok ? undefined : String(r.error ?? "build failed").split("\n").slice(0, 40).join("\n"), checked: new Date().toISOString() })
+  }
   for (const f of files) {
     const r = readJson(path.join(dir, f))
     if (!r?.mod) continue
@@ -150,7 +165,11 @@ async function apply() {
     const h = readJson(path.join(root, "harnesses", `${harness}.json`))
     harnessName = h?.name ?? harness
     ref = r.ref
-    const ok = r.applies === true && r.builds === true
+    if (harnessOk.get(harness!) === false) {
+      held.push(name!)
+      continue
+    }
+    const ok = r.applies === true && (r.builds === true || r.typechecks === true)
     const checked = new Date().toISOString()
     if (ok) {
       mod.upstream = { ref: r.ref, commit: r.commit }
@@ -158,7 +177,7 @@ async function apply() {
       writeJson(path.join(modDir, "status.json"), { tested: r.ref, supports: r.ref, ok: true, checked })
       bumped.push(name!)
     } else {
-      const error = String(r.error ?? (r.applies ? "build failed" : "patches do not apply"))
+      const error = String(r.error ?? (r.applies ? "typecheck failed" : "patches do not apply"))
       writeJson(path.join(modDir, "status.json"), { tested: r.ref, supports: mod.upstream.ref, ok: false, error: error.split("\n").slice(0, 40).join("\n"), checked })
       const issue = has("issues") ? await issueFor(`mods/${harness}/${name}`, mod, r.ref, error) : undefined
       broken.push(`${name}${issue ? ` (${issue})` : ""}`)
@@ -169,6 +188,7 @@ async function apply() {
   const body = [
     ...(bumped.length ? [`Supports it: ${bumped.join(", ")}`] : []),
     ...(broken.length ? [`Needs a maintainer: ${broken.join(", ")}`] : []),
+    ...(held.length ? [`Held, the harness itself did not build at this release: ${held.join(", ")}`] : []),
   ].join("\n")
   const summary = `${title}\n${body.replace(/^/gm, "  ")}`
   console.log(summary)

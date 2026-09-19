@@ -28,6 +28,30 @@ describe("check", () => {
     mkdirSync(path.join(sb.T, "results"), { recursive: true })
     writeFileSync(path.join(sb.T, "results", "friendly.json"), r.out)
   })
+  test("--typecheck runs the harness's typecheck instead of the build", async () => {
+    const r = await cli(sb, "check", modDir(), "--ref", "v1.1.0", "--typecheck", "--json", "--workspace", path.join(sb.T, "check"))
+    expect(r.code, r.all).toBe(0)
+    const j = JSON.parse(r.out)
+    expect(j.applies).toBe(true)
+    expect(j.typechecks).toBe(true)
+    expect(j.builds).toBeUndefined()
+  })
+  test("--typecheck fails when the mod does not typecheck", async () => {
+    const dir = await createMod(sb, "syntax-error", (d) => writeFileSync(path.join(d, "greet.sh"), "#!/bin/sh\necho hello from stock\nif then fi\n"))
+    const r = await cli(sb, "check", dir, "--ref", "v1.1.0", "--typecheck", "--json", "--workspace", path.join(sb.T, "check"))
+    expect(r.code).toBe(1)
+    const j = JSON.parse(r.out)
+    expect(j.applies).toBe(true)
+    expect(j.typechecks).toBe(false)
+  })
+  test("--harness --build builds the stock harness with no mod", async () => {
+    const r = await cli(sb, "check", "--harness", "fake", "--ref", "v1.1.0", "--build", "--json", "--workspace", path.join(sb.T, "check"))
+    expect(r.code).toBe(0)
+    const j = JSON.parse(r.out)
+    expect(j.mod).toBe("fake/(stock)")
+    expect(j.builds).toBe(true)
+    writeFileSync(path.join(sb.T, "harness-ok.json"), JSON.stringify({ harness: "fake", ref: "v1.1.0", builds: true }))
+  })
   test("fails on a release that rewrites the mod's lines", async () => {
     await release(sb, "v2.0.0", setGreeting("hello from stock 2.0"))
     const r = await cli(sb, "check", modDir(), "--ref", "v2.0.0", "--json", "--workspace", path.join(sb.T, "check"))
@@ -37,12 +61,30 @@ describe("check", () => {
 })
 
 describe("release watch", () => {
-  test("plan lists mods not yet on the release", async () => {
+  test("plan lists mods not yet on the release, and one stock build per harness", async () => {
     const r = await script(sb, WATCH, "plan", "--ref", "v1.1.0", "--registry", sb.reg)
     expect(r.code).toBe(0)
-    expect(JSON.parse(r.out).matrix.map((m: { mod: string }) => m.mod).sort()).toEqual(["mods/fake/friendly", "mods/fake/notes"])
+    const j = JSON.parse(r.out)
+    expect(j.matrix.map((m: { mod: string }) => m.mod).sort()).toEqual(["mods/fake/friendly", "mods/fake/notes", "mods/fake/syntax-error"])
+    expect(j.harnesses).toEqual([{ harness: "fake", ref: "v1.1.0" }])
   })
-  test("apply bumps a passing mod to the release", async () => {
+  test("apply holds every mod when the stock harness build failed", async () => {
+    const held = path.join(sb.T, "results-held")
+    mkdirSync(held, { recursive: true })
+    writeFileSync(path.join(held, "friendly.json"), readFileSync(path.join(sb.T, "results", "friendly.json")))
+    writeFileSync(path.join(held, "harness_fake.json"), JSON.stringify({ harness: "fake", ref: "v1.1.0", builds: false, error: "toolchain missing" }))
+    const r = await script(sb, WATCH, "apply", held, "--registry", sb.reg)
+    expect(r.code).toBe(0)
+    expect(r.out).toContain("Held, the harness itself did not build")
+    expect(modJson().upstream.ref).toBe("v1.0.0")
+    const hs = JSON.parse(readFileSync(path.join(sb.reg, "harnesses", "fake.status.json"), "utf8"))
+    expect(hs.builds).toBe(false)
+  })
+  test("apply bumps a mod that typechecked when the stock harness built", async () => {
+    // A typecheck-only result, as the release watch produces, plus the passing harness build.
+    const r0 = JSON.parse(readFileSync(path.join(sb.T, "results", "friendly.json"), "utf8"))
+    writeFileSync(path.join(sb.T, "results", "friendly.json"), JSON.stringify({ ...r0, builds: undefined, typechecks: true }))
+    writeFileSync(path.join(sb.T, "results", "harness_fake.json"), readFileSync(path.join(sb.T, "harness-ok.json")))
     const r = await script(sb, WATCH, "apply", path.join(sb.T, "results"), "--registry", sb.reg)
     expect(r.code).toBe(0)
     expect(r.out).toContain("1 mod now supports it, 0 do not")
