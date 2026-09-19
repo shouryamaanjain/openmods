@@ -2,10 +2,18 @@
   "name": "open-mods-registry",
   "private": true,
   "type": "module",
-  "workspaces": ["cli"],
+  "workspaces": [
+    "cli"
+  ],
   "scripts": {
     "open-mods": "bun cli/src/index.ts",
-    "typecheck": "bun run --cwd cli typecheck",
-    "validate": "bun script/validate.ts"
+    "typecheck": "bunx tsc --noEmit && bun run --cwd cli typecheck",
+    "validate": "bun script/validate.ts",
+    "site": "bun script/site.ts --out site"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.13",
+    "marked": "16",
+    "typescript": "5.9.3"
   }
 }
