@@ -838,7 +838,18 @@ async function cmdCheckUpdates() {
     ]
     writeFileSync(note, lines.join("\n") + "\n")
     writeFileSync(`${note}.checked`, `${Math.floor(Date.now() / 1000)}\n`)
-    if (has("json")) console.log(JSON.stringify({ current: e.ref, available: changed ? newest : "", allSupport: behind.length === 0, mods: active.map((m) => m.name), blocked: behind.map((m) => m.name) }))
+    if (has("json"))
+      console.log(
+        JSON.stringify({
+          current: rel(e.ref),
+          currentTag: e.ref,
+          available: changed ? rel(newest) : "",
+          availableTag: changed ? newest : "",
+          allSupport: behind.length === 0,
+          mods: active.map((m) => m.name),
+          blocked: behind.map((m) => m.name),
+        }),
+      )
     else log(changed ? `${id}: ${rel(newest)} available${behind.length ? `, blocked by ${behind.map((m) => m.name).join(", ")}` : ", all mods support it"}` : `${id}: up to date (${rel(e.ref)})`)
   }
 }
