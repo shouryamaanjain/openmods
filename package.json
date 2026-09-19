@@ -9,7 +9,8 @@
     "open-mods": "bun cli/src/index.ts",
     "typecheck": "bunx tsc --noEmit && bun run --cwd cli typecheck",
     "validate": "bun script/validate.ts",
-    "site": "bun script/site.ts --out site"
+    "site": "bun script/site.ts --out site",
+    "test": "bun test cli/test"
   },
   "devDependencies": {
     "@types/bun": "1.3.13",

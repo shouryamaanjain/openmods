@@ -16,13 +16,13 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import path from "node:path"
 import { $ } from "bun"
 
-const root = path.resolve(import.meta.dir, "..")
 const args = process.argv.slice(2)
 const flag = (k: string) => {
   const i = args.indexOf(`--${k}`)
   return i === -1 ? undefined : args[i + 1]
 }
 const has = (k: string) => args.includes(`--${k}`)
+const root = path.resolve(flag("registry") ?? path.resolve(import.meta.dir, ".."))
 
 const releaseKey = (ref: string) => ref.replace(/^v/, "").split(/[.+-]/).map((x) => Number(x) || 0)
 const newer = (a: string, b: string) => {
@@ -180,6 +180,6 @@ const cmd = args[0]
 if (cmd === "plan") await plan()
 else if (cmd === "apply") await apply()
 else {
-  console.error("usage: release-watch plan [--harness <id>] [--ref <tag>] [--retest] | apply <results-dir> [--issues]")
+  console.error("usage: release-watch plan [--harness <id>] [--ref <tag>] [--retest] | apply <results-dir> [--issues]   (--registry <dir> to run against another checkout)")
   process.exit(1)
 }
