@@ -3,8 +3,13 @@
 // per harness, plus the home page and the "make a mod" guide. No backend;
 // CI regenerates it on every push to main and publishes it to GitHub Pages.
 //
-//   bun script/site.ts [--registry <dir>] [--out <dir>] [--offline]
+//   bun script/site.ts [--registry <dir>] [--out <dir>] [--offline] [--local]
+//
+// --local also lists the unpublished mods under ~/.open-mods/local, marked as
+// such, for previewing the site with content that is not in the registry.
+// SITE_DOMAIN=mods.example.com writes a CNAME file for GitHub Pages.
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
+import { homedir } from "node:os"
 import path from "node:path"
 import { marked } from "marked"
 
@@ -34,6 +39,7 @@ type Mod = {
   status?: { tested: string; supports: string; ok: boolean; error?: string; checked: string }
   files: { path: string; added: number; removed: number; isNew: boolean }[]
   diff: string
+  local?: boolean
 }
 
 const readJson = (f: string) => JSON.parse(readFileSync(f, "utf8"))
@@ -90,8 +96,8 @@ const harnesses: Harness[] = readdirSync(path.join(root, "harnesses"))
   .filter((f) => f.endsWith(".json"))
   .map((f) => readJson(path.join(root, "harnesses", f)))
 
-const mods: Mod[] = harnesses.flatMap((h) => {
-  const dir = path.join(root, "mods", h.id)
+function modsIn(base: string, h: Harness, local: boolean): Mod[] {
+  const dir = path.join(base, h.id)
   if (!existsSync(dir)) return []
   return readdirSync(dir, { withFileTypes: true })
     .filter((d) => d.isDirectory() && existsSync(path.join(dir, d.name, "mod.json")))
@@ -100,8 +106,17 @@ const mods: Mod[] = harnesses.flatMap((h) => {
       const mod = readJson(path.join(mdir, "mod.json"))
       const status = existsSync(path.join(mdir, "status.json")) ? readJson(path.join(mdir, "status.json")) : undefined
       const readme = existsSync(path.join(mdir, "README.md")) ? readFileSync(path.join(mdir, "README.md"), "utf8") : ""
-      return { ...mod, dir: mdir, readme, status, ...parsePatches(mdir, mod.patches) } as Mod
+      return { ...mod, dir: mdir, readme, status, local, ...parsePatches(mdir, mod.patches) } as Mod
     })
+}
+
+const mods: Mod[] = harnesses.flatMap((h) => {
+  const published = modsIn(path.join(root, "mods"), h, false)
+  if (!args.includes("--local")) return published
+  const local = modsIn(path.join(process.env.OPEN_MODS_HOME ?? path.join(homedir(), ".open-mods"), "local"), h, true).filter(
+    (l) => !published.some((p) => p.name === l.name),
+  )
+  return [...published, ...local]
 })
 
 for (const h of harnesses) h.latest = await latestRelease(h, mods.filter((m) => m.harness === h.id))
@@ -263,7 +278,7 @@ function home() {
     .map(
       (m) => `<tr class="mod" data-harness="${m.harness}" data-text="${esc(`${m.harness}/${m.name} ${m.description} ${(m.tags ?? []).join(" ")}`.toLowerCase())}">
 <td class="name"><a href="${modUrl(m, 0)}">${esc(m.harness)}/${esc(m.name)}</a><div class="desc">${esc(m.description)}</div></td>
-<td>${badge(m)}</td>
+<td>${badge(m)}${m.local ? ' <span class="badge local" title="Unpublished; from ~/.open-mods/local on this machine">local</span>' : ""}</td>
 <td class="num hide-sm">${m.files.length} file${m.files.length === 1 ? "" : "s"}</td>
 <td class="num hide-sm"><span class="plus">+${m.files.reduce((n, f) => n + f.added, 0)}</span> <span class="minus">−${m.files.reduce((n, f) => n + f.removed, 0)}</span></td>
 </tr>`,
@@ -412,5 +427,6 @@ for (const h of harnesses) write(`harnesses/${h.id}/index.html`, harnessPage(h))
 for (const m of mods) write(`mods/${m.harness}/${m.name}/index.html`, modPage(m))
 write("make-a-mod/index.html", makePage())
 write(".nojekyll", "")
+if (process.env.SITE_DOMAIN) write("CNAME", process.env.SITE_DOMAIN.trim() + "\n")
 write("index.json", JSON.stringify({ generated: new Date().toISOString(), harnesses: harnesses.map((h) => ({ id: h.id, name: h.name, latest: h.latest })), mods: mods.map((m) => ({ harness: m.harness, name: m.name, description: m.description, for: m.upstream.ref, behind: behind(m), files: m.files.length })) }, null, 2))
 console.log(`site: ${mods.length} mod${mods.length === 1 ? "" : "s"}, ${harnesses.length} harness${harnesses.length === 1 ? "" : "es"} → ${path.relative(process.cwd(), out) || "."}`)

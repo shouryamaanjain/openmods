@@ -80,6 +80,10 @@ Update now? It rebuilds OpenCode, which takes a few minutes. [y/N]
 
 `y` rebuilds and launches the new build. Anything else launches your current build and asks again tomorrow. If one of your mods does not support the new release yet, it says so instead and you stay where you are. It never rebuilds on its own, never asks when `opencode` is not at a terminal, and `OPEN_MODS_NO_PROMPT=1` turns the question off.
 
+## The site
+
+`bun run site` builds the site into `site/` from the registry; `bun script/site.ts --local --out site` also includes your unpublished mods from `~/.open-mods/local` for a preview. The output is plain files, so any static host works. The included workflow publishes to GitHub Pages on every push to main; set the `SITE_DOMAIN` repository variable to the site's domain and point its DNS at GitHub Pages.
+
 ## Making a mod
 
 ```sh

@@ -30,6 +30,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SITE_REPO: ${{ github.repository }}
+          # Set the SITE_DOMAIN repository variable to the site's custom domain,
+          # e.g. mods.example.com, and point that domain's DNS at GitHub Pages.
+          SITE_DOMAIN: ${{ vars.SITE_DOMAIN }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
