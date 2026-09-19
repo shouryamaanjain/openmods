@@ -211,6 +211,15 @@ async function checkRequirements(h: Harness) {
   }
 }
 
+// Leaves no `git am` in progress. `git am --abort` is enough on most git
+// versions, but some leave .git/rebase-apply behind after a failed 3-way
+// apply, and the next `git am` then refuses to start; so the state
+// directory is removed as well. It holds nothing but the aborted apply.
+async function clearApplyState(root: string) {
+  await $`git -C ${root} am --abort`.nothrow().quiet()
+  for (const d of ["rebase-apply", "rebase-merge"]) rmSync(path.join(root, ".git", d), { recursive: true, force: true })
+}
+
 async function ensureCheckout(h: Harness, root: string, commit: string, ref: string) {
   if (!existsSync(path.join(root, ".git"))) {
     log(`Cloning ${h.repo} (blobless, this is a one-time cost)`)
@@ -222,7 +231,7 @@ async function ensureCheckout(h: Harness, root: string, commit: string, ref: str
     log(`Fetching ${ref}`)
     await $`git -C ${root} fetch --no-tags origin tag ${ref}`.quiet()
   }
-  await $`git -C ${root} am --abort`.nothrow().quiet()
+  await clearApplyState(root)
   await $`git -C ${root} checkout -q --force --detach ${commit}`
 }
 
@@ -232,8 +241,8 @@ async function applyMods(root: string, mods: Mod[]) {
     const files = mod.patches.map((p) => path.join(mod.dir, p))
     const r = await $`git -C ${root} am -3 --quiet ${files}`.env({ ...process.env, ...GIT_IDENTITY }).nothrow()
     if (r.exitCode !== 0) {
-      await $`git -C ${root} am --abort`.nothrow().quiet()
-      fail(`${mod.harness}/${mod.name} does not apply cleanly at ${mod.upstream.ref}. It probably conflicts with a mod applied before it.`)
+      await clearApplyState(root)
+      fail(`${mod.harness}/${mod.name} does not apply cleanly at ${rel(mod.upstream.ref)}. It probably conflicts with a mod applied before it.`)
     }
   }
 }
@@ -452,7 +461,7 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     switchOff(h)
     const prev = state[harnessId]
     if (existsSync(path.join(root, ".git"))) {
-      await $`git -C ${root} am --abort`.nothrow().quiet()
+      await clearApplyState(root)
       if (prev?.commit) await $`git -C ${root} checkout -q --force --detach ${prev.commit}`.nothrow().quiet()
     }
     const dist = path.dirname(path.dirname(artifactPath(h, root)))
@@ -769,7 +778,7 @@ async function cmdCheck() {
       await $`git clone --filter=blob:none --no-checkout --no-tags ${h.repo} ${root}`.quiet()
     }
     await $`git -C ${root} fetch --no-tags origin tag ${ref}`.quiet()
-    await $`git -C ${root} am --abort`.nothrow().quiet()
+    await clearApplyState(root)
     await $`git -C ${root} checkout -q --force --detach ${ref}`
     result.commit = (await $`git -C ${root} rev-parse HEAD`.text()).trim()
     const files = mod.patches.map((p) => path.join(mod.dir, p))
@@ -777,7 +786,7 @@ async function cmdCheck() {
     result.applies = am.exitCode === 0
     if (!result.applies) {
       result.error = (am.stderr.toString() + am.stdout.toString()).trim()
-      await $`git -C ${root} am --abort`.nothrow().quiet()
+      await clearApplyState(root)
     } else if (has("build")) {
       await checkRequirements(h)
       buildEnv = { OPEN_MODS_HARNESS: h.id, OPEN_MODS_REF: ref, OPEN_MODS_VERSION: ref.replace(/^[^0-9]*/, ""), OPEN_MODS_MODS: mod.name }
