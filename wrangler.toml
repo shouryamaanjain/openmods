@@ -1,15 +1,15 @@
 # openmods.dev: the generated site, served as static assets by a Cloudflare
-# Worker. CI builds `site/` and runs `wrangler deploy`; the custom domain is
-# bound here, so nothing needs to be clicked in the dashboard.
+# Worker. CI builds `site/` and runs `wrangler deploy`; the custom domains
+# are bound here, so nothing needs to be clicked in the dashboard.
 name = "openmods"
 compatibility_date = "2026-09-01"
-
-[assets]
-directory = "./site"
-not_found_handling = "404-page"
-html_handling = "auto-trailing-slash"
 
 routes = [
   { pattern = "openmods.dev", custom_domain = true },
   { pattern = "www.openmods.dev", custom_domain = true },
 ]
+
+[assets]
+directory = "./site"
+not_found_handling = "404-page"
+html_handling = "auto-trailing-slash"
