@@ -13,7 +13,7 @@ command -v git >/dev/null 2>&1 || { echo "open-mods needs git. Install it and ru
 
 if ! command -v bun >/dev/null 2>&1; then
   echo "Installing Bun for the CLI (your harness builds use the version each release pins, installed separately)."
-  curl -fsSL https://bun.sh/install | bash >/dev/null
+  curl -fsSL https://bun.sh/install | bash >/dev/null 2>&1 || { echo "Could not install Bun. Install it from https://bun.sh and run this again."; exit 1; }
   export PATH="$HOME/.bun/bin:$PATH"
 fi
 
