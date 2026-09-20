@@ -1,7 +1,11 @@
 name: site
 
 # Rebuilds the site from the registry on every push to main (including the
-# release-watch bot's bumps) and publishes it to GitHub Pages.
+# release-watch bot's bumps) and publishes it to openmods.dev on Cloudflare.
+# The deploy needs two repository secrets: CLOUDFLARE_API_TOKEN (a token with
+# Workers Scripts: Edit, Workers Routes: Edit and Zone DNS: Edit for
+# openmods.dev) and CLOUDFLARE_ACCOUNT_ID. Without them the site still builds
+# and is kept as an artifact, so a missing token never breaks CI.
 
 on:
   push:
@@ -10,8 +14,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: site
@@ -20,6 +22,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      deploy: ${{ steps.gate.outputs.deploy }}
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -30,22 +34,31 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SITE_REPO: ${{ github.repository }}
-          # Set the SITE_DOMAIN repository variable to the site's custom domain,
-          # e.g. mods.example.com, and point that domain's DNS at GitHub Pages.
-          SITE_DOMAIN: ${{ vars.SITE_DOMAIN }}
-      - uses: actions/upload-pages-artifact@v3
+          SITE_URL: https://openmods.dev
+      - uses: actions/upload-artifact@v4
         with:
+          name: site
           path: site
+      - id: gate
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: echo "deploy=$([ -n "$TOKEN" ] && echo yes || echo no)" >> "$GITHUB_OUTPUT"
 
   deploy:
     runs-on: ubuntu-latest
     needs: build
-    # GitHub Pages needs a public repo on the free plan. Until the repo is
-    # public the build job still proves the site generates; only the deploy waits.
-    if: ${{ !github.event.repository.private }}
+    if: ${{ needs.build.outputs.deploy == 'yes' }}
     environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+      name: production
+      url: https://openmods.dev
     steps:
-      - id: deploy
-        uses: actions/deploy-pages@v4
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: site
+          path: site
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy

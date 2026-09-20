@@ -22,6 +22,7 @@ const root = path.resolve(flag("registry") ?? path.join(import.meta.dir, ".."))
 const out = path.resolve(flag("out") ?? path.join(root, "site"))
 const REPO = process.env.SITE_REPO ?? "shouryamaanjain/open-mods"
 const SITE_NAME = "OpenMods"
+const SITE_URL = (process.env.SITE_URL ?? "").replace(/\/$/, "")
 
 type Harness = { id: string; name: string; repo: string; homepage?: string; language?: string; binary: string; releaseTagPattern?: string; latest?: string }
 type Mod = {
@@ -206,7 +207,7 @@ q?.addEventListener('input',apply);
 for(const b of tabs)b.addEventListener('click',()=>{harness=b.dataset.harness;tabs.forEach(x=>x.classList.toggle('on',x===b));apply()});
 `
 
-function layout(opts: { title: string; depth: number; nav: string; body: string; js?: boolean; description?: string }) {
+function layout(opts: { title: string; depth: number; nav: string; body: string; js?: boolean; description?: string; path?: string }) {
   const rel = "../".repeat(opts.depth) || "./"
   const link = (p: string) => rel + p
   const on = (k: string) => (opts.nav === k ? ' class="on"' : "")
@@ -217,6 +218,7 @@ function layout(opts: { title: string; depth: number; nav: string; body: string;
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(opts.title)}</title>
 <meta name="description" content="${esc(opts.description ?? "Source-level mods for open-source coding agents.")}">
+${SITE_URL ? `<link rel="canonical" href="${SITE_URL}/${opts.path ?? ""}">\n<meta property="og:title" content="${esc(opts.title)}">\n<meta property="og:description" content="${esc(opts.description ?? "Source-level mods for open-source coding agents.")}">\n<meta property="og:url" content="${SITE_URL}/${opts.path ?? ""}">` : ""}
 <link rel="stylesheet" href="${link("style.css")}">
 </head>
 <body>
@@ -309,7 +311,7 @@ ${
 <div class="md"><p>Every mod is a git patch series made against one release of its harness. <code>open-mods install</code> clones that release, applies the patches, builds it with the exact toolchain the release pins, and puts the result first on your PATH. <code>open-mods off</code> steps aside so the stock binary runs again.</p>
 <p>When the harness ships a new release, CI applies and builds every mod against it. A mod that still works has its release moved forward here automatically. A mod that does not stays on its last working release, shows as <span class="badge behind">behind</span>, and its maintainers get an issue with the error and the steps to rebase.</p></div>
 </section>`
-  return layout({ title: `${SITE_NAME} · source-level mods for open-source coding agents`, depth: 0, nav: "mods", body, js: true })
+  return layout({ title: `${SITE_NAME} · source-level mods for open-source coding agents`, depth: 0, nav: "mods", body, js: true, path: "" })
 }
 
 function modPage(m: Mod) {
@@ -362,7 +364,7 @@ ${m.tags?.length ? `<span>Tags</span><div>${m.tags.map(esc).join(", ")}</div>` :
 </ul></section>
 </aside>
 </div>`
-  return layout({ title: `${m.harness}/${m.name} · ${SITE_NAME}`, depth: 3, nav: "mods", body, description: m.description })
+  return layout({ title: `${m.harness}/${m.name} · ${SITE_NAME}`, depth: 3, nav: "mods", body, description: m.description, path: `mods/${m.harness}/${m.name}/` })
 }
 
 function harnessIndex() {
@@ -375,7 +377,7 @@ function harnessIndex() {
   const body = `<div class="wrap"><section><h2>Harnesses</h2>
 <p class="lead">Anything open source with a build command can be a harness. Each one is a JSON file in the registry naming its repo, its install and build commands, and where the built executable ends up.</p>
 <div class="table"><table><thead><tr><th>Harness</th><th>Latest release</th><th style="text-align:right">Mods</th></tr></thead><tbody>${rows}</tbody></table></div></section></div>`
-  return layout({ title: `Harnesses · ${SITE_NAME}`, depth: 1, nav: "harnesses", body })
+  return layout({ title: `Harnesses · ${SITE_NAME}`, depth: 1, nav: "harnesses", body, path: "harnesses/" })
 }
 
 function harnessPage(h: Harness) {
@@ -394,7 +396,7 @@ ${list.length ? `<div class="table"><table><tbody>${rows}</tbody></table></div>`
 <section><h3>Links</h3><ul><li><a href="${esc(h.repo)}">Repository</a></li>${h.homepage ? `<li><a href="${esc(h.homepage)}">Website</a></li>` : ""}<li><a href="https://github.com/${REPO}/blob/main/harnesses/${h.id}.json">Harness definition</a></li></ul></section>
 <section><h3>What a mod can change</h3><p style="color:var(--muted);margin:0">Anything. A mod is a patch to the source, so the interface, the prompts, the tools and the agent loop are all in reach. That is also why every mod's diff is on its page.</p></section>
 </aside></div>`
-  return layout({ title: `${h.name} · ${SITE_NAME}`, depth: 2, nav: "harnesses", body })
+  return layout({ title: `${h.name} · ${SITE_NAME}`, depth: 2, nav: "harnesses", body, path: `harnesses/${h.id}/` })
 }
 
 function makePage() {
@@ -403,7 +405,7 @@ function makePage() {
   const body = `<div class="wrap page"><main><h1 class="title">Make a mod</h1><p class="lead">Clone the harness, change what you want, commit, pack. The registry does the rest.</p><article class="md">${html}</article></main>
 <aside><section><h3>Commands</h3><ul><li><code>open-mods pack . --name my-mod --local</code></li><li><code>open-mods install opencode/my-mod</code></li><li><code>open-mods check mods/opencode/my-mod --build</code></li></ul></section>
 <section><h3>Links</h3><ul><li><a href="https://github.com/${REPO}/blob/main/CONTRIBUTING.md">This guide on GitHub</a></li><li><a href="https://github.com/${REPO}/blob/main/schema/mod.schema.json">mod.json schema</a></li></ul></section></aside></div>`
-  return layout({ title: `Make a mod · ${SITE_NAME}`, depth: 1, nav: "make", body })
+  return layout({ title: `Make a mod · ${SITE_NAME}`, depth: 1, nav: "make", body, path: "make-a-mod/" })
 }
 
 function headingIds() {
@@ -429,6 +431,7 @@ for (const h of harnesses) write(`harnesses/${h.id}/index.html`, harnessPage(h))
 for (const m of mods) write(`mods/${m.harness}/${m.name}/index.html`, modPage(m))
 write("make-a-mod/index.html", makePage())
 write(".nojekyll", "")
+write("404.html", layout({ title: `Not found · ${SITE_NAME}`, depth: 0, nav: "", body: `<div class="wrap"><section class="hero"><h1>Not found</h1><p>There is no page here. <a href="./">Back to the mods.</a></p></section></div>`, path: "404" }))
 if (process.env.SITE_DOMAIN) write("CNAME", process.env.SITE_DOMAIN.trim() + "\n")
 write("index.json", JSON.stringify({ generated: new Date().toISOString(), harnesses: harnesses.map((h) => ({ id: h.id, name: h.name, latest: rel(h.latest ?? ""), tag: h.latest })), mods: mods.map((m) => ({ harness: m.harness, name: m.name, description: m.description, for: rel(m.upstream.ref), tag: m.upstream.ref, behind: behind(m), files: m.files.length })) }, null, 2))
 console.log(`site: ${mods.length} mod${mods.length === 1 ? "" : "s"}, ${harnesses.length} harness${harnesses.length === 1 ? "" : "es"} → ${path.relative(process.cwd(), out) || "."}`)

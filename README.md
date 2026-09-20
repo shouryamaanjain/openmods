@@ -84,7 +84,7 @@ Update now? It rebuilds OpenCode, which takes a few minutes. [y/N]
 
 ## The site
 
-`bun run site` builds the site into `site/` from the registry; `bun script/site.ts --local --out site` also includes your unpublished mods from `~/.open-mods/local` for a preview. The output is plain files, so any static host works. The included workflow publishes to GitHub Pages on every push to main; set the `SITE_DOMAIN` repository variable to the site's domain and point its DNS at GitHub Pages.
+`bun run site` builds the site into `site/` from the registry; `bun script/site.ts --local --out site` also includes your unpublished mods from `~/.open-mods/local` for a preview. The output is plain files, so any static host works. The included workflow publishes it to [openmods.dev](https://openmods.dev) on every push to main, as a Cloudflare Worker serving static assets; `wrangler.toml` binds the domain, and the deploy needs the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` repository secrets.
 
 ## Making a mod
 
