@@ -80,7 +80,7 @@ OpenCode v1.19.0 is out and all your mods support it (tetris, vim-keys). You are
 Update now? It rebuilds OpenCode, which takes a few minutes. [y/N]
 ```
 
-`y` rebuilds and launches the new build. Anything else launches your current build and asks again tomorrow. If one of your mods does not support the new release yet, it says so instead and you stay where you are. It never rebuilds on its own, never asks when `opencode` is not at a terminal, and `OPEN_MODS_NO_PROMPT=1` turns the question off.
+`y` rebuilds and launches the new build. Anything else launches your current build and asks again tomorrow. `open-mods update` does the same rebuild on demand, and only rebuilds when a mod's patches or supported release actually changed. If one of your mods does not support the new release yet, it says so instead and you stay where you are. It never rebuilds on its own, never asks when `opencode` is not at a terminal, and `OPEN_MODS_NO_PROMPT=1` turns the question off.
 
 ## The site
 

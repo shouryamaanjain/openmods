@@ -1,13 +1,13 @@
 #!/usr/bin/env bun
 // Builds the OpenMods site from the registry: one static page per mod and
 // per harness, plus the home page and the "make a mod" guide. No backend;
-// CI regenerates it on every push to main and publishes it to GitHub Pages.
+// CI regenerates it on every push to main and publishes it to openmods.dev.
 //
 //   bun script/site.ts [--registry <dir>] [--out <dir>] [--offline] [--local]
 //
 // --local also lists the unpublished mods under ~/.open-mods/local, marked as
 // such, for previewing the site with content that is not in the registry.
-// SITE_DOMAIN=mods.example.com writes a CNAME file for GitHub Pages.
+// SITE_URL=https://openmods.dev sets canonical and Open Graph URLs.
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"

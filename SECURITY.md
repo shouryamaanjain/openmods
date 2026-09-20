@@ -18,7 +18,7 @@ The registry only carries patches. Nothing is prebuilt: your machine compiles th
 
 - Every pull request applies and builds the mod in CI against the release it names.
 - Reviewers read the diff and the README before merging, and look for network access, credential use, and prompt changes that the README leaves out.
-- The hourly release check rebuilds every mod when the harness ships a new release, so a mod cannot silently drift.
+- When the harness ships a new release, the hourly check builds the harness once and applies and typechecks every mod against it, so a mod cannot silently drift. Full builds run on each mod's pull request.
 
 These are checks on the process, not a guarantee about intent. A malicious patch can pass all of them. Reading the diff is what protects you.
 
