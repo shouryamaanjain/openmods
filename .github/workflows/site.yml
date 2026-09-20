@@ -53,6 +53,10 @@ jobs:
       url: https://openmods.dev
     steps:
       - uses: actions/checkout@v4
+      # The action picks the package manager from the lockfile in the repo, which is Bun's.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
       - uses: actions/download-artifact@v4
         with:
           name: site
