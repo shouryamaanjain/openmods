@@ -12,6 +12,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { homedir } from "node:os"
 import path from "node:path"
 import { marked } from "marked"
+import { COMMANDS, ENVIRONMENT, FILES, GLOBAL_FLAGS, INTRO } from "../cli/src/reference"
 
 const args = process.argv.slice(2)
 const flag = (k: string) => {
@@ -195,6 +196,14 @@ details{border:1px solid var(--line);border-radius:8px;margin-top:14px}summary{c
 aside h3{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 8px}
 aside section{margin-bottom:26px}aside ul{list-style:none;padding:0;margin:0}aside li{padding:4px 0}
 aside .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:14px}aside .kv span{color:var(--muted)}
+.cli h2{margin-top:40px}.cmdref{margin:26px 0 34px}.cmdref h3{font-size:18px;margin:0 0 8px;font-family:var(--mono)}.cmdref h3 code{background:none;padding:0}
+.cmdref p{max-width:70ch;margin:8px 0}
+pre.usage,pre.examples{background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:10px 14px;overflow-x:auto;font-size:13px;margin:8px 0}
+pre.examples .dollar{color:var(--muted)}pre.examples .note{color:var(--muted)}
+.flags{border:1px solid var(--line);border-radius:8px;margin:10px 0;overflow:hidden}
+.flags div{display:grid;grid-template-columns:minmax(150px,220px) 1fr;gap:12px;padding:8px 12px;border-top:1px solid var(--line);font-size:14px}.flags div:first-child{border-top:0}
+.flags code{white-space:nowrap;background:none;padding:0;font-size:13px}.flags span{color:var(--fg)}
+@media(max-width:600px){.flags div{grid-template-columns:1fr}}
 footer{border-top:1px solid var(--line);margin-top:50px;padding:26px 0;color:var(--muted);font-size:13px}
 footer .wrap{display:flex;gap:18px;flex-wrap:wrap}
 `
@@ -228,6 +237,7 @@ ${SITE_URL ? `<link rel="canonical" href="${SITE_URL}/${opts.path ?? ""}">\n<met
 <a href="${link("")}#mods"${on("mods")}>Mods</a>
 <a href="${link("harnesses/")}"${on("harnesses")}>Harnesses</a>
 <a href="${link("make-a-mod/")}"${on("make")}>Make a mod</a>
+<a href="${link("cli/")}"${on("cli")}>CLI</a>
 <a href="https://github.com/${REPO}">GitHub</a>
 </nav>
 </div></header>
@@ -400,6 +410,41 @@ ${list.length ? `<div class="table"><table><tbody>${rows}</tbody></table></div>`
   return layout({ title: `${h.name} · ${SITE_NAME}`, depth: 2, nav: "harnesses", body, path: `harnesses/${h.id}/` })
 }
 
+function cliPage() {
+  const group = (title: string, audience: "users" | "authors") => {
+    const list = COMMANDS.filter((c) => c.audience === audience)
+    return `<h2 id="${audience}">${esc(title)}</h2>
+<div class="table"><table><tbody>${list.map((c) => `<tr class="mod"><td class="name"><a href="#${c.name}">${esc(c.name)}</a></td><td>${esc(c.summary)}</td></tr>`).join("")}</tbody></table></div>
+${list
+  .map(
+    (c) => `<section class="cmdref" id="${c.name}">
+<h3><code>${esc(c.name)}</code>${c.aliases?.length ? ` <span class="badge local">also ${c.aliases.map(esc).join(", ")}</span>` : ""}</h3>
+<pre class="usage">${c.usage.split("\n").map(esc).join("\n")}</pre>
+${c.description.map((d) => `<p>${esc(d)}</p>`).join("")}
+${c.flags?.length ? `<div class="flags">${c.flags.map((f) => `<div><code>${esc(f.flag)}</code><span>${esc(f.description)}</span></div>`).join("")}</div>` : ""}
+${c.examples?.length ? `<pre class="examples">${c.examples.map((e) => `<span class="dollar">$ </span>${esc(e.command)}${e.note ? `   <span class="note"># ${esc(e.note)}</span>` : ""}`).join("\n")}</pre>` : ""}
+</section>`,
+  )
+  .join("")}`
+  }
+  const kv = (title: string, id: string, list: typeof GLOBAL_FLAGS) =>
+    `<h2 id="${id}">${esc(title)}</h2><div class="flags">${list.map((f) => `<div><code>${esc(f.flag)}</code><span>${esc(f.description)}</span></div>`).join("")}</div>`
+  const body = `<div class="wrap page"><main class="cli">
+<h1 class="title">open-mods</h1>
+<p class="lead">${esc(INTRO)}</p>
+<div class="cmd block"><span class="dollar">$</span><span>curl -fsSL https://openmods.dev/install.sh | sh</span></div>
+<p style="color:var(--muted);font-size:14px">Every command also answers <code>open-mods help &lt;command&gt;</code>. This page and that text come from the same source.</p>
+${group("Commands", "users")}
+${group("For mod authors", "authors")}
+${kv("Options", "options", GLOBAL_FLAGS)}
+${kv("Environment", "environment", ENVIRONMENT)}
+${kv("Files", "files", FILES)}
+</main>
+<aside><section><h3>On this page</h3><ul>${COMMANDS.map((c) => `<li><a href="#${c.name}"><code>${esc(c.name)}</code></a></li>`).join("")}<li><a href="#options">options</a></li><li><a href="#environment">environment</a></li><li><a href="#files">files</a></li></ul></section></aside>
+</div>`
+  return layout({ title: `CLI reference · ${SITE_NAME}`, depth: 1, nav: "cli", body, path: "cli/", description: "Every open-mods command, option, environment variable and file." })
+}
+
 function makePage() {
   const md = readFileSync(path.join(root, "CONTRIBUTING.md"), "utf8")
   const html = (marked.parse(md, { renderer: headingIds() }) as string).replace(/<h1>.*?<\/h1>/, "")
@@ -431,6 +476,7 @@ write("harnesses/index.html", harnessIndex())
 for (const h of harnesses) write(`harnesses/${h.id}/index.html`, harnessPage(h))
 for (const m of mods) write(`mods/${m.harness}/${m.name}/index.html`, modPage(m))
 write("make-a-mod/index.html", makePage())
+write("cli/index.html", cliPage())
 write(".nojekyll", "")
 // The CLI installer, served at /install.sh so `curl -fsSL https://openmods.dev/install.sh | sh` works.
 const installer = path.join(root, "install.sh")

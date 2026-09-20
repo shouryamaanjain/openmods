@@ -34,7 +34,7 @@ Anything open source with a build command can be a harness. See [`harnesses/`](h
 
 ## Mods
 
-The registry lives under [`mods/<harness>/<mod>`](mods). Run `open-mods list` for what is published, or `open-mods info <harness>/<mod>` to see exactly which files a mod touches before you build it.
+The registry lives under [`mods/<harness>/<mod>`](mods). Run `open-mods list` for what is published, or `open-mods info <harness>/<mod>` to see exactly which files a mod touches before you build it. Every command is documented at [openmods.dev/cli](https://openmods.dev/cli/) and in `open-mods help <command>`.
 
 Mods you are still working on, or do not want to publish, go under `~/.open-mods/local/<harness>/<mod>`. The CLI lists and installs them like registry mods, marked `(local)`.
 

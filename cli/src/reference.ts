@@ -1,0 +1,210 @@
+// The one description of the CLI. `open-mods help` renders it in the
+// terminal and the site renders it as the reference page, so neither can
+// drift from the other. Plain data, no imports, safe for the site to load.
+
+export type Flag = { flag: string; description: string }
+export type Example = { command: string; note?: string }
+export type Command = {
+  name: string
+  aliases?: string[]
+  usage: string
+  /** A shorter usage line for the one-screen help; defaults to `usage`. */
+  short?: string
+  summary: string
+  description: string[]
+  flags?: Flag[]
+  examples?: Example[]
+  audience: "users" | "authors"
+}
+
+export const INTRO = "Source-level mods for open-source coding agents. Your stock harness is never modified: the modded build lives under ~/.open-mods and its launcher sits first on PATH, so `opencode` runs the modded build while it is on and the stock one otherwise."
+
+export const COMMANDS: Command[] = [
+  {
+    name: "list",
+    usage: "open-mods list [harness]",
+    summary: "Mods in the registry, with the release each one is for.",
+    description: [
+      "Reads the registry as it is on disk; no network. Installed mods are marked with an asterisk. Unpublished mods from ~/.open-mods/local are listed too, marked (local).",
+    ],
+    flags: [{ flag: "--json", description: "Print the manifests as JSON." }],
+    examples: [{ command: "open-mods list" }, { command: "open-mods list codex", note: "only one harness" }],
+    audience: "users",
+  },
+  {
+    name: "info",
+    usage: "open-mods info <harness>/<mod>",
+    summary: "A mod's manifest, patches, and every file it touches.",
+    description: ["Read this before installing. The touched-files list comes from the patches themselves, not from the README."],
+    flags: [{ flag: "--json", description: "Machine-readable output, including the touched files." }],
+    examples: [{ command: "open-mods info opencode/tetris" }],
+    audience: "users",
+  },
+  {
+    name: "install",
+    aliases: ["add"],
+    usage: "open-mods install <harness>/<mod> [<harness>/<mod> ...]",
+    short: "open-mods install <harness>/<mod> ...",
+    summary: "Build the harness with these mods and switch it on.",
+    description: [
+      "Clones the harness once (blobless), checks out the release the mods are for, applies each mod's patches in order, builds with the exact toolchain that release pins, copies the build aside, and writes the launcher to ~/.open-mods/bin. The first time, that folder is added to the front of PATH in your shell config.",
+      "Mods stack on one checkout. A mod that does not apply cleanly on top of the others is refused and nothing is rebuilt; your current build keeps running. A build that fails leaves the previous build in place.",
+      "Installing a mod that is already installed reinstalls it. A mod that was switched off comes back on.",
+    ],
+    flags: [
+      { flag: "--no-path", description: "Do not edit your shell config to put ~/.open-mods/bin on PATH." },
+      { flag: "--registry <dir|url>", description: "Use another registry checkout or git URL." },
+    ],
+    examples: [
+      { command: "open-mods install opencode/tetris" },
+      { command: "open-mods install codex/hello-placeholder codex/tetris", note: "two mods, one build" },
+    ],
+    audience: "users",
+  },
+  {
+    name: "uninstall",
+    aliases: ["remove", "rm"],
+    usage: "open-mods uninstall <harness>/<mod> [<harness>/<mod> ...]",
+    short: "open-mods uninstall <harness>/<mod> ...",
+    summary: "Remove mods and rebuild without them.",
+    description: [
+      "When the last mod for a harness is removed, the launcher, the built binary and the patched commits are removed too, and the checkout is reset to the stock release. The checkout itself stays as a cache so the next install does not clone and install dependencies again; delete ~/.open-mods/harnesses/<id> to reclaim the space.",
+    ],
+    examples: [{ command: "open-mods uninstall opencode/tetris" }],
+    audience: "users",
+  },
+  {
+    name: "status",
+    aliases: ["installed"],
+    usage: "open-mods status",
+    summary: "Which build your command runs right now, per harness.",
+    description: [
+      "Shows the modded build (release plus mods, on or off), the stock binary it would fall back to, and any mod that is installed but built out. Says so if ~/.open-mods/bin is not on PATH in the current shell.",
+    ],
+    flags: [{ flag: "--json", description: "The state file as JSON." }],
+    examples: [{ command: "open-mods status" }],
+    audience: "users",
+  },
+  {
+    name: "on",
+    usage: "open-mods on [harness | <harness>/<mod>]",
+    summary: "Make your command run the modded build again, or build one mod back in.",
+    description: [
+      "With no argument, or a harness id: writes the launcher back into ~/.open-mods/bin. Instant, nothing is rebuilt.",
+      "With a mod: rebuilds the harness with that mod included again, after an `off <harness>/<mod>`.",
+    ],
+    examples: [{ command: "open-mods on" }, { command: "open-mods on opencode/tetris" }],
+    audience: "users",
+  },
+  {
+    name: "off",
+    usage: "open-mods off [harness | <harness>/<mod>]",
+    summary: "Make your command run the stock build again, or build one mod out.",
+    description: [
+      "With no argument, or a harness id: removes the launcher, so `opencode` falls through to the stock binary. Instant, and the modded build is kept for `on`.",
+      "With a mod: rebuilds the harness without that mod. It stays installed and listed in status as off.",
+    ],
+    examples: [{ command: "open-mods off" }, { command: "open-mods off codex/tetris" }],
+    audience: "users",
+  },
+  {
+    name: "update",
+    usage: "open-mods update [harness]",
+    summary: "Pull the registry and rebuild if anything you have installed changed.",
+    description: [
+      "A rebuild happens only when a mod's patches changed or the release it is for moved forward, which is what the registry's release check does when a mod still applies and typechecks on a new harness release. Otherwise it says the build is already up to date. This is also what the launcher runs when you answer yes to its update prompt.",
+    ],
+    flags: [{ flag: "--force", description: "Rebuild even if nothing changed." }],
+    examples: [{ command: "open-mods update" }, { command: "open-mods update codex --force" }],
+    audience: "users",
+  },
+  {
+    name: "check-updates",
+    usage: "open-mods check-updates [harness]",
+    summary: "What the launcher does once a day: is a newer supported release available?",
+    description: [
+      "Pulls the registry, compares each installed mod's release with your build, and writes a note the launcher reads on the next launch. Says whether every installed mod supports the newer release or which mod still lags. Safe to run by hand.",
+    ],
+    flags: [{ flag: "--json", description: "The comparison as JSON." }],
+    examples: [{ command: "open-mods check-updates opencode --json" }],
+    audience: "users",
+  },
+  {
+    name: "pack",
+    usage: "open-mods pack <harness-checkout> --name <mod> [--local] [--harness <id>] [--base <tag>] [--out <dir>] [--force]",
+    short: "open-mods pack <checkout> --name <mod> [--local]",
+    summary: "Turn your commits on top of a harness release into a mod folder.",
+    description: [
+      "Run it against your clone of the harness. It finds the release tag below your commits, runs git format-patch, and writes mod.json, the patches and a README stub into the registry under mods/<harness>/<name>. The release becomes the mod's version.",
+      "Warns if a patch touches a lockfile, which is usually a build side effect and would make the mod conflict with every other mod that does the same.",
+    ],
+    flags: [
+      { flag: "--name <mod>", description: "Mod id: lowercase letters, digits and hyphens." },
+      { flag: "--local", description: "Write to ~/.open-mods/local instead: installable now, published never." },
+      { flag: "--harness <id>", description: "Which harness, when the clone's remote does not say." },
+      { flag: "--base <tag>", description: "The release tag to diff against, when there are several below HEAD." },
+      { flag: "--out <dir>", description: "Write somewhere else entirely." },
+      { flag: "--force", description: "Overwrite an existing mod folder." },
+    ],
+    examples: [
+      { command: "open-mods pack ../opencode --name my-mod --local", note: "try it: open-mods install opencode/my-mod" },
+      { command: "open-mods pack ../opencode --name my-mod", note: "into the registry, ready for a pull request" },
+    ],
+    audience: "authors",
+  },
+  {
+    name: "check",
+    usage: "open-mods check <mod-dir | harness/mod> [--ref <tag>] [--typecheck | --build] [--json]\nopen-mods check --harness <id> --ref <tag> [--typecheck | --build] [--json]",
+    short: "open-mods check <mod> [--ref <tag>] [--typecheck | --build]",
+    summary: "Does a mod apply, typecheck, or build against a release?",
+    description: [
+      "Clones the harness into a temporary workspace, checks out the release, and applies the patches. --typecheck then runs the harness's typecheck (minutes); --build runs its full build (long). This is what CI runs: the full build on a mod's pull request, the typecheck against each new harness release.",
+      "With --harness and no mod, it builds the stock harness: the smoke test for a harness definition. Exits non-zero on any failure.",
+    ],
+    flags: [
+      { flag: "--ref <tag>", description: "Release to test against; defaults to the one the mod is for." },
+      { flag: "--typecheck", description: "Run the harness's typecheck after applying." },
+      { flag: "--build", description: "Run the harness's full build after applying." },
+      { flag: "--harness <id>", description: "Check the stock harness with no mod." },
+      { flag: "--workspace <dir>", description: "Reuse this checkout instead of a temporary one." },
+      { flag: "--json", description: "Result as JSON, for CI." },
+    ],
+    examples: [
+      { command: "open-mods check mods/opencode/my-mod --build" },
+      { command: "open-mods check mods/opencode/my-mod --ref v1.19.0 --typecheck" },
+      { command: "open-mods check --harness codex --ref rust-v0.156.0 --build" },
+    ],
+    audience: "authors",
+  },
+  {
+    name: "registry",
+    usage: "open-mods registry",
+    summary: "Which registry checkout and home folder the CLI is using.",
+    description: ["When run from a checkout of the registry, the CLI uses that checkout and never pulls; otherwise it uses the clone under ~/.open-mods/registry."],
+    examples: [{ command: "open-mods registry" }],
+    audience: "authors",
+  },
+]
+
+export const GLOBAL_FLAGS: Flag[] = [
+  { flag: "--registry <dir|url>", description: "Registry to use. Default: the checkout you run from, else ~/.open-mods/registry, cloned from github.com/shouryamaanjain/open-mods on first use." },
+  { flag: "--json", description: "Machine-readable output, where a command supports it." },
+  { flag: "--help", description: "This text. `open-mods help <command>` shows one command." },
+]
+
+export const ENVIRONMENT: Flag[] = [
+  { flag: "OPEN_MODS_HOME", description: "Where everything lives. Default ~/.open-mods." },
+  { flag: "OPEN_MODS_REGISTRY", description: "Registry directory or git URL, same as --registry." },
+  { flag: "OPEN_MODS_NO_PROMPT=1", description: "The launcher never asks about updates." },
+  { flag: "OPEN_MODS_NO_CHECK=1", description: "The launcher never checks for updates." },
+]
+
+export const FILES: Flag[] = [
+  { flag: "~/.open-mods/bin/<binary>", description: "The launcher for a harness; present only while on." },
+  { flag: "~/.open-mods/harnesses/<id>/src", description: "The harness checkout, patched, kept as a cache." },
+  { flag: "~/.open-mods/harnesses/<id>/builds", description: "The current modded build, kept until a newer one succeeds." },
+  { flag: "~/.open-mods/toolchains/", description: "The exact toolchain each harness release pins." },
+  { flag: "~/.open-mods/local/<harness>/<mod>", description: "Your own unpublished mods." },
+  { flag: "~/.open-mods/updates/<id>", description: "The launcher's daily note." },
+  { flag: "~/.open-mods/state.json", description: "What is installed, and on, per harness." },
+]

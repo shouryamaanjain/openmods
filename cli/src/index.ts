@@ -925,51 +925,63 @@ async function cmdRegistry() {
   log(`home:     ${HOME}`)
 }
 
-const HELP = `open-mods: source-level mods for open-source agent harnesses
+import { COMMANDS, ENVIRONMENT, FILES, GLOBAL_FLAGS, INTRO } from "./reference"
 
-usage
-  open-mods list [harness]                  mods in the registry
-  open-mods info <harness>/<mod>            manifest, patches and touched files
-  open-mods install <harness>/<mod> ...     build the harness with these mods and switch it on
-  open-mods uninstall <harness>/<mod> ...   remove mods and rebuild
-  open-mods status                          which build \`opencode\` runs right now
-  open-mods off                             \`opencode\` runs the stock build again (instant)
-  open-mods on                              \`opencode\` runs the modded build again (instant)
-  open-mods off <harness>/<mod>             build that one mod out; it stays installed
-  open-mods on <harness>/<mod>              build it back in
-  open-mods update [harness]                refresh the registry; rebuild if a mod or its release changed
-  open-mods check-updates [harness]         what the launcher does once a day: note whether an update is available
+const wrap = (text: string, width = 78, indent = "") =>
+  text
+    .split(" ")
+    .reduce<string[]>((lines, word) => {
+      const last = lines[lines.length - 1]
+      if (last !== undefined && (last + " " + word).length <= width) lines[lines.length - 1] = last + " " + word
+      else lines.push(indent + word)
+      return lines
+    }, [])
+    .join("\n")
 
-how it works
-  Your stock harness is never modified. The modded build lives in ${pretty(HOME)},
-  and ${pretty(BIN)} sits first on PATH: when a modded build is on, that is
-  what \`opencode\` runs; when it is off, the stock one takes over.
-  The \`opencode\` there is a small launcher: it starts your build at once and,
-  once a day, checks the registry in the background. When a newer release is
-  supported by all your mods, the next launch asks before updating.
-  OPEN_MODS_NO_PROMPT=1 silences the question; OPEN_MODS_NO_CHECK=1 the check.
+// Two columns, wrapped to 100 characters: the term, then its description
+// continued under itself.
+function columns(rows: [string, string][]): string {
+  const width = Math.min(Math.max(...rows.map(([term]) => term.length)) + 2, 52)
+  return rows
+    .map(([term, text]) => {
+      const body = wrap(text, 100 - 2 - width).split("\n")
+      const first = term.length + 2 > width ? `  ${term}\n${" ".repeat(2 + width)}${body[0]}` : `  ${term.padEnd(width)}${body[0]}`
+      return [first, ...body.slice(1).map((l) => " ".repeat(2 + width) + l)].join("\n")
+    })
+    .join("\n")
+}
 
-for mod authors
-  open-mods pack <checkout> --name <mod>    turn commits on top of a release tag into a mod folder
-                            --local         ... under ${pretty(LOCAL)} instead, unpublished but installable
-  open-mods check <mod-dir> [--ref <tag>] [--typecheck | --build] [--json]
-                                            does the mod apply, typecheck (minutes) or build (long) against a release
-  open-mods check --harness <id> --ref <tag> --build
-                                            build the stock harness: the smoke test for a harness definition
+function helpText(): string {
+  const line = (c: (typeof COMMANDS)[number]) => c.short ?? c.usage.split("\n")[0]!
+  const section = (title: string, list: typeof COMMANDS) => `${title}\n${columns(list.map((c) => [line(c), c.summary]))}`
+  const flags = (list: typeof GLOBAL_FLAGS) => columns(list.map((f) => [f.flag, f.description]))
+  return [
+    wrap(`open-mods: ${INTRO}`),
+    "",
+    section("usage", COMMANDS.filter((c) => c.audience === "users")),
+    "",
+    section("for mod authors", COMMANDS.filter((c) => c.audience === "authors")),
+    "",
+    `options\n${flags(GLOBAL_FLAGS)}`,
+    "",
+    `environment\n${flags(ENVIRONMENT)}`,
+    "",
+    `files\n${flags(FILES)}`,
+    "",
+    "Full reference: https://openmods.dev/cli/",
+    "",
+  ].join("\n")
+}
 
-options
-  --registry <dir|url>    registry to use (default: this repo when run from it, else ${DEFAULT_REGISTRY})
-  --no-path               do not edit your shell config to put ${pretty(BIN)} on PATH
-  --json                  machine-readable output where supported
-
-files
-  ${pretty(BIN)}/<binary>          the modded executable (present only while on)
-  ${pretty(HOME)}/harnesses/<id>/src    the patched checkout
-  ${pretty(HOME)}/harnesses/<id>/builds the current modded build (kept until a newer one succeeds)
-  ${pretty(HOME)}/state.json            installed mods
-  ${pretty(HOME)}/toolchains/           the exact bun version each harness release pins
-  ${pretty(LOCAL)}/<harness>/<mod>    your own unpublished mods
-`
+function commandHelp(name: string): string | null {
+  const c = COMMANDS.find((c) => c.name === name || c.aliases?.includes(name))
+  if (!c) return null
+  const lines = [c.usage, "", c.summary, "", ...c.description.flatMap((d) => [wrap(d), ""])]
+  if (c.aliases?.length) lines.push(`aliases: ${c.aliases.join(", ")}`, "")
+  if (c.flags?.length) lines.push("options", columns(c.flags.map((f) => [f.flag, f.description])), "")
+  if (c.examples?.length) lines.push("examples", ...c.examples.map((e) => `  ${e.command}${e.note ? `   # ${e.note}` : ""}`), "")
+  return lines.join("\n")
+}
 
 const commands: Record<string, () => Promise<void>> = {
   list: cmdList,
@@ -991,10 +1003,15 @@ const commands: Record<string, () => Promise<void>> = {
 }
 
 const cmd = positional[0]
-if (!cmd || cmd === "help" || has("help")) {
-  console.log(HELP)
+if (cmd === "help" && positional[1]) {
+  const text = commandHelp(positional[1])
+  if (!text) fail(`unknown command "${positional[1]}"\n\n${helpText()}`)
+  console.log(text)
+} else if (!cmd || cmd === "help" || has("help")) {
+  console.log(helpText())
 } else if (commands[cmd]) {
-  await commands[cmd]!()
+  if (has("help")) console.log(commandHelp(cmd) ?? helpText())
+  else await commands[cmd]!()
 } else {
-  fail(`unknown command "${cmd}"\n\n${HELP}`)
+  fail(`unknown command "${cmd}"\n\n${helpText()}`)
 }
