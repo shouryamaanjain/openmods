@@ -3,7 +3,7 @@
 # an `open-mods` command in ~/.open-mods/bin, which install also puts first
 # on your PATH. Needs git; installs Bun for the CLI if it is missing.
 #
-#   curl -fsSL https://raw.githubusercontent.com/shouryamaanjain/open-mods/main/install.sh | sh
+#   curl -fsSL https://openmods.dev/install.sh | sh
 set -e
 
 OM="${OPEN_MODS_HOME:-$HOME/.open-mods}"

@@ -293,7 +293,8 @@ function home() {
 <pre aria-hidden="true">${WORDMARK}</pre>
 <h1>Source-level mods for open-source coding agents.</h1>
 <p>A mod is a set of patches against a release of a harness like OpenCode. Install one and your <code>opencode</code> becomes that release with the mod built in. Your stock install is never touched, and you can switch back any time.</p>
-<div class="cmd"><span class="dollar">$</span><span>open-mods install &lt;harness&gt;/&lt;mod&gt;</span></div>
+<div class="cmd"><span class="dollar">$</span><span>curl -fsSL https://openmods.dev/install.sh | sh</span></div>
+<p style="margin:10px 0 0;color:var(--muted);font-size:14px">Installs the <code>open-mods</code> command. Then <code>open-mods install &lt;harness&gt;/&lt;mod&gt;</code>. <a href="install.sh">Read the script first</a> if you like; it is short.</p>
 <div class="chips">
 ${harnesses.map((h) => `<a class="chip" href="harnesses/${h.id}/">${esc(h.name)} · ${esc(rel(h.latest ?? ""))}</a>`).join("")}
 ${PLANNED.map((p) => `<span class="chip dim" title="Planned">${esc(p.name)} · planned</span>`).join("")}
@@ -431,6 +432,9 @@ for (const h of harnesses) write(`harnesses/${h.id}/index.html`, harnessPage(h))
 for (const m of mods) write(`mods/${m.harness}/${m.name}/index.html`, modPage(m))
 write("make-a-mod/index.html", makePage())
 write(".nojekyll", "")
+// The CLI installer, served at /install.sh so `curl -fsSL https://openmods.dev/install.sh | sh` works.
+const installer = path.join(root, "install.sh")
+if (existsSync(installer)) write("install.sh", readFileSync(installer, "utf8"))
 write("404.html", layout({ title: `Not found · ${SITE_NAME}`, depth: 0, nav: "", body: `<div class="wrap"><section class="hero"><h1>Not found</h1><p>There is no page here. <a href="./">Back to the mods.</a></p></section></div>`, path: "404" }))
 if (process.env.SITE_DOMAIN) write("CNAME", process.env.SITE_DOMAIN.trim() + "\n")
 write("index.json", JSON.stringify({ generated: new Date().toISOString(), harnesses: harnesses.map((h) => ({ id: h.id, name: h.name, latest: rel(h.latest ?? ""), tag: h.latest })), mods: mods.map((m) => ({ harness: m.harness, name: m.name, description: m.description, for: rel(m.upstream.ref), tag: m.upstream.ref, behind: behind(m), files: m.files.length })) }, null, 2))

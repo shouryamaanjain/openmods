@@ -7,7 +7,7 @@ Claude Code has Mods: plugins that reach into the harness and change how it beha
 OpenMods is that layer. A mod is a set of git patches against a pinned release of a harness. Installing a mod clones the harness, applies the patches, builds it, and gives you a modded binary. Your stock install is never touched.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/shouryamaanjain/open-mods/main/install.sh | sh
+curl -fsSL https://openmods.dev/install.sh | sh
 
 open-mods list
 open-mods install opencode/<mod>
