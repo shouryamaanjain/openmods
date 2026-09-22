@@ -18,7 +18,7 @@ const setPackageJson = (fields: Record<string, string>) => (dir: string) => {
   writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), ...fields }, null, 2) + "\n")
 }
 const status = () => JSON.parse(readFileSync(path.join(sb.reg, "status", "fake.json"), "utf8"))
-const modRef = () => JSON.parse(readFileSync(path.join(sb.reg, "mods", "fake", "friendly", "mod.json"), "utf8")).upstream.ref
+const modRef = () => JSON.parse(readFileSync(path.join(sb.reg, "mods", "t", "friendly", "fake", "support.json"), "utf8")).upstream.ref
 
 beforeAll(async () => {
   await createHarness(sb)
@@ -30,7 +30,7 @@ describe("a release", () => {
     await release(sb, "v1.1.0", setPackageJson({ version: "1.1.0" }))
     const j = await plan("v1.1.0")
     expect(j.recipe).toMatchObject([{ state: "unchanged", from: "v1.0.0", to: "v1.1.0", changes: [] }])
-    expect(j.matrix.map((m) => m.mod)).toEqual(["mods/fake/friendly"])
+    expect(j.matrix.map((m) => m.mod)).toEqual(["mods/t/friendly/fake"])
     const r = await script(sb, WATCH, "apply", path.join(sb.T, "none"), "--recipe", JSON.stringify(j.recipe), "--registry", sb.reg)
     expect(r.code, r.err).toBe(0)
     expect(status()).toMatchObject({ tested: "v1.1.0", recipe: "unchanged" })
@@ -65,7 +65,7 @@ describe("a release", () => {
     expect(status()).toMatchObject({ tested: "v1.2.0", recipe: "verified" })
     const j = await plan("v1.2.0")
     expect(j.recipe).toMatchObject([{ state: "unchanged" }])
-    expect(j.matrix.map((m) => m.mod)).toEqual(["mods/fake/friendly"])
+    expect(j.matrix.map((m) => m.mod)).toEqual(["mods/t/friendly/fake"])
   })
 
   test("that changes an unwatched line of a watched file does not hold anything", async () => {

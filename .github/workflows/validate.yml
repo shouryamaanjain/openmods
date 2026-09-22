@@ -34,9 +34,13 @@ jobs:
           else
             base="${{ github.event.before }}"
           fi
-          mods=$(git diff --name-only "$base" HEAD -- mods harnesses cli \
-            | grep -E '^mods/[^/]+/[^/]+/' | cut -d/ -f1-3 | sort -u \
-            | { [ -s /dev/stdin ] && cat || ls mods/*/*/mod.json 2>/dev/null | xargs -n1 dirname; } \
+          # A mod on one harness is mods/<owner>/<name>/<harness>. A change
+          # anywhere in a mod checks every harness it supports; a change to
+          # harnesses/ or the CLI alone checks every mod.
+          roots=$(git diff --name-only "$base" HEAD -- mods harnesses cli \
+            | grep -E '^mods/[^/]+/[^/]+/' | cut -d/ -f1-3 | sort -u || true)
+          [ -n "$roots" ] || roots=$(ls -d mods/*/* 2>/dev/null || true)
+          mods=$(for r in $roots; do ls "$r"/*/support.json 2>/dev/null | xargs -n1 dirname; done \
             | jq -R . | jq -sc .)
           echo "mods=$mods" >> "$GITHUB_OUTPUT"
           echo "checking: $mods"
@@ -57,7 +61,7 @@ jobs:
       - name: Free disk space
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup || true
       - id: harness
-        run: echo "id=$(echo '${{ matrix.mod }}' | cut -d/ -f2)" >> "$GITHUB_OUTPUT"
+        run: echo "id=$(echo '${{ matrix.mod }}' | cut -d/ -f4)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v4
         with:
           path: |

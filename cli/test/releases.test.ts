@@ -7,14 +7,14 @@ import path from "node:path"
 import { addFile, cli, createHarness, createMod, greeting, release, sandbox, script, setGreeting, SITE, WATCH } from "./harness"
 
 const sb = sandbox("releases")
-const modDir = () => path.join(sb.reg, "mods", "fake", "friendly")
-const modJson = () => JSON.parse(readFileSync(path.join(modDir(), "mod.json"), "utf8"))
+const modDir = () => path.join(sb.reg, "mods", "t", "friendly", "fake")
+const modJson = () => JSON.parse(readFileSync(path.join(modDir(), "support.json"), "utf8"))
 
 beforeAll(async () => {
   await createHarness(sb)
   await createMod(sb, "friendly", setGreeting("hello from friendly"))
   await createMod(sb, "notes", addFile("NOTES.md", "notes\n"))
-  await cli(sb, "install", "fake/friendly", "fake/notes")
+  await cli(sb, "install", "t/friendly", "t/notes")
 })
 
 describe("check", () => {
@@ -74,7 +74,7 @@ describe("release watch", () => {
     const r = await script(sb, WATCH, "plan", "--ref", "v1.1.0", "--registry", sb.reg)
     expect(r.code).toBe(0)
     const j = JSON.parse(r.out)
-    expect(j.matrix.map((m: { mod: string }) => m.mod).sort()).toEqual(["mods/fake/friendly", "mods/fake/notes", "mods/fake/syntax-error"])
+    expect(j.matrix.map((m: { mod: string }) => m.mod).sort()).toEqual(["mods/t/friendly/fake", "mods/t/notes/fake", "mods/t/syntax-error/fake"])
     expect(j.recipe).toMatchObject([{ harness: "fake", from: "v1.0.0", to: "v1.1.0", state: "unchanged" }])
     recipe = JSON.stringify(j.recipe)
   })
@@ -92,7 +92,7 @@ describe("release watch", () => {
     expect(readdirSync(path.join(sb.reg, "harnesses"))).toEqual(["fake.json"])
   })
   test("apply keeps a failing mod on its release and records why", async () => {
-    writeFileSync(path.join(sb.T, "results", "friendly.json"), JSON.stringify({ mod: "fake/friendly", ref: "v2.0.0", commit: "x", applies: false, error: "patch does not apply" }))
+    writeFileSync(path.join(sb.T, "results", "friendly.json"), JSON.stringify({ mod: "t/friendly", harness: "fake", ref: "v2.0.0", commit: "x", applies: false, error: "patch does not apply" }))
     const r = await script(sb, WATCH, "apply", path.join(sb.T, "results"), "--registry", sb.reg)
     expect(r.code).toBe(0)
     expect(modJson().upstream.ref).toBe("v1.1.0")
@@ -106,7 +106,7 @@ describe("after the release watch wrote its results", () => {
     const out = path.join(sb.T, "site")
     const r = await script(sb, SITE, "--registry", sb.reg, "--out", out, "--offline")
     expect(r.code, r.err).toBe(0)
-    expect(readFileSync(path.join(out, "index.html"), "utf8")).toContain("fake/friendly")
+    expect(readFileSync(path.join(out, "index.html"), "utf8")).toContain("t/friendly")
   })
 })
 
@@ -118,12 +118,12 @@ describe("the user's side", () => {
     const j = JSON.parse(r.out)
     expect(j.available).toBe("1.1.0")
     expect(j.allSupport).toBe(false)
-    expect(j.blocked).toEqual(["notes"])
-    expect(readFileSync(path.join(sb.om, "updates", "fake"), "utf8")).toContain("BLOCKED='notes is for 1.0.0'")
+    expect(j.blocked).toEqual(["t/notes"])
+    expect(readFileSync(path.join(sb.om, "updates", "fake"), "utf8")).toContain("BLOCKED='t/notes is for 1.0.0'")
   })
   test("once every mod supports it, update moves the user to the new release", async () => {
     // Bump notes by hand, as the release watch would have.
-    const file = path.join(sb.reg, "mods", "fake", "notes", "mod.json")
+    const file = path.join(sb.reg, "mods", "t", "notes", "fake", "support.json")
     const notes = JSON.parse(readFileSync(file, "utf8"))
     const commit = (await Bun.$`git -C ${sb.harness} rev-parse v1.1.0^{commit}`.text()).trim()
     writeFileSync(file, JSON.stringify({ ...notes, upstream: { ref: "v1.1.0", commit } }))
@@ -131,11 +131,11 @@ describe("the user's side", () => {
     expect(JSON.parse(note.out)).toMatchObject({ available: "1.1.0", allSupport: true })
     const r = await cli(sb, "update", "fake")
     expect(r.code).toBe(0)
-    expect(r.out).toContain("now runs Fake 1.1.0 + friendly + notes")
+    expect(r.out).toContain("now runs Fake 1.1.0 + t/friendly + t/notes")
     expect(await greeting(sb)).toBe("hello from friendly")
   })
   test("the launcher never prompts when not at a terminal", async () => {
-    writeFileSync(path.join(sb.om, "updates", "fake"), "CURRENT='1.1.0'\nAVAILABLE='9.9.9'\nALL_SUPPORT=1\nMODS='friendly'\nBLOCKED=''\nCHECKED=1\n")
+    writeFileSync(path.join(sb.om, "updates", "fake"), "CURRENT='1.1.0'\nAVAILABLE='9.9.9'\nALL_SUPPORT=1\nMODS='t/friendly'\nBLOCKED=''\nCHECKED=1\n")
     const out = await Bun.$`sh ${path.join(sb.om, "bin", "greet")}`.env({ OPEN_MODS_NO_CHECK: "1" }).text()
     expect(out.trim()).toBe("hello from friendly")
   })

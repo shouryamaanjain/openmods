@@ -44,12 +44,16 @@ const harnesses = () =>
     .map((f) => JSON.parse(readFileSync(path.join(root, "harnesses", f), "utf8")))
     .filter((h) => !flag("harness") || h.id === flag("harness"))
 
+// A mod on one harness is the folder mods/<owner>/<name>/<harness>, holding
+// support.json (the release it is for, its patches) and status.json.
 const modDirs = (harness: string) => {
-  const dir = path.join(root, "mods", harness)
-  if (!existsSync(dir)) return []
-  return readdirSync(dir, { withFileTypes: true })
-    .filter((d) => d.isDirectory() && existsSync(path.join(dir, d.name, "mod.json")))
-    .map((d) => path.join(dir, d.name))
+  const base = path.join(root, "mods")
+  const dirs = (p: string) => (existsSync(p) ? readdirSync(p, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name) : [])
+  return dirs(base).flatMap((owner) =>
+    dirs(path.join(base, owner))
+      .map((name) => path.join(base, owner, name, harness))
+      .filter((d) => existsSync(path.join(d, "support.json"))),
+  )
 }
 
 const readJson = (file: string) => (existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : undefined)
@@ -130,7 +134,7 @@ async function plan() {
     const ref = flag("ref") ?? (await latestTag(h))
     if (!ref) continue
     latest[h.id] = ref
-    const mods = modDirs(h.id).map((dir) => ({ dir, mod: readJson(path.join(dir, "mod.json")), status: readJson(path.join(dir, "status.json")) }))
+    const mods = modDirs(h.id).map((dir) => ({ dir, mod: readJson(path.join(dir, "support.json")), status: readJson(path.join(dir, "status.json")) }))
     const pending = mods.filter(({ mod, status }) => mod.upstream.ref !== ref && (status?.tested !== ref || has("retest")))
     if (!pending.length) continue
     // Where the recipe was last known to work: the last release this harness
@@ -158,22 +162,22 @@ function maintainersOf(mod: any): string[] {
   return list.map((m) => (m.startsWith("@") ? m : `@${m}`))
 }
 
-async function issueFor(modPath: string, mod: any, ref: string, error: string) {
+async function issueFor(id: string, harnessId: string, meta: any, support: any, ref: string, error: string) {
   const repo = process.env.GITHUB_REPOSITORY
   if (!repo) return
-  const harness = readJson(path.join(root, "harnesses", `${mod.harness}.json`))
-  const title = `${mod.harness}/${mod.name} does not support ${harness.name} ${rel(ref)}`
-  const who = maintainersOf(mod).join(" ")
+  const harness = readJson(path.join(root, "harnesses", `${harnessId}.json`))
+  const title = `${id} does not support ${harness.name} ${rel(ref)}`
+  const who = maintainersOf(meta).join(" ")
   const body = [
-    `${who} ${harness.name} ${rel(ref)} (tag \`${ref}\`) is out and \`${mod.harness}/${mod.name}\` no longer applies or builds on it. It stays listed for ${rel(mod.upstream.ref)} until this is fixed.`,
+    `${who} ${harness.name} ${rel(ref)} (tag \`${ref}\`) is out and \`${id}\` no longer applies or typechecks on it. It stays listed for ${harness.name} ${rel(support.upstream.ref)} until this is fixed.`,
     "",
     "To fix it, rebase the patches on the new release and open a PR:",
     "",
     "```sh",
     `git clone ${harness.repo} && cd ${path.basename(harness.repo)}`,
     `git checkout ${ref}`,
-    `git am -3 ../open-mods/${modPath}/patches/*.patch   # resolve conflicts if any`,
-    `open-mods pack . --name ${mod.name} --force`,
+    `git am -3 ../open-mods/mods/${id}/${harnessId}/patches/*.patch   # resolve conflicts if any`,
+    `open-mods pack . --name ${id.split("/")[1]} --owner ${id.split("/")[0]} --force`,
     "```",
     "",
     "What CI saw:",
@@ -235,11 +239,13 @@ async function apply() {
   for (const f of files) {
     const r = readJson(path.join(dir, f))
     if (!r?.mod || r.stock) continue
-    const [harness, name] = (r.mod as string).split("/")
-    const modDir = path.join(root, "mods", harness!, name!)
-    const modFile = path.join(modDir, "mod.json")
+    const id = r.mod as string
+    const harness = r.harness as string
+    const modDir = path.join(root, "mods", ...id.split("/"), harness)
+    const modFile = path.join(modDir, "support.json")
     if (!existsSync(modFile)) continue
     const mod = readJson(modFile)
+    const meta = readJson(path.join(modDir, "..", "mod.json")) ?? {}
     const h = readJson(path.join(root, "harnesses", `${harness}.json`))
     harnessName = h?.name ?? harness
     ref = r.ref
@@ -256,12 +262,12 @@ async function apply() {
       mod.upstream = { ref: r.ref, commit: r.commit }
       writeJson(modFile, mod)
       writeJson(path.join(modDir, "status.json"), { tested: r.ref, supports: r.ref, ok: true, checked })
-      bumped.push(name!)
+      bumped.push(id)
     } else {
       const error = String(r.error ?? (r.applies ? "typecheck failed" : "patches do not apply"))
       writeJson(path.join(modDir, "status.json"), { tested: r.ref, supports: mod.upstream.ref, ok: false, error: error.split("\n").slice(0, 40).join("\n"), checked })
-      const issue = has("issues") ? await issueFor(`mods/${harness}/${name}`, mod, r.ref, error) : undefined
-      broken.push(`${name}${issue ? ` (${issue})` : ""}`)
+      const issue = has("issues") ? await issueFor(id, harness, meta, mod, r.ref, error) : undefined
+      broken.push(`${id}${issue ? ` (${issue})` : ""}`)
     }
   }
   const n = (k: number, word: string) => `${k} ${word}${k === 1 ? "" : "s"}`

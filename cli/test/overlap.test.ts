@@ -59,7 +59,7 @@ describe("a new release", () => {
 describe("a bump", () => {
   let dir = ""
   const patchText = () => {
-    const mod = JSON.parse(readFileSync(path.join(dir, "mod.json"), "utf8"))
+    const mod = JSON.parse(readFileSync(path.join(dir, "support.json"), "utf8"))
     return mod.patches.map((p: string) => readFileSync(path.join(dir, p), "utf8")).join("\n")
   }
 
@@ -82,7 +82,7 @@ describe("a bump", () => {
     writeFileSync(path.join(results, "line-nine.json"), r.out)
     const apply = await script(sb, WATCH, "apply", results, "--registry", sb.reg)
     expect(apply.code, apply.err).toBe(0)
-    const mod = JSON.parse(readFileSync(path.join(dir, "mod.json"), "utf8"))
+    const mod = JSON.parse(readFileSync(path.join(dir, "support.json"), "utf8"))
     expect(mod.upstream.ref).toBe("v1.4.0")
     // The new patch's context is the new release's text, with full blob ids.
     expect(patchText()).toContain(" line 7, changed upstream")

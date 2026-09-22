@@ -70,22 +70,31 @@ export async function createHarness(sb: Sandbox, opts: { build?: string } = {}) 
   await git(sb.harness, "add", "-A")
   await git(sb.harness, "commit", "-q", "-m", "initial")
   await git(sb.harness, "tag", "v1.0.0")
-  mkdirSync(path.join(sb.reg, "harnesses"), { recursive: true })
-  mkdirSync(path.join(sb.reg, "mods", "fake"), { recursive: true })
+  mkdirSync(path.join(sb.reg, "mods"), { recursive: true })
   mkdirSync(path.join(sb.reg, "schema"), { recursive: true })
   writeFileSync(path.join(sb.reg, "schema", "mod.schema.json"), "{}\n")
+  writeFileSync(path.join(sb.reg, "schema", "support.schema.json"), "{}\n")
   writeFileSync(path.join(sb.reg, "README.md"), "# registry\n")
   writeFileSync(path.join(sb.reg, "CONTRIBUTING.md"), "# Contributing\n\nSteps.\n")
+  registerHarness(sb, { id: "fake", name: "Fake", binary: "greet", build: opts.build })
+}
+
+/**
+ * Registers a harness definition for the fake harness repo. A second id (say
+ * "other", binary "hello") lets a test have a mod that supports two harnesses.
+ */
+export function registerHarness(sb: Sandbox, h: { id: string; name: string; binary: string; build?: string }) {
+  mkdirSync(path.join(sb.reg, "harnesses"), { recursive: true })
   writeFileSync(
-    path.join(sb.reg, "harnesses", "fake.json"),
+    path.join(sb.reg, "harnesses", `${h.id}.json`),
     JSON.stringify({
-      id: "fake",
-      name: "Fake",
+      id: h.id,
+      name: h.name,
       repo: `file://${sb.harness}`,
-      binary: "greet",
+      binary: h.binary,
       install: "echo installing dependencies",
       typecheck: "echo typechecking && sh -n greet.sh",
-      build: opts.build ?? "echo building && mkdir -p out/bin && cp greet.sh out/bin/greet && chmod +x out/bin/greet",
+      build: h.build ?? "echo building && mkdir -p out/bin && cp greet.sh out/bin/greet && chmod +x out/bin/greet",
       artifact: "out/bin/greet",
       recipe: [{ file: "build.cfg" }, { file: "package.json", lines: '"packageManager"' }],
       releaseTagPattern: "v*",
@@ -102,10 +111,18 @@ export async function release(sb: Sandbox, tag: string, change: (dir: string) =>
 }
 
 /**
- * Makes a mod from a change on top of a release, packs it into the registry
- * (or ~/.open-mods/local with `local`), and fills in the manifest.
+ * Makes a mod from a change on top of a release and packs it into the
+ * registry (or ~/.open-mods/local with `local`) as t/<name>, for the fake
+ * harness unless `harness` says otherwise. Returns the harness folder,
+ * mods/t/<name>/<harness>.
  */
-export async function createMod(sb: Sandbox, name: string, change: (dir: string) => void, opts: { base?: string; local?: boolean; conflicts?: string[] } = {}) {
+export async function createMod(
+  sb: Sandbox,
+  name: string,
+  change: (dir: string) => void,
+  opts: { base?: string; local?: boolean; conflicts?: string[]; harness?: string } = {},
+) {
+  const harness = opts.harness ?? "fake"
   const work = path.join(sb.T, `work-${name}`)
   rmSync(work, { recursive: true, force: true })
   await $`git clone -q ${sb.harness} ${work}`.quiet()
@@ -113,12 +130,16 @@ export async function createMod(sb: Sandbox, name: string, change: (dir: string)
   change(work)
   await git(work, "add", "-A")
   await git(work, "commit", "-q", "-m", `feat: ${name}`)
-  const r = await cli(sb, "pack", work, "--name", name, "--harness", "fake", "--force", ...(opts.local ? ["--local"] : []))
+  const r = await cli(sb, "pack", work, "--name", name, "--owner", "t", "--harness", harness, "--force", ...(opts.local ? ["--local"] : []))
   if (r.code !== 0) throw new Error(`pack failed: ${r.all}`)
-  const dir = opts.local ? path.join(sb.om, "local", "fake", name) : path.join(sb.reg, "mods", "fake", name)
-  const file = path.join(dir, "mod.json")
-  const mod = JSON.parse(readFileSync(file, "utf8"))
-  writeFileSync(file, JSON.stringify({ ...mod, description: `The ${name} mod.`, author: { name: "t", github: "t" }, ...(opts.conflicts ? { conflicts: opts.conflicts } : {}) }, null, 2))
+  const root = opts.local ? path.join(sb.om, "local", "t", name) : path.join(sb.reg, "mods", "t", name)
+  const metaFile = path.join(root, "mod.json")
+  writeFileSync(metaFile, JSON.stringify({ ...JSON.parse(readFileSync(metaFile, "utf8")), description: `The ${name} mod.` }, null, 2))
+  const dir = path.join(root, harness)
+  if (opts.conflicts) {
+    const supportFile = path.join(dir, "support.json")
+    writeFileSync(supportFile, JSON.stringify({ ...JSON.parse(readFileSync(supportFile, "utf8")), conflicts: opts.conflicts }, null, 2))
+  }
   return dir
 }
 

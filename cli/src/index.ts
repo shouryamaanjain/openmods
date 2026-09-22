@@ -24,19 +24,32 @@ type Harness = {
   releaseTagPattern?: string
 }
 
+// A mod is `owner/name`, with one folder per harness it supports:
+//
+//   mods/<owner>/<name>/mod.json              shared: description, license, maintainers
+//   mods/<owner>/<name>/<harness>/support.json   the release it is for, its patches
+//   mods/<owner>/<name>/<harness>/patches/
+//
+// This type is one mod on one harness: the shared fields plus that harness's
+// support.json. `dir` is the harness folder (patch paths are relative to it),
+// `root` the mod's folder.
 type Mod = {
+  owner: string
   name: string
+  id: string
   harness: string
   description: string
   author?: { name?: string; github?: string; url?: string }
+  maintainers?: string[]
   license: string
   tags?: string[]
   upstream: { ref: string; commit: string }
   patches: string[]
   conflicts?: string[]
   dir: string
+  root: string
   // "registry": published in the registry. "local": unpublished, from
-  // ~/.open-mods/local/<harness>/<mod>, where authors keep mods they are
+  // ~/.open-mods/local/<owner>/<name>, where authors keep mods they are
   // still working on or do not want to publish.
   source: "registry" | "local"
 }
@@ -59,12 +72,17 @@ const GIT_IDENTITY = {
 const args = process.argv.slice(2)
 const flags = new Map<string, string | true>()
 const positional: string[] = []
+// Flags that take a value. Every other --flag is a switch, including the
+// harness flags (--opencode, --codex, ...), so `install --opencode owner/mod`
+// never swallows the mod as the flag's value.
+const VALUE_FLAGS = new Set(["registry", "name", "owner", "harness", "base", "out", "ref", "workspace"])
+const SWITCHES = new Set(["build", "force", "help", "json", "local", "no-path", "typecheck"])
 for (let i = 0; i < args.length; i++) {
   const a = args[i]!
   if (a.startsWith("--")) {
     const [k, v] = a.slice(2).split("=", 2)
     if (v !== undefined) flags.set(k!, v)
-    else if (args[i + 1] && !args[i + 1]!.startsWith("--")) flags.set(k!, args[++i]!)
+    else if (VALUE_FLAGS.has(k!) && args[i + 1] !== undefined) flags.set(k!, args[++i]!)
     else flags.set(k!, true)
   } else positional.push(a)
 }
@@ -118,41 +136,193 @@ function loadHarness(reg: string, id: string): Harness {
 }
 
 const LOCAL = path.join(HOME, "local")
+const ID = /^[a-z0-9][a-z0-9-]{0,63}$/
 
-function loadMod(dir: string, source: Mod["source"] = dir.startsWith(LOCAL) ? "local" : "registry"): Mod {
-  const file = path.join(dir, "mod.json")
-  if (!existsSync(file)) fail(`${dir} has no mod.json`)
-  const mod = JSON.parse(readFileSync(file, "utf8"))
-  return { ...mod, dir, source }
+function readJsonFile(file: string) {
+  return JSON.parse(readFileSync(file, "utf8"))
 }
 
-function modsUnder(root: string, source: Mod["source"], harness?: string): Mod[] {
-  if (!existsSync(root)) return []
-  return readdirSync(root, { withFileTypes: true })
-    .filter((d) => d.isDirectory() && (!harness || d.name === harness))
-    .flatMap((h) =>
-      readdirSync(path.join(root, h.name), { withFileTypes: true })
-        .filter((d) => d.isDirectory() && existsSync(path.join(root, h.name, d.name, "mod.json")))
-        .map((d) => loadMod(path.join(root, h.name, d.name), source)),
-    )
+/** One mod on one harness, from its harness folder (the one with support.json). */
+function loadMod(dir: string, source: Mod["source"] = path.resolve(dir).startsWith(LOCAL) ? "local" : "registry"): Mod {
+  dir = path.resolve(dir)
+  const supportFile = path.join(dir, "support.json")
+  if (!existsSync(supportFile)) fail(`${pretty(dir)} has no support.json`)
+  const root = path.dirname(dir)
+  const metaFile = path.join(root, "mod.json")
+  if (!existsSync(metaFile)) fail(`${pretty(root)} has no mod.json`)
+  const meta = readJsonFile(metaFile)
+  const support = readJsonFile(supportFile)
+  const owner = meta.owner ?? path.basename(path.dirname(root))
+  const name = meta.name ?? path.basename(root)
+  return { ...meta, ...support, owner, name, id: `${owner}/${name}`, harness: path.basename(dir), dir, root, source }
 }
 
-// Registry mods first, then local ones; a local mod with the same name as a
-// registry mod shadows it, so an author can test a change before publishing.
+function modsUnder(base: string, source: Mod["source"], harness?: string): Mod[] {
+  const dirs = (p: string) => (existsSync(p) ? readdirSync(p, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name) : [])
+  return dirs(base).flatMap((owner) =>
+    dirs(path.join(base, owner))
+      .filter((name) => existsSync(path.join(base, owner, name, "mod.json")))
+      .flatMap((name) =>
+        dirs(path.join(base, owner, name))
+          .filter((h) => (!harness || h === harness) && existsSync(path.join(base, owner, name, h, "support.json")))
+          .map((h) => loadMod(path.join(base, owner, name, h), source)),
+      ),
+  )
+}
+
+// Registry mods first, then local ones; a local mod shadows a registry mod
+// with the same id on the same harness, so an author can test a change
+// before publishing.
 function listMods(reg: string, harness?: string): Mod[] {
   const local = modsUnder(LOCAL, "local", harness)
   const published = modsUnder(path.join(reg, "mods"), "registry", harness).filter(
-    (m) => !local.some((l) => l.harness === m.harness && l.name === m.name),
+    (m) => !local.some((l) => l.harness === m.harness && l.id === m.id),
   )
-  return [...published, ...local]
+  return [...published, ...local].sort((a, b) => a.id.localeCompare(b.id) || a.harness.localeCompare(b.harness))
 }
 
-function resolveMod(reg: string, spec: string): Mod {
-  const [harness, name] = spec.includes("/") ? spec.split("/", 2) : [undefined, spec]
-  const found = listMods(reg, harness).filter((m) => m.name === name)
-  if (found.length === 0) fail(`no mod "${spec}" in registry ${reg}`)
-  if (found.length > 1) fail(`"${spec}" is ambiguous; use ${found.map((m) => `${m.harness}/${m.name}`).join(" or ")}`)
-  return found[0]!
+function allHarnesses(reg: string): Harness[] {
+  return readdirSync(path.join(reg, "harnesses"))
+    .filter((f) => f.endsWith(".json"))
+    .sort()
+    .map((f) => loadHarness(reg, f.replace(/\.json$/, "")))
+}
+
+/** `owner/name`, checked. */
+function parseId(reg: string, spec: string): string {
+  const parts = spec.split("/")
+  if (parts.length !== 2 || !ID.test(parts[0]!) || !ID.test(parts[1]!)) fail(`"${spec}" is not a mod name. Mods are written owner/mod, e.g. shouryamaanjain/tetris.`)
+  return spec
+}
+
+/** Every harness a mod supports. */
+function supportsOf(reg: string, spec: string): Mod[] {
+  const id = parseId(reg, spec)
+  const found = listMods(reg).filter((m) => m.id === id)
+  if (found.length === 0) {
+    // The old harness/mod form, e.g. opencode/tetris.
+    const [first, name] = id.split("/")
+    const h = allHarnesses(reg).find((x) => x.id === first)
+    const owners = h ? [...new Set(listMods(reg).filter((m) => m.name === name).map((m) => m.owner))] : []
+    if (h) fail(`no mod "${id}". Mods are named owner/mod, and the harness is a flag: ${owners.length ? `open-mods install ${owners[0]}/${name} --${h.id}` : `open-mods install <owner>/${name} --${h.id}`}.`)
+    fail(`no mod "${id}". \`open-mods list\` shows what is available.`)
+  }
+  return found
+}
+
+/** One mod on one harness. */
+function resolveMod(reg: string, spec: string, harness: string): Mod {
+  const all = supportsOf(reg, spec)
+  return all.find((x) => x.harness === harness) ?? fail(`${spec} does not support ${harness}. It supports: ${all.map((x) => x.harness).join(", ")}.`)
+}
+
+/** The harnesses named on the command line: --opencode, --codex, or --harness <id>. */
+function harnessFlags(reg: string): string[] {
+  const ids = allHarnesses(reg).map((h) => h.id)
+  for (const [k, v] of flags)
+    if (v === true && !SWITCHES.has(k) && !ids.includes(k)) fail(`unknown option --${k}. The harness flags are ${ids.map((i) => `--${i}`).join(", ")}.`)
+  const picked = ids.filter((id) => flags.get(id) === true)
+  const named = flag("harness")
+  if (named) {
+    if (!ids.includes(named)) fail(`unknown harness "${named}". Known: ${ids.join(", ")}.`)
+    if (!picked.includes(named)) picked.push(named)
+  }
+  return picked
+}
+
+const interactive = () => !!process.stdin.isTTY && !!process.stdout.isTTY && !has("json")
+const color = !process.env.NO_COLOR && !!process.stdout.isTTY
+const paint = (code: string, text: string) => (color ? `\x1b[${code}m${text}\x1b[0m` : text)
+const dim = (t: string) => paint("2", t)
+const bold = (t: string) => paint("1", t)
+const accent = (t: string) => paint("36", t)
+
+/**
+ * An arrow-key selector at the terminal. Returns the chosen index, or null
+ * when there is no terminal to ask at. Esc, q or Ctrl-C cancels the command.
+ */
+async function select(question: string, options: { label: string; hint?: string }[]): Promise<number | null> {
+  if (!interactive()) return null
+  const width = Math.max(...options.map((o) => o.label.length))
+  let index = 0
+  const lines = () => [
+    `${accent("?")} ${bold(question)}`,
+    ...options.map((o, i) => `${i === index ? accent("❯") : " "} ${i === index ? accent(o.label.padEnd(width)) : o.label.padEnd(width)}  ${dim(o.hint ?? "")}`),
+    dim("  ↑↓ move · enter select · esc cancel"),
+  ]
+  const out = process.stdout
+  out.write("\x1b[?25l" + lines().join("\n") + "\n")
+  const redraw = () => out.write(`\x1b[${options.length + 2}A\x1b[0J` + lines().join("\n") + "\n")
+  process.stdin.setRawMode(true)
+  process.stdin.resume()
+  const chosen = await new Promise<number | null>((resolve) => {
+    const onKey = (buf: Buffer) => {
+      const k = buf.toString()
+      if (k === "\x1b[A" || k === "k") index = (index + options.length - 1) % options.length
+      else if (k === "\x1b[B" || k === "j") index = (index + 1) % options.length
+      else if (k === "\r" || k === "\n") return done(index)
+      else if (k === "\x1b" || k === "q" || k === "\x03") return done(null)
+      else return
+      redraw()
+    }
+    const done = (v: number | null) => {
+      process.stdin.off("data", onKey)
+      resolve(v)
+    }
+    process.stdin.on("data", onKey)
+  })
+  process.stdin.setRawMode(false)
+  process.stdin.pause()
+  out.write(`\x1b[${options.length + 2}A\x1b[0J\x1b[?25h`)
+  if (chosen === null) {
+    out.write(`${dim("✕")} ${question} ${dim("cancelled")}\n`)
+    process.exit(130)
+  }
+  out.write(`${accent("✔")} ${question} ${bold(options[chosen]!.label)}\n`)
+  return chosen
+}
+
+/** What the user has of a harness today, for the selector's hints. */
+async function stockHint(h: Harness, state: State): Promise<string> {
+  const e = state[h.id]
+  if (e?.mods.length) return `you have ${rel(e.ref)}, modded`
+  const stock = stockBinary(h)
+  if (!stock) return "not installed"
+  const v = await versionOf(stock)
+  return v ? `you have ${v.replace(/^[^0-9]*/, "")}` : "installed"
+}
+
+/**
+ * Which harness(es) to use for a mod: the ones named with --<harness>, else
+ * the only one it supports, else ask with the selector, else explain how to
+ * choose. `among` limits the choice, e.g. to harnesses it is installed on.
+ */
+async function chooseHarnesses(reg: string, spec: string, verb: string, among?: string[]): Promise<Mod[]> {
+  let options = supportsOf(reg, spec)
+  if (among) options = options.filter((m) => among.includes(m.harness))
+  if (options.length === 0) fail(`${spec} is not installed on any harness`)
+  const picked = harnessFlags(reg)
+  if (picked.length) {
+    const missing = picked.filter((id) => !options.some((m) => m.harness === id))
+    if (missing.length)
+      fail(
+        `${spec} ${among ? "is not installed on" : "does not support"} ${missing.map((id) => loadHarness(reg, id).name).join(", ")}. ${among ? "It is installed on" : "It supports"} ${options.map((m) => `${loadHarness(reg, m.harness).name} (--${m.harness})`).join(", ")}.`,
+      )
+    return options.filter((m) => picked.includes(m.harness))
+  }
+  if (options.length === 1) return options
+  const state = loadState()
+  const hints = await Promise.all(
+    options.map(async (m) => {
+      const h = loadHarness(reg, m.harness)
+      const mine = state[m.harness]?.mods.includes(m.id) ? "already installed" : await stockHint(h, state)
+      return { label: h.name, hint: `mod is for ${rel(m.upstream.ref)} · ${mine}` }
+    }),
+  )
+  const i =
+    (await select(`${verb} ${spec} for which harness?`, hints)) ??
+    fail(`${spec} ${among ? "is installed on" : "supports"} ${options.length} harnesses; choose with ${options.map((m) => `--${m.harness}`).join(" or ")}`)
+  return [options[i]!]
 }
 
 // A mod's version is the harness release it supports (mod.upstream.ref), so
@@ -264,13 +434,13 @@ async function fetchBases(root: string, mod: Mod) {
 
 async function applyMods(root: string, mods: Mod[]) {
   for (const mod of mods) {
-    log(`Applying ${mod.harness}/${mod.name} (${mod.patches.length} patch${mod.patches.length === 1 ? "" : "es"})`)
+    log(`Applying ${mod.id} (${mod.patches.length} patch${mod.patches.length === 1 ? "" : "es"})`)
     const files = mod.patches.map((p) => path.join(mod.dir, p))
     await fetchBases(root, mod)
     const r = await $`git -C ${root} am -3 --quiet ${files}`.env({ ...process.env, ...GIT_IDENTITY }).nothrow()
     if (r.exitCode !== 0) {
       await clearApplyState(root)
-      fail(`${mod.harness}/${mod.name} does not apply cleanly at ${rel(mod.upstream.ref)}. It probably conflicts with a mod applied before it.`)
+      fail(`${mod.id} does not apply cleanly on ${mod.harness} ${rel(mod.upstream.ref)}. It probably conflicts with a mod applied before it.`)
     }
   }
 }
@@ -521,19 +691,19 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     log(`\`${h.binary}\` runs your stock ${h.name}. The ${h.name} source checkout stays at ${pretty(root)} as a cache; delete it if you want the space back.`)
     return
   }
-  const mods = all.filter((m) => !off.includes(m.name))
+  const mods = all.filter((m) => !off.includes(m.id))
   if (mods.length === 0) {
     switchOff(h)
-    state[harnessId] = { ...(state[harnessId] ?? { ref: all[0]!.upstream.ref, commit: all[0]!.upstream.commit, artifact: "" }), mods: all.map((m) => m.name), off: [...off], hashes: {}, enabled: false }
+    state[harnessId] = { ...(state[harnessId] ?? { ref: all[0]!.upstream.ref, commit: all[0]!.upstream.commit, artifact: "" }), mods: all.map((m) => m.id), off: [...off], hashes: {}, enabled: false }
     saveState(state)
-    log(`Every ${h.name} mod is off (${off.join(", ")}), so \`${h.binary}\` runs your stock ${h.name}. \`open-mods on ${harnessId}/${off[0]}\` brings one back.`)
+    log(`Every ${h.name} mod is off (${off.join(", ")}), so \`${h.binary}\` runs your stock ${h.name}. \`open-mods on ${off[0]} --${harnessId}\` brings one back.`)
     return
   }
   const base = mods[0]!.upstream
   const strays = mods.filter((m) => m.upstream.commit !== base.commit)
   if (strays.length > 0) {
     log(
-      `note: ${strays.map((m) => m.name).join(", ")} were authored against a different ${h.name} release than ${mods[0]!.name} (${rel(base.ref)}); trying anyway.`,
+      `note: ${strays.map((m) => m.id).join(", ")} ${strays.length === 1 ? "is" : "are"} for a different ${h.name} release than ${mods[0]!.id} (${rel(base.ref)}); trying anyway.`,
     )
   }
   await ensureCheckout(h, root, base.commit, base.ref)
@@ -550,9 +720,9 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
   state[harnessId] = {
     ref: base.ref,
     commit: base.commit,
-    mods: all.map((m) => m.name),
-    off: off.filter((n) => all.some((m) => m.name === n)),
-    hashes: Object.fromEntries(mods.map((m) => [m.name, patchHash(m)])),
+    mods: all.map((m) => m.id),
+    off: off.filter((n) => all.some((m) => m.id === n)),
+    hashes: Object.fromEntries(mods.map((m) => [m.id, patchHash(m)])),
     artifact,
     enabled: true,
   }
@@ -564,14 +734,24 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
 
 async function cmdList() {
   const reg = await ensureRegistry()
-  const mods = listMods(reg, positional[1])
-  if (has("json")) return console.log(JSON.stringify(mods.map(({ dir, ...m }) => m), null, 2))
-  if (mods.length === 0) return log("No mods found.")
+  const only = positional[1] ?? harnessFlags(reg)[0]
+  const mods = listMods(reg, only)
+  if (has("json")) return console.log(JSON.stringify(mods.map(({ dir, root, ...m }) => m), null, 2))
+  if (mods.length === 0) return log(only ? `No mods for ${only}.` : "No mods found.")
   const installed = loadState()
-  const w = Math.max(...mods.map((m) => `${m.harness}/${m.name}`.length))
-  for (const m of mods) {
-    const mark = installed[m.harness]?.mods.includes(m.name) ? "*" : " "
-    log(`${mark} ${`${m.harness}/${m.name}`.padEnd(w)}  ${rel(m.upstream.ref).padEnd(9)} ${m.source === "local" ? "(local) " : ""}${m.description}`)
+  // One line per mod, with every harness it supports and the release it is for.
+  const byId = new Map<string, Mod[]>()
+  for (const m of mods) byId.set(m.id, [...(byId.get(m.id) ?? []), m])
+  const w = Math.max(...[...byId.keys()].map((id) => id.length))
+  for (const [id, variants] of [...byId].sort(([a], [b]) => a.localeCompare(b))) {
+    const any = variants.some((m) => installed[m.harness]?.mods.includes(id))
+    const where = variants
+      .sort((a, b) => a.harness.localeCompare(b.harness))
+      .map((m) => `${m.harness} ${rel(m.upstream.ref)}${installed[m.harness]?.mods.includes(id) ? "*" : ""}`)
+      .join(" · ")
+    const local = variants.some((m) => m.source === "local") ? "(local) " : ""
+    log(`${any ? "*" : " "} ${id.padEnd(w)}  ${where}`)
+    log(`  ${" ".repeat(w)}  ${dim(local + variants[0]!.description)}`)
   }
   log("")
   log(`* = installed${mods.some((m) => m.source === "local") ? `   (local) = unpublished, from ${pretty(LOCAL)}` : ""}`)
@@ -579,38 +759,45 @@ async function cmdList() {
 
 async function cmdInfo() {
   const reg = await ensureRegistry()
-  const spec = positional[1] ?? fail("usage: open-mods info <harness>/<mod>")
-  const m = resolveMod(reg, spec)
-  const files = touchedFiles(m)
-  if (has("json")) return console.log(JSON.stringify({ ...m, dir: undefined, touches: files }, null, 2))
-  log(`${m.harness}/${m.name} for ${m.harness} ${rel(m.upstream.ref)}`)
-  log(`  ${m.description}`)
-  if (m.author?.name) log(`  by ${m.author.name}${m.author.github ? ` (@${m.author.github})` : ""}`)
-  log(`  license ${m.license}`)
-  log(`  built against ${m.harness} ${rel(m.upstream.ref)} (tag ${m.upstream.ref}, ${m.upstream.commit.slice(0, 12)})`)
-  if (m.tags?.length) log(`  tags ${m.tags.join(", ")}`)
-  log(`  patches`)
-  for (const p of m.patches) log(`    ${p}`)
-  log(`  touches`)
-  for (const f of files) log(`    ${f}`)
-  log(`  ${m.source === "local" ? "local, unpublished" : "registry"}: ${pretty(m.dir)}`)
+  const spec = positional[1] ?? fail("usage: open-mods info <owner>/<mod> [--<harness>]")
+  const picked = harnessFlags(reg)
+  const variants = supportsOf(reg, spec).filter((m) => !picked.length || picked.includes(m.harness))
+  if (variants.length === 0) fail(`${spec} does not support ${picked.join(", ")}`)
+  if (has("json")) return console.log(JSON.stringify(variants.map((m) => ({ ...m, dir: undefined, root: undefined, touches: touchedFiles(m) })), null, 2))
+  const m0 = variants[0]!
+  log(`${bold(m0.id)}`)
+  log(`  ${m0.description}`)
+  const who = m0.maintainers?.length ? m0.maintainers.map((x) => `@${x}`).join(", ") : m0.author?.name ? `${m0.author.name}${m0.author.github ? ` (@${m0.author.github})` : ""}` : ""
+  if (who) log(`  by ${who}`)
+  log(`  license ${m0.license}${m0.tags?.length ? `  ·  tags ${m0.tags.join(", ")}` : ""}`)
+  log(`  ${m0.source === "local" ? "local, unpublished" : "registry"}: ${pretty(m0.root)}`)
+  for (const m of variants) {
+    const h = loadHarness(reg, m.harness)
+    log("")
+    log(`  ${bold(h.name)}  for ${rel(m.upstream.ref)} ${dim(`(tag ${m.upstream.ref}, ${m.upstream.commit.slice(0, 12)})`)}   install: open-mods install ${m.id} --${m.harness}`)
+    log(`    patches`)
+    for (const p of m.patches) log(`      ${p}`)
+    log(`    touches`)
+    for (const f of touchedFiles(m)) log(`      ${f}`)
+  }
 }
 
 async function cmdInstall() {
   const reg = await ensureRegistry()
   const specs = positional.slice(1)
-  if (specs.length === 0) fail("install needs a mod to install, e.g. open-mods install opencode/vim-keys. `open-mods list` shows what is available.")
-  const wanted = specs.map((s) => resolveMod(reg, s))
-  const harnessIds = new Set(wanted.map((m) => m.harness))
+  if (specs.length === 0) fail("install needs a mod, e.g. open-mods install shouryamaanjain/tetris --opencode. `open-mods list` shows what is available.")
+  const wanted: Mod[] = []
+  for (const spec of specs) wanted.push(...(await chooseHarnesses(reg, spec, "Install")))
   const state = loadState()
-  for (const id of harnessIds) {
-    const current = (state[id]?.mods ?? []).map((n) => resolveMod(reg, `${id}/${n}`))
-    const merged = [...current.filter((c) => !wanted.some((w) => w.name === c.name)), ...wanted.filter((w) => w.harness === id)]
+  for (const id of new Set(wanted.map((m) => m.harness))) {
+    const current = (state[id]?.mods ?? []).map((n) => resolveMod(reg, n, id))
+    const here = wanted.filter((w) => w.harness === id)
+    const merged = [...current.filter((c) => !here.some((w) => w.id === c.id)), ...here]
     for (const m of merged) {
-      const clash = merged.find((o) => o !== m && (m.conflicts?.includes(o.name) || o.conflicts?.includes(m.name)))
-      if (clash) fail(`${m.name} and ${clash.name} are marked as conflicting`)
+      const clash = merged.find((o) => o !== m && (m.conflicts?.includes(o.id) || o.conflicts?.includes(m.id)))
+      if (clash) fail(`${m.id} and ${clash.id} are marked as not working together on ${loadHarness(reg, id).name}`)
     }
-    const off = (state[id]?.off ?? []).filter((n) => !wanted.some((w) => w.name === n))
+    const off = (state[id]?.off ?? []).filter((n) => !here.some((w) => w.id === n))
     await rebuild(reg, id, merged, off)
   }
 }
@@ -618,18 +805,17 @@ async function cmdInstall() {
 async function cmdUninstall() {
   const reg = await ensureRegistry()
   const specs = positional.slice(1)
-  if (specs.length === 0) fail("uninstall needs a mod to remove, e.g. open-mods uninstall opencode/vim-keys. `open-mods status` shows what is installed.")
+  if (specs.length === 0) fail("uninstall needs a mod, e.g. open-mods uninstall shouryamaanjain/tetris. `open-mods status` shows what is installed.")
   const state = loadState()
   const byHarness = new Map<string, string[]>()
-  for (const s of specs) {
-    const m = resolveMod(reg, s)
-    byHarness.set(m.harness, [...(byHarness.get(m.harness) ?? []), m.name])
+  for (const spec of specs) {
+    const id = parseId(reg, spec)
+    const on = Object.keys(state).filter((h) => state[h]!.mods.includes(id))
+    if (on.length === 0) fail(`${id} is not installed`)
+    for (const m of await chooseHarnesses(reg, id, "Uninstall", on)) byHarness.set(m.harness, [...(byHarness.get(m.harness) ?? []), id])
   }
   for (const [id, names] of byHarness) {
-    const installed = state[id]?.mods ?? []
-    const missing = names.filter((n) => !installed.includes(n))
-    if (missing.length) fail(`${missing.map((n) => `${id}/${n}`).join(", ")} ${missing.length === 1 ? "is" : "are"} not installed`)
-    const remaining = installed.filter((n) => !names.includes(n)).map((n) => resolveMod(reg, `${id}/${n}`))
+    const remaining = state[id]!.mods.filter((n) => !names.includes(n)).map((n) => resolveMod(reg, n, id))
     await rebuild(reg, id, remaining, state[id]?.off ?? [])
   }
 }
@@ -654,40 +840,38 @@ async function cmdStatus() {
     log(`${h.binary} → ${runs}`)
     const active = e.mods.filter((m) => !e.off.includes(m))
     log(`  modded  ${h.name} ${rel(e.ref)} + ${active.join(" + ") || "(nothing)"}  ${e.enabled ? "on" : "off (open-mods on)"}${built || !active.length ? "" : "  [not built; run open-mods update]"}`)
-    for (const m of e.off) log(`          ${m} is off (open-mods on ${id}/${m})`)
+    for (const m of e.off) log(`          ${m} is off (open-mods on ${m} --${id})`)
     log(`  stock   ${stock ? `${(await versionOf(stock)) ?? "?"}  ${pretty(stock)}` : "not found on PATH"}`)
     if (e.enabled && !onPath) log(`  note    ${pretty(BIN)} is not on PATH in this shell; open a new terminal or run: export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"`)
   }
 }
 
 // `on`/`off` with no argument or a harness id switch the whole modded build
-// (instant, no rebuild). With a mod name they build that one mod in or out.
-function modTarget(reg: string, state: State, arg: string | undefined): { id: string; name: string } | null {
-  if (!arg) return null
-  if (arg.includes("/")) {
-    const m = resolveMod(reg, arg)
-    if (!state[m.harness]?.mods.includes(m.name)) fail(`${m.harness}/${m.name} is not installed`)
-    return { id: m.harness, name: m.name }
+// (instant, no rebuild). With a mod, owner/name, they build that mod in or out.
+async function modTarget(reg: string, state: State, arg: string | undefined, verb: string): Promise<{ id: string; name: string } | null> {
+  if (!arg || !arg.includes("/")) {
+    if (arg && !state[arg]) fail(`"${arg}" is neither an installed mod nor a harness; \`open-mods status\` lists both`)
+    return null
   }
-  if (state[arg]) return null
-  const hits = Object.entries(state).filter(([, e]) => e.mods.includes(arg))
-  if (hits.length === 1) return { id: hits[0]![0], name: arg }
-  if (hits.length > 1) fail(`"${arg}" is installed for several harnesses; say ${hits.map(([id]) => `${id}/${arg}`).join(" or ")}`)
-  return fail(`"${arg}" is neither an installed mod nor a harness; \`open-mods status\` lists both`)
+  const id = parseId(reg, arg)
+  const on = Object.keys(state).filter((h) => state[h]!.mods.includes(id))
+  if (on.length === 0) fail(`${id} is not installed`)
+  const [m] = await chooseHarnesses(reg, id, verb, on)
+  return { id: m!.harness, name: id }
 }
 
 async function cmdOn() {
   const reg = await ensureRegistry()
   const state = loadState()
-  const target = modTarget(reg, state, positional[1])
+  const target = await modTarget(reg, state, positional[1], "Switch on")
   if (target) {
     const e = state[target.id]!
     if (!e.off.includes(target.name)) {
-      log(`${target.id}/${target.name} is already on.`)
+      log(`${target.name} is already on for ${target.id}.`)
       return
     }
-    log(`Building ${target.id}/${target.name} back in`)
-    await rebuild(reg, target.id, e.mods.map((n) => resolveMod(reg, `${target.id}/${n}`)), e.off.filter((n) => n !== target.name))
+    log(`Building ${target.name} back into ${target.id}`)
+    await rebuild(reg, target.id, e.mods.map((n) => resolveMod(reg, n, target.id)), e.off.filter((n) => n !== target.name))
     return
   }
   const ids = positional[1] ? [positional[1]] : Object.keys(state)
@@ -695,7 +879,7 @@ async function cmdOn() {
   for (const id of ids) {
     const e = state[id] ?? fail(`no mods installed for ${id}`)
     const h = loadHarness(reg, id)
-    if (e.mods.every((m) => e.off.includes(m))) fail(`every ${h.name} mod is off; \`open-mods on ${id}/${e.off[0]}\` builds one back in`)
+    if (e.mods.every((m) => e.off.includes(m))) fail(`every ${h.name} mod is off; \`open-mods on ${e.off[0]} --${id}\` builds one back in`)
     e.artifact ||= artifactPath(h, path.join(HOME, "harnesses", id, "src"))
     if (!existsSync(e.artifact)) fail(`the modded ${h.name} build is missing; run: open-mods update ${id}`)
     switchOn(h, e.artifact)
@@ -708,15 +892,15 @@ async function cmdOn() {
 async function cmdOff() {
   const reg = await ensureRegistry()
   const state = loadState()
-  const target = modTarget(reg, state, positional[1])
+  const target = await modTarget(reg, state, positional[1], "Switch off")
   if (target) {
     const e = state[target.id]!
     if (e.off.includes(target.name)) {
-      log(`${target.id}/${target.name} is already off.`)
+      log(`${target.name} is already off for ${target.id}.`)
       return
     }
-    log(`Building ${target.id}/${target.name} out (it stays installed; \`open-mods on ${target.id}/${target.name}\` restores it)`)
-    await rebuild(reg, target.id, e.mods.map((n) => resolveMod(reg, `${target.id}/${n}`)), [...e.off, target.name])
+    log(`Building ${target.name} out of ${target.id} (it stays installed; \`open-mods on ${target.name} --${target.id}\` restores it)`)
+    await rebuild(reg, target.id, e.mods.map((n) => resolveMod(reg, n, target.id)), [...e.off, target.name])
     return
   }
   const ids = positional[1] ? [positional[1]] : Object.keys(state)
@@ -737,15 +921,15 @@ async function cmdUpdate() {
   const ids = positional[1] ? [positional[1]] : Object.keys(state)
   for (const id of ids) {
     const e = state[id]
-    const mods = (e?.mods ?? []).map((n) => resolveMod(reg, `${id}/${n}`))
-    const active = mods.filter((m) => !e?.off.includes(m.name))
+    const mods = (e?.mods ?? []).map((n) => resolveMod(reg, n, id))
+    const active = mods.filter((m) => !e?.off.includes(m.id))
     const same =
       e &&
       existsSync(e.artifact) &&
       active.length > 0 &&
-      active.every((m) => m.upstream.commit === e.commit && e.hashes[m.name] === patchHash(m))
+      active.every((m) => m.upstream.commit === e.commit && e.hashes[m.id] === patchHash(m))
     if (same && !has("force")) {
-      log(`${loadHarness(reg, id).name} ${rel(e.ref)} + ${active.map((m) => m.name).join(" + ")} is already up to date.`)
+      log(`${loadHarness(reg, id).name} ${rel(e.ref)} + ${active.map((m) => m.id).join(" + ")} is already up to date.`)
       continue
     }
     await rebuild(reg, id, mods, e?.off ?? [])
@@ -756,18 +940,25 @@ async function cmdUpdate() {
 async function cmdPack() {
   const reg = await ensureRegistry()
   const checkout = path.resolve(positional[1] ?? ".")
-  const name = flag("name") ?? fail("usage: open-mods pack <harness-checkout> --name <mod-name> [--local] [--harness <id>] [--base <tag>] [--out <dir>]")
-  if (!/^[a-z0-9][a-z0-9-]{1,63}$/.test(name)) fail("mod name must be lowercase letters, digits and hyphens")
+  const name = flag("name") ?? fail("usage: open-mods pack <harness-checkout> --name <mod> [--owner <you>] [--local] [--harness <id>] [--base <tag>] [--out <dir>] [--force]")
+  if (!ID.test(name)) fail("mod name must be lowercase letters, digits and hyphens")
   if (!existsSync(path.join(checkout, ".git"))) fail(`${checkout} is not a git checkout`)
 
   const remote = (await $`git -C ${checkout} remote get-url origin`.nothrow().text()).trim()
-  const harnesses = readdirSync(path.join(reg, "harnesses"))
-    .filter((f) => f.endsWith(".json"))
-    .map((f) => loadHarness(reg, f.replace(/\.json$/, "")))
+  const harnesses = allHarnesses(reg)
   const harness =
     (flag("harness") ? harnesses.find((h) => h.id === flag("harness")) : undefined) ??
+    harnesses.find((h) => flags.get(h.id) === true) ??
     harnesses.find((h) => remote.replace(/\.git$/, "").endsWith(h.repo.replace(/^https?:\/\/(www\.)?github\.com\//, "").replace(/\.git$/, ""))) ??
     fail(`cannot tell which harness ${checkout} is; pass --harness <id>`)
+
+  // The owner is the author's GitHub handle: --owner, else git's github.user,
+  // else the GitHub CLI's login.
+  const detected =
+    (await $`git config --get github.user`.nothrow().quiet().text()).trim() ||
+    (await $`gh api user --jq .login`.nothrow().quiet().text()).trim().toLowerCase()
+  const owner = flag("owner") ?? (detected || fail("cannot tell who owns this mod; pass --owner <your GitHub handle>"))
+  if (!ID.test(owner)) fail(`owner "${owner}" must be lowercase letters, digits and hyphens`)
 
   const pattern = harness.releaseTagPattern ?? "*"
   const base = flag("base") ?? (await $`git -C ${checkout} describe --tags --abbrev=0 --match ${pattern} HEAD`.nothrow().text()).trim()
@@ -776,8 +967,9 @@ async function cmdPack() {
   const count = Number((await $`git -C ${checkout} rev-list --count ${base}..HEAD`.text()).trim())
   if (count === 0) fail(`no commits on top of ${base}; commit your changes first`)
 
-  const out = path.resolve(flag("out") ?? (has("local") ? path.join(LOCAL, harness.id, name) : path.join(reg, "mods", harness.id, name)))
-  if (existsSync(out) && !has("force")) fail(`${out} already exists; pass --force to overwrite`)
+  const root = path.resolve(flag("out") ?? path.join(has("local") ? LOCAL : path.join(reg, "mods"), owner, name))
+  const out = path.join(root, harness.id)
+  if (existsSync(path.join(out, "support.json")) && !has("force")) fail(`${pretty(out)} already exists; pass --force to overwrite`)
   rmSync(path.join(out, "patches"), { recursive: true, force: true })
   mkdirSync(path.join(out, "patches"), { recursive: true })
   await $`git -C ${checkout} format-patch --no-signature --no-stat --zero-commit --full-index -N -o ${path.join(out, "patches")} ${base}..HEAD`.quiet()
@@ -786,57 +978,73 @@ async function cmdPack() {
     .sort()
     .map((f) => `patches/${f}`)
 
+  // mod.json is shared by every harness the mod supports: create it once,
+  // keep what the author filled in.
   const author = (await $`git -C ${checkout} log -1 --format=%an HEAD`.text()).trim()
-  const existing = existsSync(path.join(out, "mod.json")) ? JSON.parse(readFileSync(path.join(out, "mod.json"), "utf8")) : {}
-  const manifest = {
-    $schema: path.relative(out, path.join(reg, "schema", "mod.schema.json")).replaceAll("\\", "/"),
+  const metaFile = path.join(root, "mod.json")
+  const existing = existsSync(metaFile) ? readJsonFile(metaFile) : {}
+  const meta = {
+    $schema: path.relative(root, path.join(reg, "schema", "mod.schema.json")).replaceAll("\\", "/"),
+    owner,
     name,
-    harness: harness.id,
     description: existing.description ?? "TODO: one line, under 200 characters",
-    author: existing.author ?? { name: author },
+    author: existing.author ?? { name: author, github: owner },
+    maintainers: existing.maintainers ?? [owner],
     license: existing.license ?? "MIT",
     tags: existing.tags ?? [],
+  }
+  writeFileSync(metaFile, JSON.stringify(meta, null, 2) + "\n")
+  const supportFile = path.join(out, "support.json")
+  const prevSupport = existsSync(supportFile) ? readJsonFile(supportFile) : {}
+  const support = {
+    $schema: path.relative(out, path.join(reg, "schema", "support.schema.json")).replaceAll("\\", "/"),
     upstream: { ref: base, commit },
     patches,
+    ...(prevSupport.conflicts ? { conflicts: prevSupport.conflicts } : {}),
   }
-  writeFileSync(path.join(out, "mod.json"), JSON.stringify(manifest, null, 2) + "\n")
-  if (!existsSync(path.join(out, "README.md"))) {
+  writeFileSync(supportFile, JSON.stringify(support, null, 2) + "\n")
+  if (!existsSync(path.join(root, "README.md"))) {
     writeFileSync(
-      path.join(out, "README.md"),
-      `# ${name}\n\nTODO: what this mod changes in ${harness.name}, and why.\n\n## Install\n\n\`\`\`sh\nopen-mods install ${harness.id}/${name}\n\`\`\`\n`,
+      path.join(root, "README.md"),
+      `# ${name}\n\nTODO: what this mod changes, and why.\n\n## Install\n\n\`\`\`sh\nopen-mods install ${owner}/${name}\n\`\`\`\n`,
     )
   }
-  log(`Packed ${count} commit${count === 1 ? "" : "s"} on top of ${rel(base)} into ${out}`)
+  log(`Packed ${count} commit${count === 1 ? "" : "s"} on top of ${harness.name} ${rel(base)} as ${owner}/${name}, in ${pretty(out)}`)
   log(`  ${patches.join("\n  ")}`)
   // A lockfile in a patch is nearly always build noise, and two mods that
   // both carry one cannot stack. Say so; the author decides.
-  const lockfiles = touchedFiles({ ...manifest, dir: out, source: "local" } as Mod).filter((f) => /(^|\/)(Cargo\.lock|bun\.lock|bun\.lockb|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|go\.sum)$/.test(f))
+  const lockfiles = touchedFiles(loadMod(out, has("local") ? "local" : "registry")).filter((f) => /(^|\/)(Cargo\.lock|bun\.lock|bun\.lockb|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|go\.sum)$/.test(f))
   if (lockfiles.length) {
     log(`warning: the patches change ${lockfiles.join(", ")}. That is usually a build side effect, not part of the mod, and mods that both touch a lockfile cannot be installed together. Reset the file to the release and commit again unless the mod really needs it.`)
   }
-  if (has("local")) log(`It is a local mod: \`open-mods install ${harness.id}/${name}\` works now, and nothing is published until you pack it into the registry and open a PR.`)
+  if (has("local")) log(`It is a local mod: \`open-mods install ${owner}/${name} --${harness.id}\` works now, and nothing is published until you pack it into the registry and open a PR.`)
   else log(`Edit mod.json (description, tags, license) and README.md, then open a PR to the registry.`)
 }
 
 // Author and CI command: does a mod apply (and build) against a given ref?
 async function cmdCheck() {
   const reg = await ensureRegistry()
-  // `check --harness <id> --ref <tag> --build` builds the stock harness with no
-  // mod: the smoke test for a harness definition, on any machine or in CI.
-  const bare = flag("harness")
-  const spec = positional[1] ?? (bare ? undefined : fail("usage: open-mods check <mod-dir | harness/mod> [--ref <tag>] [--typecheck | --build] [--json]\n       open-mods check --harness <id> [--ref <tag>] [--typecheck | --build] [--json]"))
+  // `check --harness <id> --ref <tag> --build` with no mod builds the stock
+  // harness: the smoke test for a harness definition, on any machine or in CI.
+  // A mod is its harness folder (mods/<owner>/<name>/<harness>), or owner/name
+  // with --<harness>.
+  const bare = harnessFlags(reg)
+  const spec = positional[1] ?? (bare.length ? undefined : fail("usage: open-mods check <mod-folder | owner/mod --<harness>> [--ref <tag>] [--typecheck | --build] [--json]\n       open-mods check --harness <id> --ref <tag> [--typecheck | --build] [--json]"))
   const mod: Mod = spec
-    ? existsSync(path.join(spec, "mod.json"))
-      ? loadMod(path.resolve(spec))
-      : resolveMod(reg, spec)
+    ? existsSync(path.join(spec, "support.json"))
+      ? loadMod(spec)
+      : (await chooseHarnesses(reg, spec, "Check"))[0]!
     : {
+        owner: "",
         name: "(stock)",
-        harness: bare!,
+        id: "(stock)",
+        harness: bare[0]!,
         description: "",
         license: "",
         upstream: { ref: flag("ref") ?? fail("--harness needs --ref <tag>"), commit: "" },
         patches: [],
         dir: "",
+        root: "",
         source: "registry",
       }
   const h = loadHarness(reg, mod.harness)
@@ -845,7 +1053,7 @@ async function cmdCheck() {
   // A stock check (--harness, no mod) says so, so the release watch can tell
   // a harness build from a mod check.
   const result: Record<string, unknown> = spec
-    ? { mod: `${mod.harness}/${mod.name}`, harness: mod.harness, madeFor: mod.upstream.ref, ref, touches: touchedFiles(mod) }
+    ? { mod: mod.id, harness: mod.harness, madeFor: mod.upstream.ref, ref, touches: touchedFiles(mod) }
     : { harness: mod.harness, stock: true, ref }
   try {
     await initCheckout(h.repo, root)
@@ -935,19 +1143,19 @@ async function cmdCheckUpdates() {
       rmSync(note, { force: true })
       continue
     }
-    const active = e.mods.filter((n) => !e.off.includes(n)).map((n) => resolveMod(reg, `${id}/${n}`))
+    const active = e.mods.filter((n) => !e.off.includes(n)).map((n) => resolveMod(reg, n, id))
     const refs = [...new Set(active.map((m) => m.upstream.ref))]
     const newest = refs.reduce((a, b) => (newerRelease(b, a) ? b : a), e.ref)
     const behind = active.filter((m) => m.upstream.ref !== newest)
-    const changed = active.some((m) => m.upstream.commit !== e.commit || e.hashes[m.name] !== patchHash(m))
+    const changed = active.some((m) => m.upstream.commit !== e.commit || e.hashes[m.id] !== patchHash(m))
     // The launcher sources this file, so every value is single-quoted.
     const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
     const lines = [
       `CURRENT=${q(rel(e.ref))}`,
       `AVAILABLE=${q(changed ? rel(newest) : "")}`,
       `ALL_SUPPORT=${behind.length === 0 ? 1 : 0}`,
-      `MODS=${q(active.map((m) => m.name).join(", "))}`,
-      `BLOCKED=${q(behind.map((m) => `${m.name} is for ${rel(m.upstream.ref)}`).join(", "))}`,
+      `MODS=${q(active.map((m) => m.id).join(", "))}`,
+      `BLOCKED=${q(behind.map((m) => `${m.id} is for ${rel(m.upstream.ref)}`).join(", "))}`,
       `CHECKED=${Math.floor(Date.now() / 1000)}`,
     ]
     writeFileSync(note, lines.join("\n") + "\n")
@@ -960,11 +1168,11 @@ async function cmdCheckUpdates() {
           available: changed ? rel(newest) : "",
           availableTag: changed ? newest : "",
           allSupport: behind.length === 0,
-          mods: active.map((m) => m.name),
-          blocked: behind.map((m) => m.name),
+          mods: active.map((m) => m.id),
+          blocked: behind.map((m) => m.id),
         }),
       )
-    else log(changed ? `${id}: ${rel(newest)} available${behind.length ? `, blocked by ${behind.map((m) => m.name).join(", ")}` : ", all mods support it"}` : `${id}: up to date (${rel(e.ref)})`)
+    else log(changed ? `${id}: ${rel(newest)} available${behind.length ? `, blocked by ${behind.map((m) => m.id).join(", ")}` : ", all mods support it"}` : `${id}: up to date (${rel(e.ref)})`)
   }
 }
 

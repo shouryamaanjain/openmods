@@ -24,11 +24,11 @@ async function launch(answer: string) {
 beforeAll(async () => {
   await createHarness(sb)
   await createMod(sb, "friendly", setGreeting("hello from friendly"))
-  await cli(sb, "install", "fake/friendly")
+  await cli(sb, "install", "t/friendly")
   // A release that leaves the mod's lines alone, and the bump the release
   // watch would commit for it.
   await release(sb, "v1.1.0", addFile("CHANGELOG.md", "1.1.0\n"))
-  const file = path.join(sb.reg, "mods", "fake", "friendly", "mod.json")
+  const file = path.join(sb.reg, "mods", "t", "friendly", "fake", "support.json")
   const commit = (await $`git -C ${sb.harness} rev-parse v1.1.0^{commit}`.text()).trim()
   writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), upstream: { ref: "v1.1.0", commit } }))
   await cli(sb, "check-updates", "fake")
@@ -44,7 +44,7 @@ describe("the update prompt", () => {
   test("y rebuilds onto the new release and starts the new build in the same run", async () => {
     rmSync(path.join(sb.om, "updates", "fake.snooze"), { force: true })
     const r = await launch("y\n")
-    expect(r.all).toContain("now runs Fake 1.1.0 + friendly")
+    expect(r.all).toContain("now runs Fake 1.1.0 + t/friendly")
     expect(r.all).not.toContain("No such file")
     expect(r.out).toContain("hello from friendly")
     expect(r.code).toBe(0)

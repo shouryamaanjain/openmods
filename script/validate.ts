@@ -22,36 +22,54 @@ for (const id of harnesses) {
   }
 }
 
+// mods/<owner>/<name>/mod.json, README.md, and one folder per supported
+// harness with support.json and its patches.
+const ID = /^[a-z0-9][a-z0-9-]{0,63}$/
 const modsRoot = path.join(root, "mods")
-for (const harness of readdirSync(modsRoot, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name)) {
-  if (!harnesses.has(harness)) errors.push(`mods/${harness}: no harnesses/${harness}.json`)
-  for (const name of readdirSync(path.join(modsRoot, harness), { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name)) {
-    const dir = path.join(modsRoot, harness, name)
-    const rel = `mods/${harness}/${name}`
+const dirs = (p: string) => (existsSync(p) ? readdirSync(p, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name) : [])
+for (const owner of dirs(modsRoot)) {
+  if (!ID.test(owner)) errors.push(`mods/${owner}: owner must be lowercase letters, digits and hyphens`)
+  for (const name of dirs(path.join(modsRoot, owner))) {
+    const dir = path.join(modsRoot, owner, name)
+    const rel = `mods/${owner}/${name}`
     const file = path.join(dir, "mod.json")
+    if (!ID.test(name)) errors.push(`${rel}: name must be lowercase letters, digits and hyphens`)
     if (!existsSync(file)) {
       errors.push(`${rel}: missing mod.json`)
       continue
     }
     const m = JSON.parse(readFileSync(file, "utf8"))
+    if (m.owner !== owner) errors.push(`${rel}: owner "${m.owner}" does not match folder`)
     if (m.name !== name) errors.push(`${rel}: name "${m.name}" does not match folder`)
-    if (m.harness !== harness) errors.push(`${rel}: harness "${m.harness}" does not match folder`)
+    if ("version" in m) errors.push(`${rel}: drop "version"; a mod is versioned by the harness release it supports`)
     if (typeof m.description !== "string" || m.description.length === 0 || m.description.length > 200 || m.description.startsWith("TODO"))
       errors.push(`${rel}: description must be 1-200 characters and not a TODO`)
     if (!m.license) errors.push(`${rel}: missing license`)
-    if (!/^[0-9a-f]{40}$/.test(m.upstream?.commit ?? "")) errors.push(`${rel}: upstream.commit must be a full sha`)
-    if (!m.upstream?.ref) errors.push(`${rel}: missing upstream.ref`)
-    if ("version" in m) errors.push(`${rel}: drop "version"; a mod is versioned by the harness release in upstream.ref`)
-    if (!Array.isArray(m.patches) || m.patches.length === 0) errors.push(`${rel}: patches must be a non-empty list`)
-    for (const p of m.patches ?? []) {
-      if (!/^patches\/\d{4}-[A-Za-z0-9._-]+\.patch$/.test(p)) errors.push(`${rel}: bad patch path "${p}"`)
-      else if (!existsSync(path.join(dir, p))) errors.push(`${rel}: ${p} does not exist`)
-      else if (/^index [0-9a-f]{1,39}\.\./m.test(readFileSync(path.join(dir, p), "utf8")))
-        errors.push(`${rel}: ${p} has short blob ids; regenerate it with open-mods pack (git format-patch --full-index)`)
-    }
-    const onDisk = existsSync(path.join(dir, "patches")) ? readdirSync(path.join(dir, "patches")).filter((f) => f.endsWith(".patch")) : []
-    for (const f of onDisk) if (!m.patches?.includes(`patches/${f}`)) errors.push(`${rel}: patches/${f} is not listed in mod.json`)
     if (!existsSync(path.join(dir, "README.md"))) errors.push(`${rel}: missing README.md`)
+    const supported = dirs(dir)
+    if (supported.length === 0) errors.push(`${rel}: supports no harness; add a <harness>/support.json`)
+    for (const h of supported) {
+      const hrel = `${rel}/${h}`
+      if (!harnesses.has(h)) errors.push(`${hrel}: no harnesses/${h}.json`)
+      const sfile = path.join(dir, h, "support.json")
+      if (!existsSync(sfile)) {
+        errors.push(`${hrel}: missing support.json`)
+        continue
+      }
+      const sup = JSON.parse(readFileSync(sfile, "utf8"))
+      if (!/^[0-9a-f]{40}$/.test(sup.upstream?.commit ?? "")) errors.push(`${hrel}: upstream.commit must be a full sha`)
+      if (!sup.upstream?.ref) errors.push(`${hrel}: missing upstream.ref`)
+      if (!Array.isArray(sup.patches) || sup.patches.length === 0) errors.push(`${hrel}: patches must be a non-empty list`)
+      for (const p of sup.patches ?? []) {
+        if (!/^patches\/\d{4}-[A-Za-z0-9._-]+\.patch$/.test(p)) errors.push(`${hrel}: bad patch path "${p}"`)
+        else if (!existsSync(path.join(dir, h, p))) errors.push(`${hrel}: ${p} does not exist`)
+        else if (/^index [0-9a-f]{1,39}\.\./m.test(readFileSync(path.join(dir, h, p), "utf8")))
+          errors.push(`${hrel}: ${p} has short blob ids; regenerate it with open-mods pack (git format-patch --full-index)`)
+      }
+      const onDisk = existsSync(path.join(dir, h, "patches")) ? readdirSync(path.join(dir, h, "patches")).filter((f) => f.endsWith(".patch")) : []
+      for (const f of onDisk) if (!sup.patches?.includes(`patches/${f}`)) errors.push(`${hrel}: patches/${f} is not listed in support.json`)
+      for (const c of sup.conflicts ?? []) if (!/^[a-z0-9-]+\/[a-z0-9-]+$/.test(c)) errors.push(`${hrel}: conflicts entry "${c}" must be owner/mod`)
+    }
   }
 }
 

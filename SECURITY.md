@@ -8,8 +8,8 @@ Treat installing a mod the way you treat building any program from source: read 
 
 ## Reading a mod before you install it
 
-- `open-mods info <harness>/<mod>` lists every file the mod touches.
-- The mod's page on the site shows the full diff. So does `mods/<harness>/<mod>/patches/` in the registry.
+- `open-mods info <owner>/<mod>` lists every file the mod touches, per harness.
+- The mod's page on the site shows the full diff. So does `mods/<owner>/<mod>/<harness>/patches/` in the registry.
 - A mod that adds network calls, reads files outside the project, or changes the agent's instructions should say so in its README. If the diff does something the README does not mention, do not install it, and open an issue.
 
 The registry only carries patches. Nothing is prebuilt: your machine compiles the harness from its release plus the mod's patches, so what you read is what you run.

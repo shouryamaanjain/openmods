@@ -10,13 +10,15 @@ OpenMods is that layer. A mod is a set of git patches against a pinned release o
 curl -fsSL https://openmods.dev/install.sh | sh
 
 open-mods list
-open-mods install opencode/<mod>
+open-mods install <owner>/<mod> --opencode
 opencode                            # a real OpenCode release with the mod built in
 open-mods off                       # opencode is stock again
 open-mods on                        # and back
-open-mods off opencode/<mod>        # keep it installed, build it out
-open-mods uninstall opencode/<mod>  # gone
+open-mods off <owner>/<mod>         # keep it installed, build it out
+open-mods uninstall <owner>/<mod>   # gone
 ```
+
+A mod is named after its author, like `shouryamaanjain/tetris`, and can support several harnesses. `--opencode` or `--codex` says which one to install it on. Leave the flag out and the CLI asks, listing only the harnesses that mod supports; a mod for a single harness needs no flag.
 
 Your stock OpenCode is never modified. `install` builds a separate modded binary and puts it first on PATH. `off` steps aside so the stock one runs; `on` steps back in. `open-mods status` tells you which one `opencode` runs right now.
 
@@ -34,17 +36,22 @@ Anything open source with a build command can be a harness. See [`harnesses/`](h
 
 ## Mods
 
-The registry lives under [`mods/<harness>/<mod>`](mods). Run `open-mods list` for what is published, or `open-mods info <harness>/<mod>` to see exactly which files a mod touches before you build it. Every command is documented at [openmods.dev/cli](https://openmods.dev/cli/) and in `open-mods help <command>`.
+The registry lives under [`mods/<owner>/<mod>`](mods). Run `open-mods list` for what is published, or `open-mods info <owner>/<mod>` to see exactly which files a mod touches on each harness before you build it. Every command is documented at [openmods.dev/cli](https://openmods.dev/cli/) and in `open-mods help <command>`.
 
-Mods you are still working on, or do not want to publish, go under `~/.open-mods/local/<harness>/<mod>`. The CLI lists and installs them like registry mods, marked `(local)`.
+Mods you are still working on, or do not want to publish, go under `~/.open-mods/local/<owner>/<mod>`, in the same layout. The CLI lists and installs them like registry mods, marked `(local)`.
 
 ## How it works
 
 ```
-mods/opencode/<mod>/
-  mod.json          name, license, the harness release it supports (its version)
-  patches/0001-…    git format-patch output, applied in order with git am
+mods/<owner>/<mod>/
+  mod.json            owner, name, description, license: shared by every harness
   README.md
+  opencode/
+    support.json      the OpenCode release it supports (its version) and its patches
+    patches/0001-…    git format-patch output, applied in order with git am
+  codex/
+    support.json      the same for Codex, against a Codex release
+    patches/0001-…
 ```
 
 `open-mods install` does the mechanical part:
@@ -68,7 +75,7 @@ A mod is "for" one harness release, and that release is the mod's version. Harne
 1. A job runs every hour and notices when a harness publishes a new release.
 2. The lines our build recipe depends on (the harness's `recipe` list: its build script, its toolchain pin, and so on) are compared between the last release it was checked at and the new one. If any changed, every mod for that harness is held where it is and one issue asks a person to run the manual **harness build** workflow; a successful build lifts the hold. CI never builds a harness on its own.
 3. Otherwise every mod for that harness is applied to the new release and typechecked, one job per mod. The apply is a three-way merge, which fails exactly when the release changed the mod's own lines. The typecheck is the compiler's front half: it verifies every name, type and signature the mod relies on, in minutes, without producing a binary, and only for the packages the mod touches.
-4. A mod that passes gets its release moved forward in `mod.json`, and its patches are saved as they apply to the new release. The mod's code does not change, but its patches now match the release it claims, so installing it needs no merge and the next release is compared against this one.
+4. A mod that passes gets its release moved forward in that harness's `support.json`, and its patches are saved as they apply to the new release. The mod's code does not change, but its patches now match the release it claims, so installing it needs no merge and the next release is compared against this one.
 5. A mod that fails keeps its current release and gets a `status.json` saying which release it does not support. The recipe check's result is kept in `status/<harness>.json`. The listing shows it in yellow, and the bot opens an issue that mentions the mod's maintainers with the error and the steps to rebase.
 
 Compiled dependencies are cached between runs, so a check starts from warm.
@@ -93,9 +100,11 @@ git clone https://github.com/anomalyco/opencode && cd opencode
 git checkout v1.18.31            # the release you want to mod
 # ... change anything, then commit as many times as you like ...
 open-mods pack . --name my-mod --local   # installable now from ~/.open-mods/local, not published
-open-mods pack . --name my-mod           # writes mods/opencode/my-mod/ into the registry
-open-mods check mods/opencode/my-mod --build   # build it yourself; CI only typechecks
+open-mods pack . --name my-mod           # writes mods/<you>/my-mod/opencode/ into the registry
+open-mods check mods/<you>/my-mod/opencode --build   # build it yourself; CI only typechecks
 ```
+
+`pack` names the mod after your GitHub handle, from `git config github.user` or the GitHub CLI; `--owner` sets it. Packing the same name from a Codex checkout adds `codex/` to the same mod.
 
 Then open a pull request. [CONTRIBUTING.md](CONTRIBUTING.md) has the details.
 
