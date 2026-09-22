@@ -363,6 +363,7 @@ function launcherOf(h: Harness, artifact: string) {
   return `#!/bin/sh
 # open-mods launcher for ${h.binary}. \`open-mods off\` removes it; the stock ${h.name} is untouched.
 HARNESS=${h.id}
+SELF=${JSON.stringify(path.join(BIN, h.binary))}
 REAL=${JSON.stringify(artifact)}
 OM=${JSON.stringify(HOME)}
 CLI=${JSON.stringify(cli)}
@@ -379,7 +380,8 @@ if [ -z "$OPEN_MODS_NO_CHECK" ]; then
 fi
 
 # Ask only at an interactive terminal, and not more than once a day after a no.
-if [ -t 0 ] && [ -t 1 ] && [ -z "$OPEN_MODS_NO_PROMPT" ] && [ -f "$NOTE" ]; then
+# (OPEN_MODS_ASSUME_TTY=1 lets tests drive the prompt without a terminal.)
+if { { [ -t 0 ] && [ -t 1 ]; } || [ -n "$OPEN_MODS_ASSUME_TTY" ]; } && [ -z "$OPEN_MODS_NO_PROMPT" ] && [ -f "$NOTE" ]; then
   . "$NOTE"
   SNOOZED=$(cat "$NOTE.snooze" 2>/dev/null || echo 0)
   if [ -n "$AVAILABLE" ] && [ "$AVAILABLE" != "$CURRENT" ] && [ $((NOW - SNOOZED)) -gt 86400 ]; then
@@ -389,7 +391,9 @@ if [ -t 0 ] && [ -t 1 ] && [ -z "$OPEN_MODS_NO_PROMPT" ] && [ -f "$NOTE" ]; then
       read -r ANSWER
       case "$ANSWER" in
         y|Y|yes|YES)
-          if $CLI update "$HARNESS"; then rm -f "$NOTE"; else
+          # The update replaces this launcher and removes the old build, so
+          # start again from the new launcher rather than the old path above.
+          if $CLI update "$HARNESS"; then rm -f "$NOTE"; exec "$SELF" "$@"; else
             printf '%s\n' "Update failed; starting your current build. Run \"open-mods update $HARNESS\" to try again."
           fi ;;
         *) echo "$NOW" > "$NOTE.snooze" ;;
