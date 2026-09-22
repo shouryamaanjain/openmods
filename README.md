@@ -68,7 +68,7 @@ A mod is "for" one harness release, and that release is the mod's version. Harne
 1. A job runs every hour and notices when a harness publishes a new release.
 2. The stock harness is built once at that release, to prove the harness definition still works there. If it does not, every mod for it is held where it is until the definition is fixed.
 3. Every mod for that harness is applied to the new release and typechecked, one job per mod. A typecheck is the compiler's front half: it verifies every name, type and signature the mod relies on, in minutes, without producing a binary. A full build per mod runs once, on its pull request.
-4. A mod that passes gets its release moved forward in `mod.json`. That is the whole version bump; the mod's code did not change.
+4. A mod that passes gets its release moved forward in `mod.json`, and its patches are saved as they apply to the new release. The mod's code does not change, but its patches now match the release it claims, so installing it needs no merge and the next release is compared against this one.
 5. A mod that fails keeps its current release and gets a `status.json` saying which release it does not support. The stock build's result is kept in `status/<harness>.json`. The listing shows it in yellow, and the bot opens an issue that mentions the mod's maintainers with the error and the steps to rebase.
 
 Compiled dependencies are cached between runs, so a check starts from warm.

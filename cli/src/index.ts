@@ -849,6 +849,19 @@ async function cmdCheck() {
       ? await $`git -C ${root} am -3 --quiet ${files}`.env({ ...process.env, ...GIT_IDENTITY }).nothrow().quiet()
       : { exitCode: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) }
     result.applies = am.exitCode === 0
+    // The mod's patches as they apply to this release. The release watch saves
+    // them when it bumps the mod, so a mod's patches always match the release
+    // it claims, and the next release is compared against this one.
+    if (result.applies && files.length) {
+      const dir = path.join(tmpdir(), `open-mods-rebase-${process.pid}`)
+      rmSync(dir, { recursive: true, force: true })
+      await $`git -C ${root} format-patch --no-signature --no-stat --zero-commit --full-index -N -o ${dir} ${result.commit as string}..HEAD`.quiet()
+      result.patches = readdirSync(dir)
+        .filter((f) => f.endsWith(".patch"))
+        .sort()
+        .map((f) => ({ name: f, text: readFileSync(path.join(dir, f), "utf8") }))
+      rmSync(dir, { recursive: true, force: true })
+    }
     if (!result.applies) {
       result.error = (am.stderr.toString() + am.stdout.toString()).trim()
       await clearApplyState(root)

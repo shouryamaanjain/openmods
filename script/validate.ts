@@ -46,6 +46,8 @@ for (const harness of readdirSync(modsRoot, { withFileTypes: true }).filter((d) 
     for (const p of m.patches ?? []) {
       if (!/^patches\/\d{4}-[A-Za-z0-9._-]+\.patch$/.test(p)) errors.push(`${rel}: bad patch path "${p}"`)
       else if (!existsSync(path.join(dir, p))) errors.push(`${rel}: ${p} does not exist`)
+      else if (/^index [0-9a-f]{1,39}\.\./m.test(readFileSync(path.join(dir, p), "utf8")))
+        errors.push(`${rel}: ${p} has short blob ids; regenerate it with open-mods pack (git format-patch --full-index)`)
     }
     const onDisk = existsSync(path.join(dir, "patches")) ? readdirSync(path.join(dir, "patches")).filter((f) => f.endsWith(".patch")) : []
     for (const f of onDisk) if (!m.patches?.includes(`patches/${f}`)) errors.push(`${rel}: patches/${f} is not listed in mod.json`)

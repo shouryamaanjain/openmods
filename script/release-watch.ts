@@ -12,7 +12,7 @@
 // the mod's version, so this is the automatic version bump. A mod that fails
 // keeps its ref and gets a status.json saying which release it does not
 // support, which the site renders as the yellow state.
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { $ } from "bun"
 
@@ -174,6 +174,13 @@ async function apply() {
     const ok = r.applies === true && (r.builds === true || r.typechecks === true)
     const checked = new Date().toISOString()
     if (ok) {
+      // Save the patches as they apply to the new release, when CI sent them.
+      if (Array.isArray(r.patches) && r.patches.length) {
+        const pdir = path.join(modDir, "patches")
+        for (const f of readdirSync(pdir)) if (f.endsWith(".patch")) rmSync(path.join(pdir, f))
+        for (const patch of r.patches as { name: string; text: string }[]) writeFileSync(path.join(pdir, patch.name), patch.text)
+        mod.patches = (r.patches as { name: string }[]).map((patch) => `patches/${patch.name}`)
+      }
       mod.upstream = { ref: r.ref, commit: r.commit }
       writeJson(modFile, mod)
       writeJson(path.join(modDir, "status.json"), { tested: r.ref, supports: r.ref, ok: true, checked })
