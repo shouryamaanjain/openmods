@@ -148,7 +148,7 @@ async function apply() {
   const harnessOk = new Map<string, boolean>()
   for (const f of files) {
     const r = readJson(path.join(dir, f))
-    if (r?.mod !== undefined || !r?.harness) continue
+    if (r?.stock !== true || !r?.harness) continue
     const ok = r.builds === true
     harnessOk.set(r.harness, ok)
     const hFile = path.join(root, "harnesses", `${r.harness}.status.json`)
@@ -156,7 +156,7 @@ async function apply() {
   }
   for (const f of files) {
     const r = readJson(path.join(dir, f))
-    if (!r?.mod) continue
+    if (!r?.mod || r.stock) continue
     const [harness, name] = (r.mod as string).split("/")
     const modDir = path.join(root, "mods", harness!, name!)
     const modFile = path.join(modDir, "mod.json")

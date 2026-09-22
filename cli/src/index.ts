@@ -825,7 +825,11 @@ async function cmdCheck() {
   const h = loadHarness(reg, mod.harness)
   const ref = flag("ref") ?? mod.upstream.ref
   const root = flag("workspace") ? path.resolve(flag("workspace")!) : path.join(tmpdir(), `open-mods-check-${mod.harness}`)
-  const result: Record<string, unknown> = { mod: `${mod.harness}/${mod.name}`, madeFor: mod.upstream.ref, ref, touches: touchedFiles(mod) }
+  // A stock check (--harness, no mod) says so, so the release watch can tell
+  // a harness build from a mod check.
+  const result: Record<string, unknown> = spec
+    ? { mod: `${mod.harness}/${mod.name}`, harness: mod.harness, madeFor: mod.upstream.ref, ref, touches: touchedFiles(mod) }
+    : { harness: mod.harness, stock: true, ref }
   try {
     if (!existsSync(path.join(root, ".git"))) {
       mkdirSync(root, { recursive: true })
@@ -873,7 +877,7 @@ async function cmdCheck() {
   }
   if (has("json")) console.log(JSON.stringify(result, null, 2))
   else {
-    log(`${result.mod} (made for ${rel(String(result.madeFor))}) against ${rel(ref)} (${String(result.commit ?? "?").slice(0, 12)})`)
+    log(result.stock ? `stock ${mod.harness} at ${rel(ref)} (${String(result.commit ?? "?").slice(0, 12)})` : `${result.mod} (made for ${rel(String(result.madeFor))}) against ${rel(ref)} (${String(result.commit ?? "?").slice(0, 12)})`)
     log(`  applies:    ${result.applies ? "yes" : "NO"}`)
     if (has("typecheck")) log(`  typechecks: ${result.typechecks ? "yes" : "NO"}`)
     if (has("build")) log(`  builds:     ${result.builds ? "yes" : "NO"}`)
