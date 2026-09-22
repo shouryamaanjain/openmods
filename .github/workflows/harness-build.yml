@@ -23,6 +23,7 @@ on:
 
 permissions:
   contents: write
+  issues: write
 
 concurrency:
   group: release-watch
@@ -43,8 +44,10 @@ jobs:
         run: bun cli/src/index.ts check --harness ${{ inputs.harness }} --ref ${{ inputs.ref }} --build --json
       - name: Record the recipe as verified
         if: ${{ inputs.record }}
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          bun script/release-watch.ts verify ${{ inputs.harness }} ${{ inputs.ref }}
+          bun script/release-watch.ts verify ${{ inputs.harness }} ${{ inputs.ref }} --issues
           git config user.name "open-mods bot"
           git config user.email "bot@open-mods"
           git add status

@@ -283,19 +283,28 @@ async function apply() {
 
 // A person ran the harness build at `ref` and it worked: the recipe is
 // confirmed for that release and the hold is lifted.
-function verify() {
+async function verify() {
   const [harness, ref] = [args[1], args[2]]
-  if (!harness || !ref) throw new Error("usage: release-watch verify <harness> <ref>")
+  if (!harness || !ref) throw new Error("usage: release-watch verify <harness> <ref> [--issues]")
   mkdirSync(path.join(root, "status"), { recursive: true })
   const prev = readJson(statusFile(harness))
   writeJson(statusFile(harness), { tested: ref, from: prev?.from, recipe: "verified", checked: new Date().toISOString() })
   console.log(`${harness} ${rel(ref)}: recipe verified by a build`)
+  // Close the issue that asked for this build.
+  const repo = process.env.GITHUB_REPOSITORY
+  if (!has("issues") || !repo) return
+  const name = readJson(path.join(root, "harnesses", `${harness}.json`))?.name ?? harness
+  const title = `${name} ${rel(ref)} changed the OpenMods build recipe`
+  const list = (await $`gh issue list --repo ${repo} --state open --label harness --json number,title`.nothrow().text()).trim()
+  for (const issue of list ? (JSON.parse(list) as { number: number; title: string }[]) : [])
+    if (issue.title === title)
+      await $`gh issue close ${String(issue.number)} --repo ${repo} --comment ${`A harness build at ${rel(ref)} succeeded, so the recipe still works. Mods are checked again on the next hourly run.`}`.nothrow()
 }
 
 const cmd = args[0]
 if (cmd === "plan") await plan()
 else if (cmd === "apply") await apply()
-else if (cmd === "verify") verify()
+else if (cmd === "verify") await verify()
 else {
   console.error("usage: release-watch plan [--harness <id>] [--ref <tag>] [--retest] | apply <results-dir> [--recipe <json>] [--issues] | verify <harness> <ref>   (--registry <dir> to run against another checkout)")
   process.exit(1)

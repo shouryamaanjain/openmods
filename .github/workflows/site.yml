@@ -47,7 +47,8 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     needs: build
-    if: ${{ needs.build.outputs.deploy == 'yes' }}
+    # Only main is published; a run on any other branch builds and stops.
+    if: ${{ needs.build.outputs.deploy == 'yes' && github.ref == 'refs/heads/main' }}
     environment:
       name: production
       url: https://openmods.dev

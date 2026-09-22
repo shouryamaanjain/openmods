@@ -31,6 +31,7 @@ concurrency:
 permissions:
   contents: write
   issues: write
+  actions: write
 
 jobs:
   plan:
@@ -118,3 +119,8 @@ jobs:
           git diff --cached --quiet && exit 0
           git commit -F results/COMMIT_MSG
           git push
+          # A push made with the workflow token starts no other workflow, so
+          # start the site rebuild explicitly.
+          gh workflow run site --ref "${GITHUB_REF_NAME}"
+        env:
+          GH_TOKEN: ${{ github.token }}
