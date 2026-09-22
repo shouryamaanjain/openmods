@@ -25,5 +25,18 @@
   "typecheck": "cd codex-rs && cargo check -p codex-cli --bin codex",
   "build": "cd codex-rs && sed -i.open-mods.bak '1,/^version = \"/s/^version = \"[^\"]*\"/version = \"'\"${OPEN_MODS_VERSION}+${OPEN_MODS_MODS}\"'\"/' Cargo.toml && rm -f Cargo.toml.open-mods.bak && CARGO_PROFILE_RELEASE_LTO=off CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 cargo build --release -p codex-cli --bin codex",
   "artifact": "codex-rs/target/release/codex",
+  "recipe": [
+    {
+      "file": "codex-rs/rust-toolchain.toml"
+    },
+    {
+      "file": "codex-rs/cli/Cargo.toml",
+      "lines": "^\\s*(\\[\\[bin\\]\\]|name\\s*=\\s*\"codex\"|path\\s*=|default-run)"
+    },
+    {
+      "file": "codex-rs/Cargo.toml",
+      "lines": "^\\s*members\\s*=|^\\s*\"cli\","
+    }
+  ],
   "releaseTagPattern": "rust-v[0-9]*"
 }

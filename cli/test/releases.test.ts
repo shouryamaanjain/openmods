@@ -50,8 +50,6 @@ describe("check", () => {
     const j = JSON.parse(r.out)
     expect(j).toMatchObject({ harness: "fake", stock: true, builds: true })
     expect(j.mod).toBeUndefined()
-    // The CLI's own output is what the release watch reads; keep it for apply.
-    writeFileSync(path.join(sb.T, "harness-ok.json"), r.out)
   })
   test("--harness --build reports a failing stock build as JSON", async () => {
     const file = path.join(sb.reg, "harnesses", "fake.json")
@@ -61,7 +59,6 @@ describe("check", () => {
     writeFileSync(file, JSON.stringify(h))
     expect(r.code).toBe(1)
     expect(JSON.parse(r.out)).toMatchObject({ harness: "fake", stock: true, builds: false })
-    writeFileSync(path.join(sb.T, "harness-failed.json"), r.out)
   })
   test("fails on a release that rewrites the mod's lines", async () => {
     await release(sb, "v2.0.0", setGreeting("hello from stock 2.0"))
@@ -72,37 +69,27 @@ describe("check", () => {
 })
 
 describe("release watch", () => {
-  test("plan lists mods not yet on the release, and one stock build per harness", async () => {
+  let recipe = "[]"
+  test("plan lists mods not yet on the release, after finding the recipe unchanged", async () => {
     const r = await script(sb, WATCH, "plan", "--ref", "v1.1.0", "--registry", sb.reg)
     expect(r.code).toBe(0)
     const j = JSON.parse(r.out)
     expect(j.matrix.map((m: { mod: string }) => m.mod).sort()).toEqual(["mods/fake/friendly", "mods/fake/notes", "mods/fake/syntax-error"])
-    expect(j.harnesses).toEqual([{ harness: "fake", ref: "v1.1.0" }])
+    expect(j.recipe).toMatchObject([{ harness: "fake", from: "v1.0.0", to: "v1.1.0", state: "unchanged" }])
+    recipe = JSON.stringify(j.recipe)
   })
-  test("apply holds every mod when the stock harness build failed", async () => {
-    const held = path.join(sb.T, "results-held")
-    mkdirSync(held, { recursive: true })
-    writeFileSync(path.join(held, "friendly.json"), readFileSync(path.join(sb.T, "results", "friendly.json")))
-    writeFileSync(path.join(held, "harness_fake.json"), readFileSync(path.join(sb.T, "harness-failed.json")))
-    const r = await script(sb, WATCH, "apply", held, "--registry", sb.reg)
-    expect(r.code).toBe(0)
-    expect(r.out).toContain("Held, the harness itself did not build")
-    expect(modJson().upstream.ref).toBe("v1.0.0")
-    const hs = JSON.parse(readFileSync(path.join(sb.reg, "status", "fake.json"), "utf8"))
-    expect(hs.builds).toBe(false)
-    // harnesses/ holds only definitions: anything else there is read as a harness.
-    expect(readdirSync(path.join(sb.reg, "harnesses"))).toEqual(["fake.json"])
-  })
-  test("apply bumps a mod that typechecked when the stock harness built", async () => {
-    // A typecheck-only result, as the release watch produces, plus the passing harness build.
+  test("apply bumps a mod that typechecked and records the recipe check", async () => {
+    // A typecheck-only result, as the release watch produces.
     const r0 = JSON.parse(readFileSync(path.join(sb.T, "results", "friendly.json"), "utf8"))
     writeFileSync(path.join(sb.T, "results", "friendly.json"), JSON.stringify({ ...r0, builds: undefined, typechecks: true }))
-    writeFileSync(path.join(sb.T, "results", "harness_fake.json"), readFileSync(path.join(sb.T, "harness-ok.json")))
-    const r = await script(sb, WATCH, "apply", path.join(sb.T, "results"), "--registry", sb.reg)
-    expect(r.code).toBe(0)
+    const r = await script(sb, WATCH, "apply", path.join(sb.T, "results"), "--recipe", recipe, "--registry", sb.reg)
+    expect(r.code, r.err).toBe(0)
     expect(r.out).toContain("1 mod now supports it, 0 do not")
     expect(modJson().upstream.ref).toBe("v1.1.0")
     expect(JSON.parse(readFileSync(path.join(modDir(), "status.json"), "utf8")).ok).toBe(true)
+    expect(JSON.parse(readFileSync(path.join(sb.reg, "status", "fake.json"), "utf8"))).toMatchObject({ tested: "v1.1.0", recipe: "unchanged" })
+    // harnesses/ holds only definitions: anything else there is read as a harness.
+    expect(readdirSync(path.join(sb.reg, "harnesses"))).toEqual(["fake.json"])
   })
   test("apply keeps a failing mod on its release and records why", async () => {
     writeFileSync(path.join(sb.T, "results", "friendly.json"), JSON.stringify({ mod: "fake/friendly", ref: "v2.0.0", commit: "x", applies: false, error: "patch does not apply" }))

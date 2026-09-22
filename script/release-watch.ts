@@ -1,17 +1,23 @@
 #!/usr/bin/env bun
 // Release watch, the registry's reaction to a harness release.
 //
-//   plan  [--harness <id>] [--ref <tag>]   which mods to test against which release (JSON)
-//   apply <results-dir> [--issues]         bump the mods that passed, mark the ones that
-//                                          failed, open or update an issue for each failure
+//   plan   [--harness <id>] [--ref <tag>]    what to check against which release (JSON)
+//   apply  <results-dir> [--recipe <json>] [--issues]
+//                                            bump the mods that passed, mark the ones
+//                                            that failed, hold a harness whose recipe
+//                                            changed, open or update issues
+//   verify <harness> <ref>                   record that a person built the harness at
+//                                            <ref> after its recipe changed: lifts the hold
 //
-// `plan` looks up the newest release tag of every harness and lists the mods
-// that are not yet on it and have not been tested against it. CI runs
-// `open-mods check --build --json` for each and hands the results to `apply`.
-// A mod that passes gets its upstream ref moved to the new release; that is
-// the mod's version, so this is the automatic version bump. A mod that fails
-// keeps its ref and gets a status.json saying which release it does not
-// support, which the site renders as the yellow state.
+// Nothing here builds a harness. For each harness with a new release, `plan`
+// first compares the lines our build recipe depends on (the harness's
+// `recipe` list: its build script, toolchain pin, and so on) between the last
+// release it was checked at and the new one. If any changed, the harness is
+// held: no mod is checked or bumped, and one issue asks a person to run the
+// manual harness build. If none changed, `plan` lists the mods not yet on the
+// new release, CI applies and typechecks each one (`open-mods check
+// --typecheck --json`), and `apply` bumps the ones that pass and marks the
+// ones that fail, which the site shows in yellow.
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { $ } from "bun"
@@ -71,28 +77,79 @@ async function latestTag(h: { repo: string; releaseTagPattern?: string }) {
   return tags.reduce((a, b) => (newer(b, a) ? b : a), tags[0] ?? "")
 }
 
+type RecipeEntry = { file: string; lines?: string }
+type RecipeCheck = { harness: string; name: string; from: string; to: string; state: "unchanged" | "changed" | "held"; changes: string[] }
+
+const statusFile = (harness: string) => path.join(root, "status", `${harness}.json`)
+
+// The lines of the harness's recipe files that differ between two releases.
+// A recipe entry watches a whole file, or only its lines matching `lines`
+// (a regex): package.json changes every release, its packageManager line
+// almost never. Only trees and the few watched files are fetched.
+async function recipeChanges(h: { id: string; repo: string; recipe?: RecipeEntry[] }, from: string, to: string): Promise<string[]> {
+  if (!h.recipe?.length || from === to) return []
+  const dir = path.join((process.env.RUNNER_TEMP ?? "/tmp"), `open-mods-recipe-${h.id}-${process.pid}`)
+  rmSync(dir, { recursive: true, force: true })
+  mkdirSync(dir, { recursive: true })
+  await $`git -C ${dir} init -q`.quiet()
+  await $`git -C ${dir} remote add origin ${h.repo}`.quiet()
+  await $`git -C ${dir} config remote.origin.promisor true`.quiet()
+  await $`git -C ${dir} config remote.origin.partialclonefilter blob:none`.quiet()
+  await $`git -C ${dir} fetch -q --no-tags --depth 1 --filter=blob:none origin ${"refs/tags/" + from + ":refs/tags/" + from} ${"refs/tags/" + to + ":refs/tags/" + to}`.quiet()
+  const changes: string[] = []
+  const show = async (ref: string, file: string) => {
+    const r = await $`git -C ${dir} show ${ref + ":" + file}`.nothrow().quiet()
+    return r.exitCode === 0 ? r.stdout.toString() : null
+  }
+  for (const entry of h.recipe) {
+    if (!entry.lines) {
+      // A whole file: any changed line counts, and so does the file going away.
+      const diff = await $`git -C ${dir} diff -U0 ${from} ${to} -- ${entry.file}`.nothrow().quiet().text()
+      for (const line of diff.split("\n")) if (/^[-+]/.test(line) && !/^(---|\+\+\+) /.test(line)) changes.push(`${entry.file}: ${line}`)
+      continue
+    }
+    // Only the matching lines, compared by what they say: whitespace and a
+    // trailing comma (a JSON key added after this one) do not count.
+    const match = new RegExp(entry.lines)
+    const pick = (text: string | null) =>
+      (text ?? "").split("\n").filter((l) => match.test(l)).map((l) => l.trim().replace(/,$/, ""))
+    const [a, b] = [pick(await show(from, entry.file)), pick(await show(to, entry.file))]
+    if (a.join("\n") === b.join("\n")) continue
+    for (const l of a.filter((x) => !b.includes(x))) changes.push(`${entry.file}: -${l}`)
+    for (const l of b.filter((x) => !a.includes(x))) changes.push(`${entry.file}: +${l}`)
+  }
+  rmSync(dir, { recursive: true, force: true })
+  return changes
+}
+
 async function plan() {
   const latest: Record<string, string> = {}
   const matrix: { mod: string; harness: string; ref: string }[] = []
+  const recipe: RecipeCheck[] = []
   for (const h of harnesses()) {
     const ref = flag("ref") ?? (await latestTag(h))
     if (!ref) continue
     latest[h.id] = ref
-    for (const dir of modDirs(h.id)) {
-      const mod = readJson(path.join(dir, "mod.json"))
-      const status = readJson(path.join(dir, "status.json"))
-      if (mod.upstream.ref === ref) continue
-      if (status?.tested === ref && !has("retest")) continue
-      matrix.push({ mod: path.relative(root, dir), harness: h.id, ref })
+    const mods = modDirs(h.id).map((dir) => ({ dir, mod: readJson(path.join(dir, "mod.json")), status: readJson(path.join(dir, "status.json")) }))
+    const pending = mods.filter(({ mod, status }) => mod.upstream.ref !== ref && (status?.tested !== ref || has("retest")))
+    if (!pending.length) continue
+    // Where the recipe was last known to work: the last release this harness
+    // was checked at, else the newest release any of its mods is on.
+    const st = readJson(statusFile(h.id))
+    if (st?.tested === ref && st.recipe === "changed") {
+      recipe.push({ harness: h.id, name: h.name, from: st.from, to: ref, state: "held", changes: st.changes ?? [] })
+      continue
     }
+    const from = st?.tested && st.tested !== ref ? st.tested : mods.map(({ mod }) => mod.upstream.ref).reduce((a, b) => (newer(b, a) ? b : a))
+    const changes = st?.tested === ref ? [] : await recipeChanges(h, from, ref)
+    recipe.push({ harness: h.id, name: h.name, from, to: ref, state: changes.length ? "changed" : "unchanged", changes })
+    if (changes.length) continue
+    for (const { dir } of pending) matrix.push({ mod: path.relative(root, dir), harness: h.id, ref })
   }
-  // One stock build per harness that has mods to test: proves the harness
-  // still builds at the new release, once, instead of once per mod.
-  const harnessMatrix = [...new Set(matrix.map((m) => m.harness))].map((harness) => ({ harness, ref: latest[harness]! }))
-  const out = { latest, matrix, harnesses: harnessMatrix }
+  const out = { latest, matrix, recipe }
   console.log(JSON.stringify(out, null, 2))
   if (process.env.GITHUB_OUTPUT) {
-    writeFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify(matrix)}\nharnesses=${JSON.stringify(harnessMatrix)}\nlatest=${JSON.stringify(latest)}\n`, { flag: "a" })
+    writeFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify(matrix)}\nrecipe=${JSON.stringify(recipe.filter((r) => r.state !== "held"))}\nlatest=${JSON.stringify(latest)}\n`, { flag: "a" })
   }
 }
 
@@ -135,27 +192,46 @@ async function issueFor(modPath: string, mod: any, ref: string, error: string) {
   return url
 }
 
+async function recipeIssue(r: RecipeCheck) {
+  const repo = process.env.GITHUB_REPOSITORY
+  if (!repo) return
+  const title = `${r.name} ${rel(r.to)} changed the OpenMods build recipe`
+  const body = [
+    `${r.name} ${rel(r.to)} (tag \`${r.to}\`) changed lines our build recipe for it depends on, since ${rel(r.from)}. Mods for ${r.name} are held on the releases they are on until someone confirms the recipe still works.`,
+    "",
+    "What changed:",
+    "",
+    "```diff",
+    ...r.changes.slice(0, 60),
+    "```",
+    "",
+    `To confirm, run the **harness build** workflow with harness \`${r.harness}\` and ref \`${r.to}\`. If it builds, it records that and the next hourly check picks the mods up. If not, fix \`harnesses/${r.harness}.json\` first.`,
+  ].join("\n")
+  const existing = (await $`gh issue list --repo ${repo} --state open --search ${JSON.stringify(title) + " in:title"} --json number,title`.nothrow().text()).trim()
+  if (existing && (JSON.parse(existing) as { title: string }[]).some((i) => i.title === title)) return
+  await $`gh issue create --repo ${repo} --title ${title} --body ${body} --label harness`.nothrow()
+}
+
 async function apply() {
   const dir = args[1] ?? "results"
+  const recipe: RecipeCheck[] = JSON.parse(flag("recipe") ?? process.env.RECIPE ?? "[]")
+  mkdirSync(path.join(root, "status"), { recursive: true })
+  const recipeLines: string[] = []
+  for (const r of recipe) {
+    const checked = new Date().toISOString()
+    if (r.state === "changed") {
+      writeJson(statusFile(r.harness), { tested: r.to, from: r.from, recipe: "changed", changes: r.changes, checked })
+      if (has("issues")) await recipeIssue(r)
+      recipeLines.push(`${r.name} ${rel(r.to)} changed the build recipe; its mods are held until someone runs the harness build`)
+    } else if (r.state === "unchanged") {
+      writeJson(statusFile(r.harness), { tested: r.to, from: r.from, recipe: "unchanged", checked })
+    }
+  }
   const files = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".json")) : []
   const bumped: string[] = []
   const broken: string[] = []
-  const held: string[] = []
-  let harnessName = ""
-  let ref = ""
-  // Stock harness builds come first: a harness whose own build failed at the
-  // new release holds its mods where they are, and records why.
-  const harnessOk = new Map<string, boolean>()
-  for (const f of files) {
-    const r = readJson(path.join(dir, f))
-    if (r?.stock !== true || !r?.harness) continue
-    const ok = r.builds === true
-    harnessOk.set(r.harness, ok)
-    // Not under harnesses/: every *.json there is read as a harness definition.
-    mkdirSync(path.join(root, "status"), { recursive: true })
-    const hFile = path.join(root, "status", `${r.harness}.json`)
-    writeJson(hFile, { tested: r.ref, builds: ok, error: ok ? undefined : String(r.error ?? "build failed").split("\n").slice(0, 40).join("\n"), checked: new Date().toISOString() })
-  }
+  let harnessName = recipe[0]?.name ?? ""
+  let ref = recipe[0]?.to ?? ""
   for (const f of files) {
     const r = readJson(path.join(dir, f))
     if (!r?.mod || r.stock) continue
@@ -167,10 +243,6 @@ async function apply() {
     const h = readJson(path.join(root, "harnesses", `${harness}.json`))
     harnessName = h?.name ?? harness
     ref = r.ref
-    if (harnessOk.get(harness!) === false) {
-      held.push(name!)
-      continue
-    }
     const ok = r.applies === true && (r.builds === true || r.typechecks === true)
     const checked = new Date().toISOString()
     if (ok) {
@@ -193,11 +265,14 @@ async function apply() {
     }
   }
   const n = (k: number, word: string) => `${k} ${word}${k === 1 ? "" : "s"}`
-  const title = `${harnessName} ${rel(ref)}: ${n(bumped.length, "mod")} now support${bumped.length === 1 ? "s" : ""} it, ${broken.length} ${broken.length === 1 ? "does" : "do"} not`
+  const title =
+    bumped.length || broken.length
+      ? `${harnessName} ${rel(ref)}: ${n(bumped.length, "mod")} now support${bumped.length === 1 ? "s" : ""} it, ${broken.length} ${broken.length === 1 ? "does" : "do"} not`
+      : `${harnessName} ${rel(ref)}: build recipe changed, mods held`
   const body = [
     ...(bumped.length ? [`Supports it: ${bumped.join(", ")}`] : []),
     ...(broken.length ? [`Needs a maintainer: ${broken.join(", ")}`] : []),
-    ...(held.length ? [`Held, the harness itself did not build at this release: ${held.join(", ")}`] : []),
+    ...recipeLines,
   ].join("\n")
   const summary = `${title}\n${body.replace(/^/gm, "  ")}`
   console.log(summary)
@@ -206,10 +281,22 @@ async function apply() {
   if (process.env.GITHUB_STEP_SUMMARY) writeFileSync(process.env.GITHUB_STEP_SUMMARY, "```\n" + summary + "\n```\n", { flag: "a" })
 }
 
+// A person ran the harness build at `ref` and it worked: the recipe is
+// confirmed for that release and the hold is lifted.
+function verify() {
+  const [harness, ref] = [args[1], args[2]]
+  if (!harness || !ref) throw new Error("usage: release-watch verify <harness> <ref>")
+  mkdirSync(path.join(root, "status"), { recursive: true })
+  const prev = readJson(statusFile(harness))
+  writeJson(statusFile(harness), { tested: ref, from: prev?.from, recipe: "verified", checked: new Date().toISOString() })
+  console.log(`${harness} ${rel(ref)}: recipe verified by a build`)
+}
+
 const cmd = args[0]
 if (cmd === "plan") await plan()
 else if (cmd === "apply") await apply()
+else if (cmd === "verify") verify()
 else {
-  console.error("usage: release-watch plan [--harness <id>] [--ref <tag>] [--retest] | apply <results-dir> [--issues]   (--registry <dir> to run against another checkout)")
+  console.error("usage: release-watch plan [--harness <id>] [--ref <tag>] [--retest] | apply <results-dir> [--recipe <json>] [--issues] | verify <harness> <ref>   (--registry <dir> to run against another checkout)")
   process.exit(1)
 }

@@ -21,5 +21,20 @@
   "typecheck": "bun turbo typecheck --filter=\"...[${OPEN_MODS_REF}]\" --concurrency=2",
   "build": "OPENCODE_VERSION=\"${OPEN_MODS_VERSION}+${OPEN_MODS_MODS}\" OPENCODE_CHANNEL=open-mods bun run packages/opencode/script/build.ts --single --skip-install",
   "artifact": "packages/opencode/dist/opencode-{os}-{arch}/bin/opencode",
+  "recipe": [
+    {
+      "file": "packages/opencode/script/build.ts"
+    },
+    {
+      "file": "packages/script/src/index.ts"
+    },
+    {
+      "file": "package.json",
+      "lines": "\"(packageManager|typecheck)\""
+    },
+    {
+      "file": "turbo.json"
+    }
+  ],
   "releaseTagPattern": "v*"
 }

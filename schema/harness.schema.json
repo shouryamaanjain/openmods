@@ -79,6 +79,25 @@
     "typecheck": {
       "type": "string",
       "description": "Shell command run in the checkout root that type-checks the harness without producing a binary, e.g. cargo check or tsc. The release watch uses it to verify mods against a new release; the full build runs once per harness release and on a mod's pull request."
+    },
+    "recipe": {
+      "type": "array",
+      "description": "What our install, typecheck and build commands depend on in the harness's repo. When a new release changes any of it, the release watch holds the harness's mods until a person runs the harness build workflow. Each entry watches a whole file, or only its lines matching `lines` (a regex).",
+      "items": {
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "lines": {
+            "type": "string"
+          }
+        }
+      }
     }
   }
 }

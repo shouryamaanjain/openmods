@@ -45,7 +45,7 @@ open-mods pack ../opencode --name my-mod           # ready to publish
 open-mods check mods/opencode/my-mod --build
 ```
 
-This clones the harness into a temp directory, applies your patches at the pinned commit, and builds. CI runs the same command on every pull request. `--typecheck` instead of `--build` is the quick version, and what the release watch runs against each new release.
+This clones the harness into a temp directory, applies your patches at the pinned commit, and builds. Run it before opening a PR: CI does not build harnesses, it runs the quick version, `--typecheck`, on every pull request and against each new harness release.
 
 ## 4. Open a pull request
 
@@ -55,7 +55,7 @@ A mod changes the harness itself. That is the whole point: it reaches what plugi
 
 Reviewers look for:
 
-- Patches that apply at the pinned commit and build.
+- Patches that apply at the pinned commit and typecheck in CI, and that the author has built.
 - A clear description of every file touched. `open-mods info` prints the list.
 - No network calls, telemetry, or credential access that the README does not mention.
 - A license compatible with the harness.
@@ -73,4 +73,4 @@ Open a PR. Mods have no version number of their own: a mod is "for OpenCode 1.19
 
 ## Adding a harness
 
-Add `harnesses/<id>.json` following `schema/harness.schema.json`. It needs the git URL, the install, typecheck and build commands, and the path of the built executable. Open a PR with one example mod so the pipeline is exercised end to end.
+Add `harnesses/<id>.json` following `schema/harness.schema.json`. It needs the git URL, the install, typecheck and build commands, the path of the built executable, and a `recipe`: the files, or the lines of files, those commands depend on in the harness's repo, such as its build script and toolchain pin. The release watch compares them on every release and holds the harness's mods when they change. Run the **harness build** workflow once to prove the definition builds on a GitHub runner. Open a PR with one example mod so the pipeline is exercised end to end.

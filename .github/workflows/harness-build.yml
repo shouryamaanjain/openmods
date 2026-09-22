@@ -1,8 +1,11 @@
 name: harness build
 
-# Builds a harness from source on a GitHub runner, with no mod applied. Run
-# it by hand to prove a harness definition works in CI before any mod for
-# it is published, and after changing how a harness builds.
+# Builds a harness from source on a GitHub runner, with no mod applied. This
+# is the only place CI builds a harness, and it only runs by hand:
+#   - after adding a harness or changing how it builds, to prove the definition;
+#   - when the release watch holds a harness because a release changed lines
+#     its build recipe depends on. With "record" on, a successful build
+#     records that the recipe works at that release, which lifts the hold.
 
 on:
   workflow_dispatch:
@@ -13,11 +16,22 @@ on:
       ref:
         description: "Release tag to build, e.g. v1.18.31 or rust-v0.155.1"
         required: true
+      record:
+        description: "On success, record the recipe as verified at this release"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-watch
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -27,3 +41,13 @@ jobs:
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup || true
       - name: Build ${{ inputs.harness }} at ${{ inputs.ref }}
         run: bun cli/src/index.ts check --harness ${{ inputs.harness }} --ref ${{ inputs.ref }} --build --json
+      - name: Record the recipe as verified
+        if: ${{ inputs.record }}
+        run: |
+          bun script/release-watch.ts verify ${{ inputs.harness }} ${{ inputs.ref }}
+          git config user.name "open-mods bot"
+          git config user.email "bot@open-mods"
+          git add status
+          git diff --cached --quiet && exit 0
+          git commit -m "${{ inputs.harness }} ${{ inputs.ref }}: build recipe verified by a harness build"
+          git push

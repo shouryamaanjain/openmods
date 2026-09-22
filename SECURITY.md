@@ -16,9 +16,10 @@ The registry only carries patches. Nothing is prebuilt: your machine compiles th
 
 ## What the registry checks
 
-- Every pull request applies and builds the mod in CI against the release it names.
+- Every pull request applies and typechecks the mod in CI against the release it names. The author builds it; CI does not.
 - Reviewers read the diff and the README before merging, and look for network access, credential use, and prompt changes that the README leaves out.
-- When the harness ships a new release, the hourly check builds the harness once and applies and typechecks every mod against it, so a mod cannot silently drift. Full builds run on each mod's pull request.
+- When the harness ships a new release, the hourly check applies and typechecks every mod against it, so a mod cannot silently drift, and holds every mod if the release changed how the harness builds.
+- Your machine builds everything you install, from the release and the patches.
 
 These are checks on the process, not a guarantee about intent. A malicious patch can pass all of them. Reading the diff is what protects you.
 

@@ -158,8 +158,8 @@ export const COMMANDS: Command[] = [
     short: "open-mods check <mod> [--ref <tag>] [--typecheck | --build]",
     summary: "Does a mod apply, typecheck, or build against a release?",
     description: [
-      "Clones the harness into a temporary workspace, checks out the release, and applies the patches. --typecheck then runs the harness's typecheck (minutes); --build runs its full build (long). This is what CI runs: the full build on a mod's pull request, the typecheck against each new harness release.",
-      "With --harness and no mod, it builds the stock harness: the smoke test for a harness definition. Exits non-zero on any failure.",
+      "Clones the harness into a temporary workspace, checks out the release, and applies the patches. --typecheck then runs the harness's typecheck (minutes); --build runs its full build (long). CI runs the typecheck, on pull requests and against each new harness release; authors run the build themselves before opening a pull request.",
+      "With --harness and no mod, it builds the stock harness: what the manual harness build workflow runs to prove a harness definition, or to confirm it after a release changed the build recipe. Exits non-zero on any failure.",
     ],
     flags: [
       { flag: "--ref <tag>", description: "Release to test against; defaults to the one the mod is for." },

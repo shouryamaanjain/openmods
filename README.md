@@ -66,10 +66,10 @@ Several mods stack on the same checkout. If two of them edit the same lines, the
 A mod is "for" one harness release, and that release is the mod's version. Harnesses move fast, so the registry follows them without waiting for anyone:
 
 1. A job runs every hour and notices when a harness publishes a new release.
-2. The stock harness is built once at that release, to prove the harness definition still works there. If it does not, every mod for it is held where it is until the definition is fixed.
-3. Every mod for that harness is applied to the new release and typechecked, one job per mod. A typecheck is the compiler's front half: it verifies every name, type and signature the mod relies on, in minutes, without producing a binary. A full build per mod runs once, on its pull request.
+2. The lines our build recipe depends on (the harness's `recipe` list: its build script, its toolchain pin, and so on) are compared between the last release it was checked at and the new one. If any changed, every mod for that harness is held where it is and one issue asks a person to run the manual **harness build** workflow; a successful build lifts the hold. CI never builds a harness on its own.
+3. Otherwise every mod for that harness is applied to the new release and typechecked, one job per mod. The apply is a three-way merge, which fails exactly when the release changed the mod's own lines. The typecheck is the compiler's front half: it verifies every name, type and signature the mod relies on, in minutes, without producing a binary, and only for the packages the mod touches.
 4. A mod that passes gets its release moved forward in `mod.json`, and its patches are saved as they apply to the new release. The mod's code does not change, but its patches now match the release it claims, so installing it needs no merge and the next release is compared against this one.
-5. A mod that fails keeps its current release and gets a `status.json` saying which release it does not support. The stock build's result is kept in `status/<harness>.json`. The listing shows it in yellow, and the bot opens an issue that mentions the mod's maintainers with the error and the steps to rebase.
+5. A mod that fails keeps its current release and gets a `status.json` saying which release it does not support. The recipe check's result is kept in `status/<harness>.json`. The listing shows it in yellow, and the bot opens an issue that mentions the mod's maintainers with the error and the steps to rebase.
 
 Compiled dependencies are cached between runs, so a check starts from warm.
 
@@ -94,7 +94,7 @@ git checkout v1.18.31            # the release you want to mod
 # ... change anything, then commit as many times as you like ...
 open-mods pack . --name my-mod --local   # installable now from ~/.open-mods/local, not published
 open-mods pack . --name my-mod           # writes mods/opencode/my-mod/ into the registry
-open-mods check mods/opencode/my-mod --build
+open-mods check mods/opencode/my-mod --build   # build it yourself; CI only typechecks
 ```
 
 Then open a pull request. [CONTRIBUTING.md](CONTRIBUTING.md) has the details.

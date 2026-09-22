@@ -58,6 +58,9 @@ export async function script(sb: Sandbox, file: string, ...a: string[]) {
 export async function createHarness(sb: Sandbox, opts: { build?: string } = {}) {
   writeFileSync(path.join(sb.harness, "greet.sh"), "#!/bin/sh\necho hello from stock\n")
   writeFileSync(path.join(sb.harness, "README.md"), "fake harness\n")
+  // What the fake build recipe depends on: a build config, and one line of package.json.
+  writeFileSync(path.join(sb.harness, "build.cfg"), "compiler=1\n")
+  writeFileSync(path.join(sb.harness, "package.json"), JSON.stringify({ version: "1.0.0", packageManager: "pnpm@9.0.0" }, null, 2) + "\n")
   writeFileSync(path.join(sb.harness, "lines.txt"), Array.from({ length: 12 }, (_, i) => `line ${i + 1}`).join("\n") + "\n")
   await $`git -C ${sb.harness} init -q -b main`.quiet()
   // Serve partial clones like GitHub does, so the CLI's blobless clones
@@ -84,6 +87,7 @@ export async function createHarness(sb: Sandbox, opts: { build?: string } = {}) 
       typecheck: "echo typechecking && sh -n greet.sh",
       build: opts.build ?? "echo building && mkdir -p out/bin && cp greet.sh out/bin/greet && chmod +x out/bin/greet",
       artifact: "out/bin/greet",
+      recipe: [{ file: "build.cfg" }, { file: "package.json", lines: '"packageManager"' }],
       releaseTagPattern: "v*",
     }),
   )

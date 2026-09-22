@@ -66,9 +66,10 @@ jobs:
             ~/.bun/install/cache
             work/${{ steps.harness.outputs.id }}/codex-rs/target
             work/${{ steps.harness.outputs.id }}/node_modules
-          key: build-${{ steps.harness.outputs.id }}-pr-${{ github.sha }}
+          key: typecheck-${{ steps.harness.outputs.id }}-pr-${{ github.sha }}
           restore-keys: |
-            build-${{ steps.harness.outputs.id }}-
-      # The one full build per mod: on its pull request. The release watch typechecks afterwards.
-      - name: Apply and build ${{ matrix.mod }}
-        run: bun cli/src/index.ts check ${{ matrix.mod }} --build --workspace work/${{ steps.harness.outputs.id }}
+            typecheck-${{ steps.harness.outputs.id }}-
+      # Apply and typecheck, as the release watch does. CI never builds a
+      # harness; the author has built the mod with open-mods check --build.
+      - name: Apply and typecheck ${{ matrix.mod }}
+        run: bun cli/src/index.ts check ${{ matrix.mod }} --typecheck --workspace work/${{ steps.harness.outputs.id }}
