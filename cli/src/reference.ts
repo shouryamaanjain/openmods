@@ -38,7 +38,10 @@ export const COMMANDS: Command[] = [
     name: "info",
     usage: "open-mods info <owner>/<mod> [--<harness>]",
     summary: "A mod's details, and for each harness it supports: the release, the patches, and every file it touches.",
-    description: ["Read this before installing. The touched-files list comes from the patches themselves, not from the README."],
+    description: [
+      "Read this before installing. The touched-files list comes from the patches themselves, not from the README.",
+      "Also lists, per harness, the mods it cannot be installed together with: ones that change the same lines of the release or lines right next to them, and ones its author marked as conflicting.",
+    ],
     flags: [
       { flag: "--<harness>", description: "Only this harness." },
       { flag: "--json", description: "Machine-readable output, including the touched files." },
@@ -56,7 +59,7 @@ export const COMMANDS: Command[] = [
       "Which harness: name it with a flag, --opencode or --codex, or --harness <id>; several flags install on several harnesses. Without one, a mod that supports a single harness uses it, and a mod that supports several asks with a selector that lists only the harnesses it supports, and which of them you have. With no terminal to ask at, it prints the flags to choose from.",
       "If you do not have the harness, it says so: the selector marks it as not installed, and a mod for that harness alone gets a notice. It then shows the harness's official installer (for OpenCode, curl -fsSL https://opencode.ai/install | bash) and asks before running it. No leaves everything as it was; with no terminal it prints the command instead. Your stock harness is what `open-mods off` switches back to.",
       "Clones the harness once (blobless), checks out the release the mods are for, applies each mod's patches in order, builds with the exact toolchain that release pins, copies the build aside, and writes the launcher to ~/.open-mods/bin. The first time, that folder is added to the front of PATH in your shell config, and if a harness installer later adds its own PATH line after it, the open-mods line is moved back to the end so modded builds stay first.",
-      "Mods stack on one checkout. A mod that does not apply cleanly on top of the others is refused and nothing is rebuilt; your current build keeps running. A build that fails leaves the previous build in place.",
+      "Mods stack on one checkout. Two mods that change the same lines of the release, or lines right next to each other, cannot be combined: that is worked out from the patches before anything is built, and the install is refused with the mods and lines named. Your current build keeps running. A mod that still fails to apply, or a build that fails, also leaves the previous build in place.",
       "Installing a mod that is already installed reinstalls it. A mod that was switched off comes back on.",
     ],
     flags: [

@@ -12,6 +12,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { homedir } from "node:os"
 import path from "node:path"
 import { marked } from "marked"
+import { footprint, incompatibility, type Footprint } from "../cli/src/overlap"
 import { COMMANDS, ENVIRONMENT, FILES, GLOBAL_FLAGS, INTRO } from "../cli/src/reference"
 
 const args = process.argv.slice(2)
@@ -40,6 +41,7 @@ type Mod = {
   tags?: string[]
   upstream: { ref: string; commit: string }
   patches: string[]
+  conflicts?: string[]
   dir: string
   readme: string
   status?: { tested: string; supports: string; ok: boolean; error?: string; checked: string }
@@ -130,6 +132,21 @@ const mods: Mod[] = args.includes("--local")
   ? [...published, ...modsIn(path.join(process.env.OPEN_MODS_HOME ?? path.join(homedir(), ".open-mods"), "local"), true).filter((l) => !published.some((p) => p.id === l.id && p.harness === l.harness))]
   : published
 
+// Which mods cannot be installed together with which, per harness: the same
+// rule the CLI applies before it builds.
+const footprints = new Map<Mod, Footprint>(mods.map((m) => [m, footprint(m.patches.map((p) => readFileSync(path.join(m.dir, p), "utf8")))]))
+const clashes = new Map<Mod, { mod: Mod; why: string }[]>(
+  mods.map((m) => [
+    m,
+    mods
+      .filter((o) => o.harness === m.harness && o.id !== m.id)
+      .flatMap((o) => {
+        const why = incompatibility(m, footprints.get(m)!, o, footprints.get(o)!)
+        return why ? [{ mod: o, why }] : []
+      }),
+  ]),
+)
+
 const entries: Entry[] = [...new Set(mods.map((m) => m.id))].sort().map((id) => {
   const variants = mods.filter((m) => m.id === id).sort((a, b) => harnesses.findIndex((h) => h.id === a.harness) - harnesses.findIndex((h) => h.id === b.harness))
   const m = variants[0]!
@@ -198,6 +215,7 @@ td.num{text-align:right;white-space:nowrap;color:var(--muted);font-family:var(--
 .notice{border-radius:8px;padding:12px 14px;margin:18px 0;border:1px solid}
 .notice.behind{background:var(--yellow-bg);border-color:transparent;color:var(--yellow)}.notice.ok{background:var(--green-bg);border-color:transparent;color:var(--green)}
 .notice a{color:inherit;text-decoration:underline}
+.notice.clash{background:var(--soft);border-color:var(--line);color:var(--muted)}.notice.clash b{color:var(--fg)}.notice.clash ul{margin:6px 0 0;padding-left:18px}
 .md{max-width:70ch}.md h1{font-size:22px}.md h2{text-transform:none;letter-spacing:0;font-size:18px;color:var(--fg);margin:26px 0 8px}.md h3{font-size:16px}
 .md pre{background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto}.md code{background:var(--soft);padding:1px 5px;border-radius:4px}.md pre code{background:none;padding:0}
 .md table{margin:10px 0;display:block;overflow-x:auto}.md td,.md th{padding:6px 8px}.md img{max-width:100%}
@@ -339,6 +357,16 @@ ${
   return layout({ title: `${SITE_NAME} · source-level mods for open-source coding agents`, depth: 0, nav: "mods", body, js: true, path: "" })
 }
 
+// The mods this one cannot be installed together with on a harness.
+function clash(m: Mod) {
+  const list = clashes.get(m) ?? []
+  if (!list.length) return ""
+  const h = harnessOf(m.harness)
+  return `<div class="notice clash"><b>Cannot be installed together with</b> these ${esc(h.name)} mods; open-mods refuses the combination:<ul>${list
+    .map((c) => `<li><a href="../../../mods/${esc(c.mod.owner)}/${esc(c.mod.name)}/#${esc(m.harness)}">${esc(c.mod.id)}</a>: ${esc(c.why)}</li>`)
+    .join("")}</ul></div>`
+}
+
 function modPage(e: Entry) {
   const issues = `https://github.com/${REPO}/issues?q=${encodeURIComponent(`is:issue is:open "${e.id} does not support"`)}`
   const section = (m: Mod) => {
@@ -361,6 +389,7 @@ function modPage(e: Entry) {
 <div class="stat"><b>${m.patches.length}</b><span>patch${m.patches.length === 1 ? "" : "es"}</span></div>
 </div>
 ${notice}
+${clash(m)}
 <div class="files">${files}</div>
 <details><summary>Full diff for ${esc(h.name)}</summary><pre class="diff">${renderDiff(m.diff)}</pre></details>
 </section>`
@@ -505,5 +534,5 @@ const installer = path.join(root, "install.sh")
 if (existsSync(installer)) write("install.sh", readFileSync(installer, "utf8"))
 write("404.html", layout({ title: `Not found · ${SITE_NAME}`, depth: 0, nav: "", body: `<div class="wrap"><section class="hero"><h1>Not found</h1><p>There is no page here. <a href="./">Back to the mods.</a></p></section></div>`, path: "404" }))
 if (process.env.SITE_DOMAIN) write("CNAME", process.env.SITE_DOMAIN.trim() + "\n")
-write("index.json", JSON.stringify({ generated: new Date().toISOString(), harnesses: harnesses.map((h) => ({ id: h.id, name: h.name, latest: rel(h.latest ?? ""), tag: h.latest })), mods: entries.map((e) => ({ id: e.id, owner: e.owner, name: e.name, description: e.description, harnesses: Object.fromEntries(e.variants.map((m) => [m.harness, { for: rel(m.upstream.ref), tag: m.upstream.ref, behind: behind(m), files: m.files.length }])) })) }, null, 2))
+write("index.json", JSON.stringify({ generated: new Date().toISOString(), harnesses: harnesses.map((h) => ({ id: h.id, name: h.name, latest: rel(h.latest ?? ""), tag: h.latest })), mods: entries.map((e) => ({ id: e.id, owner: e.owner, name: e.name, description: e.description, harnesses: Object.fromEntries(e.variants.map((m) => [m.harness, { for: rel(m.upstream.ref), tag: m.upstream.ref, behind: behind(m), files: m.files.length, incompatible: (clashes.get(m) ?? []).map((c) => c.mod.id) }])) })) }, null, 2))
 console.log(`site: ${entries.length} mod${entries.length === 1 ? "" : "s"}, ${harnesses.length} harness${harnesses.length === 1 ? "" : "es"} → ${path.relative(process.cwd(), out) || "."}`)

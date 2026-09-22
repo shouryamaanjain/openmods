@@ -66,7 +66,7 @@ mods/<owner>/<mod>/
 
 `uninstall` rebuilds without the mod. When the last mod for a harness goes, the launcher, the built binary and the patched commits go with it, and the checkout is reset to the stock release. It is kept only as a cache so the next install does not clone and install dependencies again; delete `~/.open-mods/harnesses/<id>` if you want the space back.
 
-Several mods stack on the same checkout. If two of them edit the same lines, the second one fails to apply and nothing is built.
+Several mods stack on the same checkout. Some mods cannot be combined: two mods that change the same lines of a release, or lines right next to each other, would not merge. The CLI works this out from the patches before it builds. It refuses the combination, names the mods and the lines they share, and leaves your current build running. `open-mods info` and each mod's page on the site list the mods it cannot be installed with, and the selector marks a harness where it clashes with a mod you have.
 
 ## When the harness updates
 

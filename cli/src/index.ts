@@ -10,6 +10,7 @@ import { $ } from "bun"
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import path from "node:path"
+import { footprint, incompatibility as whyNot, type Footprint } from "./overlap"
 
 type Harness = {
   id: string
@@ -351,11 +352,17 @@ async function chooseHarnesses(reg: string, spec: string, verb: string, opts: { 
     const hints = await Promise.all(
       options.map(async (m) => {
         const h = loadHarness(reg, m.harness)
-        const mine = state[m.harness]?.mods.includes(m.id)
+        const e = state[m.harness]
+        const clash = needHarness
+          ? listMods(reg, m.harness).find((o) => o.id !== m.id && e?.mods.includes(o.id) && !e.off.includes(o.id) && incompatibility(m, o))
+          : undefined
+        const mine = e?.mods.includes(m.id)
           ? "already installed"
-          : have(m)
-            ? await stockHint(h, state)
-            : `not installed · picking it installs ${h.name} first`
+          : clash
+            ? `does not work with your ${clash.id}`
+            : have(m)
+              ? await stockHint(h, state)
+              : `not installed · picking it installs ${h.name} first`
         return { label: h.name, hint: `mod is for ${rel(m.upstream.ref)} · ${mine}` }
       }),
     )
@@ -405,6 +412,26 @@ function patchHash(mod: Mod): string {
   const hasher = new Bun.CryptoHasher("sha256")
   for (const p of mod.patches) hasher.update(readFileSync(path.join(mod.dir, p)))
   return hasher.digest("hex").slice(0, 16)
+}
+
+const footprints = new Map<string, Footprint>()
+function footprintOf(mod: Mod): Footprint {
+  const key = `${mod.dir}:${patchHash(mod)}`
+  if (!footprints.has(key)) footprints.set(key, footprint(mod.patches.map((p) => readFileSync(path.join(mod.dir, p), "utf8"))))
+  return footprints.get(key)!
+}
+
+/** Why two mods cannot be on together on one harness, or null (see overlap.ts). */
+const incompatibility = (a: Mod, b: Mod) => whyNot(a, footprintOf(a), b, footprintOf(b))
+
+/** Every other mod on the same harness that `mod` cannot be on together with. */
+function incompatibleWith(reg: string, mod: Mod): { mod: Mod; why: string }[] {
+  return listMods(reg, mod.harness)
+    .filter((o) => o.id !== mod.id)
+    .flatMap((o) => {
+      const why = incompatibility(mod, o)
+      return why ? [{ mod: o, why }] : []
+    })
 }
 
 function touchedFiles(mod: Mod): string[] {
@@ -763,7 +790,9 @@ function explainSwitch(h: Harness, entry: State[string]) {
   }
 }
 
-async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[] = []) {
+// `adding` names the mods this rebuild brings in (install, on), so a clash is
+// reported as theirs and the advice points at the mods already there.
+async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[] = [], adding: string[] = []) {
   const h = loadHarness(reg, harnessId)
   await checkRequirements(h)
   const root = path.join(HOME, "harnesses", harnessId, "src")
@@ -794,6 +823,21 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     saveState(state)
     log(`Every ${h.name} mod is off (${off.join(", ")}), so \`${h.binary}\` runs your stock ${h.name}. \`open-mods on ${off[0]} --${harnessId}\` brings one back.`)
     return
+  }
+  // Refuse a combination that cannot work before anything is touched. The
+  // mods being added go last, so each clash is reported against them.
+  const order = [...mods.filter((m) => !adding.includes(m.id)), ...mods.filter((m) => adding.includes(m.id))]
+  for (let j = 1; j < order.length; j++) {
+    const clashes = order.slice(0, j).flatMap((o) => {
+      const why = incompatibility(o, order[j]!)
+      return why ? [{ id: o.id, why }] : []
+    })
+    if (clashes.length) {
+      const ids = clashes.map((c) => c.id)
+      fail(
+        `${order[j]!.id} does not work with ${clashes.map((c) => `${c.id} on ${h.name}: ${c.why}`).join("; nor with ")}. They cannot be on at the same time, so nothing was changed. \`open-mods off ${ids.join(" ")}\` or \`open-mods uninstall ${ids.join(" ")}\` makes room.`,
+      )
+    }
   }
   const base = mods[0]!.upstream
   const strays = mods.filter((m) => m.upstream.commit !== base.commit)
@@ -875,6 +919,11 @@ async function cmdInfo() {
     for (const p of m.patches) log(`      ${p}`)
     log(`    touches`)
     for (const f of touchedFiles(m)) log(`      ${f}`)
+    const clashes = incompatibleWith(reg, m)
+    if (clashes.length) {
+      log(`    does not work with`)
+      for (const c of clashes) log(`      ${c.mod.id}  ${dim(c.why)}`)
+    }
   }
 }
 
@@ -889,12 +938,8 @@ async function cmdInstall() {
     const current = (state[id]?.mods ?? []).map((n) => resolveMod(reg, n, id))
     const here = wanted.filter((w) => w.harness === id)
     const merged = [...current.filter((c) => !here.some((w) => w.id === c.id)), ...here]
-    for (const m of merged) {
-      const clash = merged.find((o) => o !== m && (m.conflicts?.includes(o.id) || o.conflicts?.includes(m.id)))
-      if (clash) fail(`${m.id} and ${clash.id} are marked as not working together on ${loadHarness(reg, id).name}`)
-    }
     const off = (state[id]?.off ?? []).filter((n) => !here.some((w) => w.id === n))
-    await rebuild(reg, id, merged, off)
+    await rebuild(reg, id, merged, off, here.map((m) => m.id))
   }
 }
 
@@ -967,7 +1012,7 @@ async function cmdOn() {
       return
     }
     log(`Building ${target.name} back into ${target.id}`)
-    await rebuild(reg, target.id, e.mods.map((n) => resolveMod(reg, n, target.id)), e.off.filter((n) => n !== target.name))
+    await rebuild(reg, target.id, e.mods.map((n) => resolveMod(reg, n, target.id)), e.off.filter((n) => n !== target.name), [target.name])
     return
   }
   const ids = positional[1] ? [positional[1]] : Object.keys(state)

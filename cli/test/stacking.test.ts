@@ -22,17 +22,18 @@ describe("stacking", () => {
     expect(r.out).toContain("1.0.0 + t/greeting + t/readme")
     expect(await greeting(sb)).toBe("hello from greeting")
   })
-  test("a mod that rewrites the same lines as an installed one is refused, and the build stays", async () => {
+  test("a mod that rewrites the same lines as an installed one is refused before building, and the build stays", async () => {
     const r = await cli(sb, "install", "t/rival")
     expect(r.code).toBe(1)
-    expect(r.err).toContain("does not apply cleanly")
+    expect(r.err).toContain("t/rival does not work with t/greeting on Fake: both change greet.sh (line 2)")
+    expect(r.all).not.toContain("building")
     expect(await greeting(sb)).toBe("hello from greeting")
     expect((await cli(sb, "status")).out).not.toContain("rival")
   })
   test("a declared conflict is refused before anything is built", async () => {
     const r = await cli(sb, "install", "t/declared")
     expect(r.code).toBe(1)
-    expect(r.err).toContain("marked as not working together")
+    expect(r.err).toContain("their authors marked them as not working together")
   })
   test("uninstalling one of two keeps the other", async () => {
     const r = await cli(sb, "uninstall", "t/readme")
