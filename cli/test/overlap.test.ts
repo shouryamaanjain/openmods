@@ -103,3 +103,14 @@ describe("a bump", () => {
     expect(j.applies).toBe(true)
   })
 })
+
+describe("a workspace restored from CI's cache", () => {
+  test("already holds dependencies but no repository: check still works and keeps them", async () => {
+    const ws = path.join(sb.T, "check-cached")
+    mkdirSync(path.join(ws, "node_modules", "left-pad"), { recursive: true })
+    writeFileSync(path.join(ws, "node_modules", "left-pad", "index.js"), "module.exports = 1\n")
+    const r = await cli(sb, "check", "--harness", "fake", "--ref", "v1.1.0", "--build", "--json", "--workspace", ws)
+    expect(JSON.parse(r.out)).toMatchObject({ stock: true, builds: true })
+    expect(readFileSync(path.join(ws, "node_modules", "left-pad", "index.js"), "utf8")).toContain("module.exports")
+  })
+})

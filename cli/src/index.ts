@@ -221,11 +221,24 @@ async function clearApplyState(root: string) {
   for (const d of ["rebase-apply", "rebase-merge"]) rmSync(path.join(root, ".git", d), { recursive: true, force: true })
 }
 
+// Makes `root` a blobless git checkout of the harness. The folder may
+// already exist without a repository, for example when CI restores cached
+// dependencies (node_modules, target/) into it before the check runs; git
+// clone refuses a non-empty folder, so the repository is set up in place and
+// whatever is already there is kept.
+async function initCheckout(repo: string, root: string) {
+  if (existsSync(path.join(root, ".git"))) return
+  mkdirSync(root, { recursive: true })
+  await $`git -C ${root} init -q`
+  await $`git -C ${root} remote add origin ${repo}`
+  await $`git -C ${root} config remote.origin.promisor true`
+  await $`git -C ${root} config remote.origin.partialclonefilter blob:none`
+}
+
 async function ensureCheckout(h: Harness, root: string, commit: string, ref: string) {
   if (!existsSync(path.join(root, ".git"))) {
-    log(`Cloning ${h.repo} (blobless, this is a one-time cost)`)
-    mkdirSync(path.dirname(root), { recursive: true })
-    await $`git clone --filter=blob:none --no-checkout --no-tags ${h.repo} ${root}`
+    log(`Setting up ${h.repo} (blobless, this is a one-time cost)`)
+    await initCheckout(h.repo, root)
   }
   const have = await $`git -C ${root} cat-file -t ${commit}`.nothrow().quiet()
   if (have.exitCode !== 0) {
@@ -835,11 +848,8 @@ async function cmdCheck() {
     ? { mod: `${mod.harness}/${mod.name}`, harness: mod.harness, madeFor: mod.upstream.ref, ref, touches: touchedFiles(mod) }
     : { harness: mod.harness, stock: true, ref }
   try {
-    if (!existsSync(path.join(root, ".git"))) {
-      mkdirSync(root, { recursive: true })
-      await $`git clone --filter=blob:none --no-checkout --no-tags ${h.repo} ${root}`.quiet()
-    }
-    await $`git -C ${root} fetch --no-tags origin tag ${ref}`.quiet()
+    await initCheckout(h.repo, root)
+    await $`git -C ${root} fetch --no-tags --filter=blob:none origin tag ${ref}`.quiet()
     await clearApplyState(root)
     await $`git -C ${root} checkout -q --force --detach ${ref}`
     result.commit = (await $`git -C ${root} rev-parse HEAD`.text()).trim()
