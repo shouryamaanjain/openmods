@@ -58,7 +58,12 @@ export async function script(sb: Sandbox, file: string, ...a: string[]) {
 export async function createHarness(sb: Sandbox, opts: { build?: string } = {}) {
   writeFileSync(path.join(sb.harness, "greet.sh"), "#!/bin/sh\necho hello from stock\n")
   writeFileSync(path.join(sb.harness, "README.md"), "fake harness\n")
+  writeFileSync(path.join(sb.harness, "lines.txt"), Array.from({ length: 12 }, (_, i) => `line ${i + 1}`).join("\n") + "\n")
   await $`git -C ${sb.harness} init -q -b main`.quiet()
+  // Serve partial clones like GitHub does, so the CLI's blobless clones
+  // really are blobless here too.
+  await git(sb.harness, "config", "uploadpack.allowFilter", "true")
+  await git(sb.harness, "config", "uploadpack.allowAnySHA1InWant", "true")
   await git(sb.harness, "add", "-A")
   await git(sb.harness, "commit", "-q", "-m", "initial")
   await git(sb.harness, "tag", "v1.0.0")
@@ -73,11 +78,11 @@ export async function createHarness(sb: Sandbox, opts: { build?: string } = {}) 
     JSON.stringify({
       id: "fake",
       name: "Fake",
-      repo: sb.harness,
+      repo: `file://${sb.harness}`,
       binary: "greet",
-      install: "true",
-      typecheck: "sh -n greet.sh",
-      build: opts.build ?? "mkdir -p out/bin && cp greet.sh out/bin/greet && chmod +x out/bin/greet",
+      install: "echo installing dependencies",
+      typecheck: "echo typechecking && sh -n greet.sh",
+      build: opts.build ?? "echo building && mkdir -p out/bin && cp greet.sh out/bin/greet && chmod +x out/bin/greet",
       artifact: "out/bin/greet",
       releaseTagPattern: "v*",
     }),
@@ -111,6 +116,14 @@ export async function createMod(sb: Sandbox, name: string, change: (dir: string)
   const mod = JSON.parse(readFileSync(file, "utf8"))
   writeFileSync(file, JSON.stringify({ ...mod, description: `The ${name} mod.`, author: { name: "t", github: "t" }, ...(opts.conflicts ? { conflicts: opts.conflicts } : {}) }, null, 2))
   return dir
+}
+
+/** Replaces line `n` (1-based) of lines.txt. */
+export const setLine = (n: number, text: string) => (dir: string) => {
+  const file = path.join(dir, "lines.txt")
+  const lines = readFileSync(file, "utf8").split("\n")
+  lines[n - 1] = text
+  writeFileSync(file, lines.join("\n"))
 }
 
 export const setGreeting = (text: string) => (dir: string) => writeFileSync(path.join(dir, "greet.sh"), `#!/bin/sh\necho ${text}\n`)

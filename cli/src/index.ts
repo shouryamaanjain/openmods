@@ -236,10 +236,24 @@ async function ensureCheckout(h: Harness, root: string, commit: string, ref: str
   await $`git -C ${root} checkout -q --force --detach ${commit}`
 }
 
+// Harness checkouts are blobless: only the checked-out release's files are
+// local. A three-way apply needs the version of each file the patch was
+// made against, and git cannot fetch it on demand from the short ids in a
+// patch, so it would report a conflict for any nearby upstream change. This
+// fetches the mod's base commit and reads each touched file from it, which
+// makes git fetch exactly those versions.
+async function fetchBases(root: string, mod: Mod) {
+  if (!mod.upstream.commit) return
+  const have = await $`git -C ${root} cat-file -e ${mod.upstream.commit}^{commit}`.nothrow().quiet()
+  if (have.exitCode !== 0) await $`git -C ${root} fetch --no-tags --filter=blob:none origin ${mod.upstream.commit}`.nothrow().quiet()
+  for (const file of touchedFiles(mod)) await $`git -C ${root} cat-file -p ${mod.upstream.commit + ":" + file}`.nothrow().quiet()
+}
+
 async function applyMods(root: string, mods: Mod[]) {
   for (const mod of mods) {
     log(`Applying ${mod.harness}/${mod.name} (${mod.patches.length} patch${mod.patches.length === 1 ? "" : "es"})`)
     const files = mod.patches.map((p) => path.join(mod.dir, p))
+    await fetchBases(root, mod)
     const r = await $`git -C ${root} am -3 --quiet ${files}`.env({ ...process.env, ...GIT_IDENTITY }).nothrow()
     if (r.exitCode !== 0) {
       await clearApplyState(root)
@@ -257,7 +271,9 @@ let buildEnv: Record<string, string> = {}
 class CommandFailed extends Error {}
 
 async function shell(cmd: string, cwd: string) {
-  const proc = Bun.spawn(["sh", "-c", cmd], { cwd, stdio: ["inherit", "inherit", "inherit"], env: { ...process.env, ...buildEnv } })
+  // With --json, stdout carries only the JSON result: a harness's install,
+  // build and typecheck output goes to stderr instead.
+  const proc = Bun.spawn(["sh", "-c", cmd], { cwd, stdio: ["inherit", has("json") ? 2 : "inherit", "inherit"], env: { ...process.env, ...buildEnv } })
   const code = await proc.exited
   if (code !== 0) throw new CommandFailed(`command failed (${code}): ${cmd}`)
 }
@@ -747,7 +763,7 @@ async function cmdPack() {
   if (existsSync(out) && !has("force")) fail(`${out} already exists; pass --force to overwrite`)
   rmSync(path.join(out, "patches"), { recursive: true, force: true })
   mkdirSync(path.join(out, "patches"), { recursive: true })
-  await $`git -C ${checkout} format-patch --no-signature --no-stat --zero-commit -N -o ${path.join(out, "patches")} ${base}..HEAD`.quiet()
+  await $`git -C ${checkout} format-patch --no-signature --no-stat --zero-commit --full-index -N -o ${path.join(out, "patches")} ${base}..HEAD`.quiet()
   const patches = readdirSync(path.join(out, "patches"))
     .filter((f) => f.endsWith(".patch"))
     .sort()
@@ -820,6 +836,7 @@ async function cmdCheck() {
     await $`git -C ${root} checkout -q --force --detach ${ref}`
     result.commit = (await $`git -C ${root} rev-parse HEAD`.text()).trim()
     const files = mod.patches.map((p) => path.join(mod.dir, p))
+    await fetchBases(root, mod)
     const am = files.length
       ? await $`git -C ${root} am -3 --quiet ${files}`.env({ ...process.env, ...GIT_IDENTITY }).nothrow().quiet()
       : { exitCode: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) }
