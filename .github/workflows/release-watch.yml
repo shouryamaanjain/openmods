@@ -149,7 +149,7 @@ jobs:
         run: |
           git config user.name "open-mods bot"
           git config user.email "bot@open-mods"
-          git add mods harnesses
+          git add mods status
           git diff --cached --quiet && exit 0
           git commit -F results/COMMIT_MSG
           git push

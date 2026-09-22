@@ -151,7 +151,9 @@ async function apply() {
     if (r?.stock !== true || !r?.harness) continue
     const ok = r.builds === true
     harnessOk.set(r.harness, ok)
-    const hFile = path.join(root, "harnesses", `${r.harness}.status.json`)
+    // Not under harnesses/: every *.json there is read as a harness definition.
+    mkdirSync(path.join(root, "status"), { recursive: true })
+    const hFile = path.join(root, "status", `${r.harness}.json`)
     writeJson(hFile, { tested: r.ref, builds: ok, error: ok ? undefined : String(r.error ?? "build failed").split("\n").slice(0, 40).join("\n"), checked: new Date().toISOString() })
   }
   for (const f of files) {

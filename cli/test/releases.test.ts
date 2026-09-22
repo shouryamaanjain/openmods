@@ -2,9 +2,9 @@
 // watch bumping or marking mods, the launcher's update note, and update
 // moving a user forward.
 import { beforeAll, describe, expect, test } from "bun:test"
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { addFile, cli, createHarness, createMod, greeting, release, sandbox, script, setGreeting, WATCH } from "./harness"
+import { addFile, cli, createHarness, createMod, greeting, release, sandbox, script, setGreeting, SITE, WATCH } from "./harness"
 
 const sb = sandbox("releases")
 const modDir = () => path.join(sb.reg, "mods", "fake", "friendly")
@@ -88,8 +88,10 @@ describe("release watch", () => {
     expect(r.code).toBe(0)
     expect(r.out).toContain("Held, the harness itself did not build")
     expect(modJson().upstream.ref).toBe("v1.0.0")
-    const hs = JSON.parse(readFileSync(path.join(sb.reg, "harnesses", "fake.status.json"), "utf8"))
+    const hs = JSON.parse(readFileSync(path.join(sb.reg, "status", "fake.json"), "utf8"))
     expect(hs.builds).toBe(false)
+    // harnesses/ holds only definitions: anything else there is read as a harness.
+    expect(readdirSync(path.join(sb.reg, "harnesses"))).toEqual(["fake.json"])
   })
   test("apply bumps a mod that typechecked when the stock harness built", async () => {
     // A typecheck-only result, as the release watch produces, plus the passing harness build.
@@ -109,6 +111,15 @@ describe("release watch", () => {
     expect(modJson().upstream.ref).toBe("v1.1.0")
     const status = JSON.parse(readFileSync(path.join(modDir(), "status.json"), "utf8"))
     expect(status).toMatchObject({ ok: false, tested: "v2.0.0", supports: "v1.1.0" })
+  })
+})
+
+describe("after the release watch wrote its results", () => {
+  test("the site still builds from the registry", async () => {
+    const out = path.join(sb.T, "site")
+    const r = await script(sb, SITE, "--registry", sb.reg, "--out", out, "--offline")
+    expect(r.code, r.err).toBe(0)
+    expect(readFileSync(path.join(out, "index.html"), "utf8")).toContain("fake/friendly")
   })
 })
 
