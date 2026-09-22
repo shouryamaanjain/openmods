@@ -20,6 +20,12 @@ for (const id of harnesses) {
   for (const k of ["name", "repo", "binary", "install", "build", "artifact"]) {
     if (typeof h[k] !== "string" || !h[k]) errors.push(`harnesses/${id}.json: missing "${k}"`)
   }
+  // Offered to users who install a mod without having the harness.
+  if (h.installer !== undefined) {
+    if (typeof h.installer?.command !== "string" || !h.installer.command) errors.push(`harnesses/${id}.json: installer needs a "command"`)
+    if (h.installer?.paths !== undefined && (!Array.isArray(h.installer.paths) || h.installer.paths.some((p: unknown) => typeof p !== "string")))
+      errors.push(`harnesses/${id}.json: installer.paths must be a list of folders`)
+  }
 }
 
 // mods/<owner>/<name>/mod.json, README.md, and one folder per supported

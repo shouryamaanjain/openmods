@@ -18,7 +18,7 @@ open-mods off <owner>/<mod>         # keep it installed, build it out
 open-mods uninstall <owner>/<mod>   # gone
 ```
 
-A mod is named after its author, like `shouryamaanjain/tetris`, and can support several harnesses. `--opencode` or `--codex` says which one to install it on. Leave the flag out and the CLI asks, listing only the harnesses that mod supports; a mod for a single harness needs no flag.
+A mod is named after its author, like `shouryamaanjain/tetris`, and can support several harnesses. `--opencode` or `--codex` says which one to install it on. Leave the flag out and the CLI asks, listing only the harnesses that mod supports and marking the ones you do not have; a mod for a single harness needs no flag. Picking a harness you do not have offers its official installer, such as `curl -fsSL https://opencode.ai/install | bash`, and runs it only if you say yes.
 
 Your stock OpenCode is never modified. `install` builds a separate modded binary and puts it first on PATH. `off` steps aside so the stock one runs; `on` steps back in. `open-mods status` tells you which one `opencode` runs right now.
 

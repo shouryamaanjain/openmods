@@ -35,9 +35,24 @@ export function sandbox(name: string) {
 export const git = (dir: string, ...a: string[]) => $`git -C ${dir} -c user.name=t -c user.email=t@t ${a}`.quiet()
 
 /** The CLI as a user would run it, inside the sandbox. */
-export async function cli(sb: Sandbox, ...a: string[]) {
-  const p = Bun.spawn(["bun", CLI, ...a, "--registry", sb.reg, "--no-path"], {
-    env: { ...process.env, HOME: sb.home, OPEN_MODS_HOME: sb.om, OPEN_MODS_NO_CHECK: "1", PATH: process.env.PATH ?? "" },
+export const cli = (sb: Sandbox, ...a: string[]) => run(sb, {}, ...a)
+
+/**
+ * The CLI with options: `answer` is typed at its y/N questions, `env` is
+ * added to its environment, and `path: true` lets it edit the shell config.
+ */
+export async function run(sb: Sandbox, opts: { answer?: string; env?: Record<string, string>; path?: boolean }, ...a: string[]) {
+  const p = Bun.spawn(["bun", CLI, ...a, "--registry", sb.reg, ...(opts.path ? [] : ["--no-path"])], {
+    env: {
+      ...process.env,
+      HOME: sb.home,
+      OPEN_MODS_HOME: sb.om,
+      OPEN_MODS_NO_CHECK: "1",
+      PATH: process.env.PATH ?? "",
+      ...(opts.answer !== undefined ? { OPEN_MODS_ASSUME_TTY: "1" } : {}),
+      ...opts.env,
+    },
+    stdin: opts.answer !== undefined ? new TextEncoder().encode(opts.answer) : "ignore",
     stdout: "pipe",
     stderr: "pipe",
   })
@@ -52,8 +67,9 @@ export async function script(sb: Sandbox, file: string, ...a: string[]) {
 }
 
 /**
- * Creates the fake harness at v1.0.0 and registers it. `build` may be
- * overridden, e.g. with a command that fails, to test what the CLI does then.
+ * Creates the fake harness at v1.0.0, registers it, and installs its stock
+ * binary the way its official installer would. `build` may be overridden,
+ * e.g. with a command that fails, to test what the CLI does then.
  */
 export async function createHarness(sb: Sandbox, opts: { build?: string } = {}) {
   writeFileSync(path.join(sb.harness, "greet.sh"), "#!/bin/sh\necho hello from stock\n")
@@ -77,7 +93,15 @@ export async function createHarness(sb: Sandbox, opts: { build?: string } = {}) 
   writeFileSync(path.join(sb.reg, "README.md"), "# registry\n")
   writeFileSync(path.join(sb.reg, "CONTRIBUTING.md"), "# Contributing\n\nSteps.\n")
   registerHarness(sb, { id: "fake", name: "Fake", binary: "greet", build: opts.build })
+  await $`sh -c ${stockInstaller("greet")}`.env({ ...process.env, HOME: sb.home }).quiet()
 }
+
+/**
+ * A harness's official installer, faked: it puts a stock binary in
+ * ~/.<binary>/bin that prints its version and a greeting.
+ */
+export const stockInstaller = (binary: string) =>
+  `mkdir -p "$HOME/.${binary}/bin" && printf '#!/bin/sh\\n[ "$1" = --version ] && echo 1.0.0 && exit 0\\necho stock ${binary}\\n' > "$HOME/.${binary}/bin/${binary}" && chmod +x "$HOME/.${binary}/bin/${binary}"`
 
 /**
  * Registers a harness definition for the fake harness repo. A second id (say
@@ -92,6 +116,7 @@ export function registerHarness(sb: Sandbox, h: { id: string; name: string; bina
       name: h.name,
       repo: `file://${sb.harness}`,
       binary: h.binary,
+      installer: { command: stockInstaller(h.binary), paths: [`~/.${h.binary}/bin`] },
       install: "echo installing dependencies",
       typecheck: "echo typechecking && sh -n greet.sh",
       build: h.build ?? "echo building && mkdir -p out/bin && cp greet.sh out/bin/greet && chmod +x out/bin/greet",

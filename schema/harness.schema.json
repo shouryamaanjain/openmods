@@ -42,6 +42,27 @@
       "type": "string",
       "description": "Name of the executable the harness installs, e.g. opencode."
     },
+    "installer": {
+      "type": "object",
+      "description": "The harness's official installer. When a user installs a mod for a harness they do not have, the CLI shows this command and runs it if they say yes.",
+      "required": [
+        "command"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "type": "string",
+          "description": "Shell command from the harness's own install docs, e.g. curl -fsSL https://opencode.ai/install | bash."
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Folders the installer puts the binary in (~ is the home folder), so it is found before a new shell picks up the PATH line the installer added."
+        }
+      }
+    },
     "requirements": {
       "type": "array",
       "items": {

@@ -16,6 +16,11 @@ type Harness = {
   name: string
   repo: string
   binary: string
+  homepage?: string
+  // The harness's own installer, offered when a mod is installed for a
+  // harness the user does not have; `paths` are the folders it installs the
+  // binary into, so it is found before the shell's PATH picks them up.
+  installer?: { command: string; paths?: string[] }
   requirements?: { command: string; hint: string }[]
   install: string
   typecheck?: string
@@ -282,6 +287,25 @@ async function select(question: string, options: { label: string; hint?: string 
   return chosen
 }
 
+/**
+ * A y/N question on the terminal. Anything but y or yes is no. Returns null
+ * when there is no terminal to ask on (OPEN_MODS_ASSUME_TTY lets tests answer
+ * through stdin).
+ */
+async function confirm(question: string): Promise<boolean | null> {
+  const tty = (process.stdin.isTTY && process.stdout.isTTY) || !!process.env.OPEN_MODS_ASSUME_TTY
+  if (!tty || has("json")) return null
+  process.stdout.write(`${question} [y/N] `)
+  process.stdin.resume()
+  const answer = await new Promise<string>((resolve) => {
+    process.stdin.once("data", (buf) => resolve(buf.toString().split("\n")[0] ?? ""))
+    process.stdin.once("end", () => resolve(""))
+  })
+  process.stdin.pause()
+  if (!process.stdin.isTTY) process.stdout.write("\n")
+  return /^y(es)?$/i.test(answer.trim())
+}
+
 /** What the user has of a harness today, for the selector's hints. */
 async function stockHint(h: Harness, state: State): Promise<string> {
   const e = state[h.id]
@@ -296,33 +320,83 @@ async function stockHint(h: Harness, state: State): Promise<string> {
  * Which harness(es) to use for a mod: the ones named with --<harness>, else
  * the only one it supports, else ask with the selector, else explain how to
  * choose. `among` limits the choice, e.g. to harnesses it is installed on.
+ * With `needHarness` (install), a harness the user does not have is marked in
+ * the selector, and choosing it offers the harness's official installer.
  */
-async function chooseHarnesses(reg: string, spec: string, verb: string, among?: string[]): Promise<Mod[]> {
+async function chooseHarnesses(reg: string, spec: string, verb: string, opts: { among?: string[]; needHarness?: boolean } = {}): Promise<Mod[]> {
+  const { among, needHarness } = opts
   let options = supportsOf(reg, spec)
   if (among) options = options.filter((m) => among.includes(m.harness))
   if (options.length === 0) fail(`${spec} is not installed on any harness`)
+  const state = loadState()
+  const have = (m: Mod) => !needHarness || hasHarness(loadHarness(reg, m.harness), state)
   const picked = harnessFlags(reg)
+  let chosen: Mod[]
   if (picked.length) {
     const missing = picked.filter((id) => !options.some((m) => m.harness === id))
     if (missing.length)
       fail(
         `${spec} ${among ? "is not installed on" : "does not support"} ${missing.map((id) => loadHarness(reg, id).name).join(", ")}. ${among ? "It is installed on" : "It supports"} ${options.map((m) => `${loadHarness(reg, m.harness).name} (--${m.harness})`).join(", ")}.`,
       )
-    return options.filter((m) => picked.includes(m.harness))
+    chosen = options.filter((m) => picked.includes(m.harness))
+  } else if (options.length === 1) {
+    chosen = options
+    if (!have(options[0]!)) {
+      const name = loadHarness(reg, options[0]!.harness).name
+      log(`Notice: ${spec} only supports ${name}, and ${name} is not installed on this system.`)
+    }
+  } else {
+    // Harnesses the user has come first.
+    if (needHarness) options = [...options.filter(have), ...options.filter((m) => !have(m))]
+    const hints = await Promise.all(
+      options.map(async (m) => {
+        const h = loadHarness(reg, m.harness)
+        const mine = state[m.harness]?.mods.includes(m.id)
+          ? "already installed"
+          : have(m)
+            ? await stockHint(h, state)
+            : `not installed · picking it installs ${h.name} first`
+        return { label: h.name, hint: `mod is for ${rel(m.upstream.ref)} · ${mine}` }
+      }),
+    )
+    const i =
+      (await select(`${verb} ${spec} for which harness?`, hints)) ??
+      fail(
+        `${spec} ${among ? "is installed on" : "supports"} ${options.map((m) => `${loadHarness(reg, m.harness).name}${have(m) ? "" : " (not installed here)"}`).join(", ")}; choose with ${options.map((m) => `--${m.harness}`).join(" or ")}`,
+      )
+    chosen = [options[i]!]
   }
-  if (options.length === 1) return options
-  const state = loadState()
-  const hints = await Promise.all(
-    options.map(async (m) => {
-      const h = loadHarness(reg, m.harness)
-      const mine = state[m.harness]?.mods.includes(m.id) ? "already installed" : await stockHint(h, state)
-      return { label: h.name, hint: `mod is for ${rel(m.upstream.ref)} · ${mine}` }
-    }),
-  )
-  const i =
-    (await select(`${verb} ${spec} for which harness?`, hints)) ??
-    fail(`${spec} ${among ? "is installed on" : "supports"} ${options.length} harnesses; choose with ${options.map((m) => `--${m.harness}`).join(" or ")}`)
-  return [options[i]!]
+  const noticed = !picked.length && options.length === 1
+  for (const m of chosen) if (!have(m)) await installHarness(loadHarness(reg, m.harness), noticed)
+  return chosen
+}
+
+/** The user has a harness: its stock binary, or a modded build of it. */
+function hasHarness(h: Harness, state: State): boolean {
+  return !!stockBinary(h) || !!state[h.id]?.mods.length
+}
+
+/**
+ * Offers to install a harness the user does not have, with the command its
+ * own project documents. No means nothing happens; without a terminal it
+ * prints the command instead.
+ */
+async function installHarness(h: Harness, noticed = false) {
+  const how = h.installer?.command ?? fail(`${h.name} is not installed on this system. Install it${h.homepage ? ` from ${h.homepage}` : ""}, then run this again.`)
+  log(`${noticed ? "" : `${h.name} is not installed on this system. `}Its official installer is:`)
+  log(`  ${how}`)
+  const yes = await confirm(`Install ${h.name} now?`)
+  if (yes === null) fail(`install ${h.name} with the command above, then run this again.`)
+  if (!yes) {
+    log("Nothing installed.")
+    process.exit(0)
+  }
+  const code = await Bun.spawn(["sh", "-c", how], { stdio: ["inherit", "inherit", "inherit"] }).exited
+  if (code !== 0) fail(`the ${h.name} installer failed (exit ${code}); nothing else was changed`)
+  const stock = stockBinary(h) ?? fail(`the ${h.name} installer finished, but \`${h.binary}\` was not found. Open a new terminal and run this again.`)
+  const v = await versionOf(stock)
+  log(`${h.name}${v ? ` ${v.replace(/^[^0-9]*/, "")}` : ""} is installed at ${pretty(stock)}.`)
+  log("")
 }
 
 // A mod's version is the harness release it supports (mod.upstream.ref), so
@@ -606,7 +680,12 @@ function switchOff(h: Harness) {
 }
 
 function stockBinary(h: Harness): string | null {
-  const dirs = (process.env.PATH ?? "").split(path.delimiter).filter((d) => d && path.resolve(d) !== BIN)
+  const dirs = [
+    ...(process.env.PATH ?? "").split(path.delimiter),
+    // Where the official installer puts it, found even before a new shell
+    // picks up the PATH line it added.
+    ...(h.installer?.paths ?? []).map((p) => p.replace(/^~(?=\/|$)/, homedir())),
+  ].filter((d) => d && path.resolve(d) !== BIN)
   for (const d of dirs) {
     const candidate = path.join(d, h.binary)
     if (existsSync(candidate)) return candidate
@@ -622,10 +701,13 @@ async function versionOf(bin: string | null) {
 
 const pathHasBin = () => (process.env.PATH ?? "").split(path.delimiter).some((d) => d && path.resolve(d) === BIN)
 
-// Adds ~/.open-mods/bin to the front of PATH in the user's shell config, once.
-// Returns the file it edited, or null when PATH already had it or --no-path was given.
-function setupPath(): string | null {
-  if (pathHasBin() || has("no-path") || process.platform === "win32") return null
+// Keeps ~/.open-mods/bin at the front of PATH in the user's shell config.
+// Adds the line once. If a later line puts something in front of it, such as
+// a harness installer that appended its own PATH line, the open-mods line
+// moves back to the end so modded builds still go first. Returns the file it
+// edited and whether it added or moved the line, or null when nothing changed.
+function setupPath(): { rc: string; moved: boolean } | null {
+  if (has("no-path") || process.platform === "win32") return null
   const shell = path.basename(process.env.SHELL ?? "")
   const rc =
     shell === "zsh"
@@ -637,11 +719,21 @@ function setupPath(): string | null {
     shell === "fish"
       ? `fish_add_path --prepend --move ${pretty(BIN).replace("~", "$HOME")}  # open-mods`
       : `export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"  # open-mods`
+  const block = `# open-mods: modded builds go first; \`open-mods off\` steps aside\n${line}\n`
   const current = existsSync(rc) ? readFileSync(rc, "utf8") : ""
-  if (current.includes("# open-mods")) return null
+  const lines = current.split("\n")
+  const last = lines.findLastIndex((l) => l.includes("# open-mods"))
+  if (last >= 0) {
+    const later = lines.slice(last + 1).some((l) => !l.trim().startsWith("#") && /PATH|fish_add_path|shellenv/.test(l))
+    if (!later) return null
+    const kept = lines.filter((l) => !l.includes("# open-mods")).join("\n").replace(/\n{3,}/g, "\n\n").replace(/\n*$/, "\n")
+    writeFileSync(rc, `${kept}\n${block}`)
+    return { rc, moved: true }
+  }
+  if (pathHasBin()) return null
   mkdirSync(path.dirname(rc), { recursive: true })
-  writeFileSync(rc, `${current}${current.endsWith("\n") || current === "" ? "" : "\n"}\n# open-mods: modded builds go first; \`open-mods off\` steps aside\n${line}\n`)
-  return rc
+  writeFileSync(rc, `${current}${current.endsWith("\n") || current === "" ? "" : "\n"}\n${block}`)
+  return { rc, moved: false }
 }
 
 function explainSwitch(h: Harness, entry: State[string]) {
@@ -657,7 +749,11 @@ function explainSwitch(h: Harness, entry: State[string]) {
   const edited = entry.enabled ? setupPath() : null
   if (edited) {
     log("")
-    log(`Added ${pretty(BIN)} to the front of PATH in ${pretty(edited)}.`)
+    log(
+      edited.moved
+        ? `Moved the open-mods line to the end of ${pretty(edited.rc)}, so ${pretty(BIN)} stays first on PATH after a line added later.`
+        : `Added ${pretty(BIN)} to the front of PATH in ${pretty(edited.rc)}.`,
+    )
     log(`Open a new terminal, or run this in the current one:`)
     log(`  export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"`)
   } else if (entry.enabled && !pathHasBin()) {
@@ -787,7 +883,7 @@ async function cmdInstall() {
   const specs = positional.slice(1)
   if (specs.length === 0) fail("install needs a mod, e.g. open-mods install shouryamaanjain/tetris --opencode. `open-mods list` shows what is available.")
   const wanted: Mod[] = []
-  for (const spec of specs) wanted.push(...(await chooseHarnesses(reg, spec, "Install")))
+  for (const spec of specs) wanted.push(...(await chooseHarnesses(reg, spec, "Install", { needHarness: true })))
   const state = loadState()
   for (const id of new Set(wanted.map((m) => m.harness))) {
     const current = (state[id]?.mods ?? []).map((n) => resolveMod(reg, n, id))
@@ -812,7 +908,7 @@ async function cmdUninstall() {
     const id = parseId(reg, spec)
     const on = Object.keys(state).filter((h) => state[h]!.mods.includes(id))
     if (on.length === 0) fail(`${id} is not installed`)
-    for (const m of await chooseHarnesses(reg, id, "Uninstall", on)) byHarness.set(m.harness, [...(byHarness.get(m.harness) ?? []), id])
+    for (const m of await chooseHarnesses(reg, id, "Uninstall", { among: on })) byHarness.set(m.harness, [...(byHarness.get(m.harness) ?? []), id])
   }
   for (const [id, names] of byHarness) {
     const remaining = state[id]!.mods.filter((n) => !names.includes(n)).map((n) => resolveMod(reg, n, id))
@@ -856,7 +952,7 @@ async function modTarget(reg: string, state: State, arg: string | undefined, ver
   const id = parseId(reg, arg)
   const on = Object.keys(state).filter((h) => state[h]!.mods.includes(id))
   if (on.length === 0) fail(`${id} is not installed`)
-  const [m] = await chooseHarnesses(reg, id, verb, on)
+  const [m] = await chooseHarnesses(reg, id, verb, { among: on })
   return { id: m!.harness, name: id }
 }
 

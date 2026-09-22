@@ -7,6 +7,12 @@
   "license": "MIT",
   "language": "TypeScript (Bun, SolidJS, opentui)",
   "binary": "opencode",
+  "installer": {
+    "command": "curl -fsSL https://opencode.ai/install | bash",
+    "paths": [
+      "~/.opencode/bin"
+    ]
+  },
   "requirements": [
     {
       "command": "bun",
