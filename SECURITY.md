@@ -16,10 +16,9 @@ The registry only carries patches. Nothing is prebuilt: your machine compiles th
 
 ## What the registry checks
 
-- Only a mod's owner, or a maintainer the owner listed, can change it; a new mod lives under its author's GitHub handle. The **mod standards** check enforces this, along with a README that discloses what the mod does with the network, files, commands and the agent's instructions, and patches that are readable source.
+- Only a mod's owner, or a maintainer the owner listed, can change it; a new mod lives under its author's GitHub handle. The **standards** check enforces this, along with a README that discloses what the mod does with the network, files, commands and the agent's instructions, and patches that are readable source.
 - Every pull request applies and typechecks the mod in CI against the release it names. The author builds it; CI does not.
-- Greptile reviews the code the patches add.
-- A security bot reads every new mod and every update, comparing an update with the one it replaces, and flags anything malicious or undisclosed. It never runs the pull request's code.
+- Greptile reviews the code the patches add, for correctness and for security: anything malicious, and anything the README does not disclose. For an update, a comment shows what it changes compared with the published update, as plain code.
 - A registry maintainer reads the diff and the README and approves every change before it is merged.
 - The hourly job that moves mods to new releases never changes a mod's code: if a rebase would change the reviewed lines, the mod waits for its maintainer instead.
 - When the harness ships a new release, the hourly check applies and typechecks every mod against it, so a mod cannot silently drift, and holds every mod if the release changed how the harness builds.

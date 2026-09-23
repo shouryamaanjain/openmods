@@ -1,12 +1,21 @@
-<!-- For a mod. For a change to the CLI, the site or a harness definition, replace this with a description of the change. -->
+<!-- Keep the part that fits and delete the rest. -->
 
-## What this mod does
+## A mod
 
-One or two sentences. Add a screenshot or a recording if it changes what you see.
-
-## Checklist
+What it does, in one or two sentences. Add a screenshot or a recording if it changes what you see.
 
 - [ ] One mod, packed with `openmods pack`; an update says what changed with `--note`
-- [ ] I built it and used it: `openmods check mods/<you>/<mod>/<harness> --build`
+- [ ] I built it and used it: `openmods install .` in my harness clone, or `openmods check <mod folder> --build`
 - [ ] The README's Permissions section says what the mod does with the network, files, commands and the agent's instructions
 - [ ] Nothing in the patches is generated, minified or binary
+
+## A harness
+
+Which harness, and where its source and install instructions are.
+
+- [ ] One file, `harnesses/<id>.json`, with its repo, license, official installer, install, typecheck and build commands, artifact and recipe
+- [ ] I built a release with these commands
+
+## A change to OpenMods
+
+What changes for users or authors, and how you checked it.

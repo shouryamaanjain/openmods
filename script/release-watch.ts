@@ -230,7 +230,7 @@ async function recipeIssue(r: RecipeCheck) {
   ].join("\n")
   const existing = (await $`gh issue list --repo ${repo} --state open --search ${JSON.stringify(title) + " in:title"} --json number,title`.nothrow().text()).trim()
   if (existing && (JSON.parse(existing) as { title: string }[]).some((i) => i.title === title)) return
-  await $`gh issue create --repo ${repo} --title ${title} --body ${body} --label harness`.nothrow()
+  await $`gh issue create --repo ${repo} --title ${title} --body ${body} --label "build recipe"`.nothrow()
 }
 
 async function apply() {
@@ -331,7 +331,7 @@ async function verify() {
   if (!has("issues") || !repo) return
   const name = readJson(path.join(root, "harnesses", `${harness}.json`))?.name ?? harness
   const title = `${name} ${rel(ref)} changed the OpenMods build recipe`
-  const list = (await $`gh issue list --repo ${repo} --state open --label harness --json number,title`.nothrow().text()).trim()
+  const list = (await $`gh issue list --repo ${repo} --state open --label "build recipe" --json number,title`.nothrow().text()).trim()
   for (const issue of list ? (JSON.parse(list) as { number: number; title: string }[]) : [])
     if (issue.title === title)
       await $`gh issue close ${String(issue.number)} --repo ${repo} --comment ${`A harness build at ${rel(ref)} succeeded, so the recipe still works. Mods are checked again on the next hourly run.`}`.nothrow()

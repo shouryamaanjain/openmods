@@ -72,7 +72,7 @@ Fork this repository, commit the mod's folder, and open an ordinary pull request
 
 ### The standards
 
-A check called **mod standards** enforces these before anyone reviews the pull request:
+A check called **standards** enforces these before anyone reviews the pull request:
 
 - It changes one mod, and nothing outside that mod's folder.
 - You own the mod. A new mod lives under your GitHub handle, `mods/<you>/<mod>/`. To change an existing mod you must be its owner or be listed in its `maintainers` before your pull request; a pull request cannot add its own author.
@@ -85,11 +85,11 @@ Changes to the harness's dependencies or build files are allowed, but the check 
 ### The reviews
 
 1. **Build.** CI applies your patches to the release they name and typechecks the result.
-2. **Code review.** Greptile reviews the code your patches add and comments on correctness and fit with the harness.
-3. **Security review.** A bot reads the patches and the README and decides whether the mod is malicious or does something the README does not disclose. For an update, it is shown the update it replaces, so what is new is plain. Its verdict is the **security review** check.
+2. **Greptile** reviews the code your patches add, for correctness and fit with the harness, and for security: anything malicious, and anything the README's Permissions section does not disclose.
+3. **For an update,** a comment shows what it changes compared with the published update, as plain code.
 4. **A maintainer** reads the diff, the reviews and the README, and merges. Every change needs this approval; the bots help the maintainer, they do not replace them.
 
-An update to your mod goes through the same steps as a new mod.
+An update to your mod goes through the same steps as a new mod. Labels say what kind of change a pull request is: `mod: new`, `mod: update`, and `build files` when the patches change the harness's dependencies or build scripts.
 
 A mod changes the harness itself. That is the whole point: it reaches what plugins, skills and MCP servers cannot. A submission that only adds a skill, a plugin or an MCP server belongs in that system's own channel, such as npm, skills.sh or the harness's config, and will be pointed there. If your mod adds a new tool or behavior the agent needs to know about, describe it in the harness's own source, where its built-in tools are described, rather than shipping a skill beside it.
 
@@ -108,6 +108,17 @@ openmods pack . --name my-mod --registry ../openmods
 
 To ship an update, change your commits and pack again, with `--force` if that release already has a version, and say what changed with `--note`. `pack` numbers the update itself: one more than the latest when the changed lines differ, the same number when they do not. Users of your mod are asked once whether to rebuild with it, and see your note. `openmods check <mod-folder> --at <tag>` checks an older version.
 
-## Adding a harness
+## Proposing a harness
 
-Add `harnesses/<id>.json` following `schema/harness.schema.json`. It needs the git URL, the install, typecheck and build commands, the path of the built executable, and a `recipe`: the files, or the lines of files, those commands depend on in the harness's repo, such as its build script and toolchain pin. Add an `installer` too: the one-line install command from the harness's own docs, and the folders it puts the binary in. The CLI offers it to users who install a mod for a harness they do not have. The release watch compares them on every release and holds the harness's mods when they change. Run the **harness build** workflow once to prove the definition builds on a GitHub runner. Open a PR with one example mod so the pipeline is exercised end to end.
+OpenMods supports open-source harnesses: an agent whose source is public on GitHub and can be built from a release. To propose one, open a pull request that adds a single file, `harnesses/<id>.json`, following `schema/harness.schema.json`, and if you like a row in the README's list of harnesses. It is labelled `harness`.
+
+The definition needs:
+
+- `repo`: the public GitHub repository, and `license`.
+- `binary`: the command users run.
+- `installer`: the one-line install command from the harness's own docs, and the folders it puts the binary in. OpenMods offers it to users who install a mod for a harness they do not have.
+- `install`, `typecheck` and `build`: the commands that prepare, check and build a release, and `artifact`, the path of the built executable.
+- `recipe`: the files, or lines of files, those commands depend on, such as the build script and toolchain pin. The release watch compares them on every release and holds the harness's mods when they change.
+- `releaseTagPattern`: which tags are releases.
+
+The **standards** check makes sure it is complete. Greptile and a maintainer then read every command in it, because they run on users' machines and in CI. A maintainer runs the **harness build** workflow to prove it builds, and adds the OpenMods base patch for it before any mod ships. A harness that is already supported is changed only by maintainers; open an issue to suggest a change.

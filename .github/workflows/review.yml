@@ -1,14 +1,14 @@
-# Checks every pull request before a maintainer reviews it: the mod
-# standards (script/pr-check.ts) and the security review
-# (script/security-review.ts), plus a comment showing what an update changes
-# as plain code (script/update-diff.ts). Greptile reviews the code separately.
+# Checks every pull request before Greptile and a maintainer review it: the
+# standards for mods and harnesses (script/pr-check.ts), with labels saying
+# what kind of change it is, and a comment showing what a mod update changes
+# as plain code (script/update-diff.ts). Greptile reviews every pull request's
+# code and security on its own.
 #
-# This runs from the base branch (pull_request_target) so the security review
-# can use its API key and neither check can be changed by the pull request it
-# checks. Nothing from the pull request is run: its commits are fetched and
-# read with git as data. Results are posted as commit statuses on the pull
-# request's head, which branch protection requires: "mod standards" and
-# "security review".
+# This runs from the base branch (pull_request_target), so a pull request
+# cannot change the checks it is held to. Nothing from the pull request is
+# run: its commits are fetched and read with git as data. The result is
+# posted as the "standards" commit status on the pull request's head, which
+# branch protection requires.
 name: review
 
 on:
@@ -17,6 +17,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
   pull-requests: write
   statuses: write
 
@@ -36,7 +37,7 @@ jobs:
           bun-version: latest
       - name: Fetch the pull request's commits, as data
         run: git fetch --no-tags origin "+refs/pull/${{ github.event.pull_request.number }}/head:refs/remotes/pr/head"
-      - name: Check the mod standards
+      - name: Check the standards
         id: check
         env:
           AUTHOR: ${{ github.event.pull_request.user.login }}
@@ -49,32 +50,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "${{ steps.check.outputs.code }}" = 0 ]; then state=success; text="Meets the mod standards"; else state=failure; text="Does not meet the mod standards yet; see the review run's summary"; fi
+          if [ "${{ steps.check.outputs.code }}" = 0 ]; then state=success; text="Meets the standards"; else state=failure; text="Does not meet the standards yet; see the review run's summary"; fi
           gh api "repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }}" \
-            -f state="$state" -f context="mod standards" -f description="$text" \
+            -f state="$state" -f context="standards" -f description="$text" \
             -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          # The kind labels: set the ones that apply, drop the ones that no longer do.
+          want=",${{ steps.check.outputs.labels }},"
+          for label in "mod: new" "mod: update" "harness" "product" "docs" "build files"; do
+            case "$want" in
+              *",$label,"*) gh pr edit "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --add-label "$label" >/dev/null ;;
+              *) gh pr edit "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --remove-label "$label" >/dev/null 2>&1 || true ;;
+            esac
+          done
           [ "$state" = success ]
-
-  security:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-      - name: Fetch the pull request's commits, as data
-        run: git fetch --no-tags origin "+refs/pull/${{ github.event.pull_request.number }}/head:refs/remotes/pr/head"
-      - name: Security review
-        env:
-          PR: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          GH_TOKEN: ${{ github.token }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          SECURITY_MODEL: ${{ vars.SECURITY_MODEL }}
-        run: bun script/security-review.ts
 
   update-diff:
     runs-on: ubuntu-latest
