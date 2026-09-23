@@ -1,0 +1,16 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: t <t@t>
+Date: Wed, 23 Sep 2026 15:06:57 +0530
+Subject: [PATCH] docs: mention the test mod
+
+
+diff --git a/README.md b/README.md
+index b5a4c8ddd9794e8c20bd287603bfa0c336522796..46302e1f94322f36d497bf2bb105912b8c352bba 100644
+--- a/README.md
++++ b/README.md
+@@ -127,3 +127,5 @@ If you are working on a project that's related to OpenCode and is using "opencod
+ ---
+ 
+ **Join our community** [Discord](https://discord.gg/opencode) | [X.com](https://x.com/opencode)
++
++Built with an OpenMods test mod.

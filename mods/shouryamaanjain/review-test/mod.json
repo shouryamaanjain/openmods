@@ -1,0 +1,15 @@
+{
+  "$schema": "../../../schema/mod.schema.json",
+  "owner": "shouryamaanjain",
+  "name": "review-test",
+  "description": "A throwaway mod to test the review workflow.",
+  "author": {
+    "name": "t",
+    "github": "shouryamaanjain"
+  },
+  "maintainers": [
+    "shouryamaanjain"
+  ],
+  "license": "MIT",
+  "tags": []
+}
