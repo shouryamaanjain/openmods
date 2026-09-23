@@ -83,14 +83,16 @@ A mod is "for" one harness release, and that release is the mod's version. Harne
 
 Compiled dependencies are cached between runs, so a check starts from warm.
 
-On your machine, the `opencode` command in `~/.open-mods/bin` is a small launcher. It starts your build immediately and, once a day, refreshes the registry in the background. When a newer release is supported by every mod you have installed, the next launch asks:
+On your machine, the `opencode` command in `~/.open-mods/bin` is a small launcher. It starts your build immediately and, once a day, refreshes the registry in the background. It asks only when there is something to update: a newer release that every mod you have supports, or a new update of one of your mods. Both go into one question:
 
 ```
-OpenCode v1.19.0 is out and all your mods support it (tetris, vim-keys). You are on v1.18.31.
+OpenCode 1.19.0 is out, and all your mods support it. New in your mods: shouryamaanjain/tetris update 8 (fixes the resize crash).
 Update now? It rebuilds OpenCode, which takes a few minutes. [y/N]
 ```
 
-`y` rebuilds and launches the new build. Anything else launches your current build and asks again tomorrow. `open-mods update` does the same rebuild on demand: it moves you to the newest release every mod you have on has a version for, and only rebuilds when that release or a mod's patches for it changed. If one of your mods has no version for a newer release yet, the launcher says which one and you stay where you are. Nothing else moves you to another release, except installing a mod that has no version for the one you are on; then the CLI builds the newest release all your mods share and says so. It never rebuilds on its own, never asks when `opencode` is not at a terminal, and `OPEN_MODS_NO_PROMPT=1` turns the question off.
+`y` rebuilds and launches the new build. Anything else launches your current build, and that offer is never shown again: the launcher asks next time there is something new, such as another release or another mod update. `open-mods status` shows a pending update if there is one, and `open-mods update` does the same rebuild on demand: it moves you to the newest release every mod you have on has a version for, with each mod's latest update for it. If one of your mods has no version for a newer release yet, the launcher says so once and you stay where you are.
+
+A mod's updates are numbered: every time its author packs changed code, it becomes the next update. The number shows in the build's version, e.g. `opencode --version` prints `1.19.0+tetris-8.vim-keys-3`, so a bug report says exactly what was built. Nothing else moves you to another release, except installing a mod that has no version for the one you are on; then the CLI builds the newest release all your mods share and says so. It never rebuilds on its own, never asks when `opencode` is not at a terminal, and `OPEN_MODS_NO_PROMPT=1` turns the question off.
 
 ## The site
 

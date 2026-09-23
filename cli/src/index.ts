@@ -40,7 +40,12 @@ type Harness = {
 // A version is never replaced when the mod moves to a newer release, so mods
 // that move at different speeds can still be built together at a release
 // they all have.
-type Version = { ref: string; commit: string; patches: string[] }
+//
+// Each version also says which update of the mod's code it holds: a number
+// pack assigns, one higher each time the code changes, never typed by the
+// author. Moving to a new release keeps the number, since the code is the
+// same. `note` is the author's one line on what the update changed.
+type Version = { ref: string; commit: string; patches: string[]; update: number; note?: string }
 
 // This type is one mod on one harness at one version: the shared fields,
 // that version's release and patches, and every version it has. Loading a
@@ -58,6 +63,8 @@ type Mod = {
   tags?: string[]
   upstream: { ref: string; commit: string }
   patches: string[]
+  update: number
+  note?: string
   versions: Version[]
   conflicts?: string[]
   dir: string
@@ -69,7 +76,8 @@ type Mod = {
 }
 
 // mods: every installed mod, in apply order. off: the subset built out for now.
-type State = Record<string, { ref: string; commit: string; mods: string[]; off: string[]; hashes: Record<string, string>; artifact: string; enabled: boolean }>
+// updates: which update of each mod the build holds.
+type State = Record<string, { ref: string; commit: string; mods: string[]; off: string[]; hashes: Record<string, string>; updates: Record<string, number>; artifact: string; enabled: boolean }>
 
 const HOME = process.env.OPEN_MODS_HOME ?? path.join(homedir(), ".open-mods")
 // A release as people see it: "1.18.31" for the tag v1.18.31, "0.155.1" for
@@ -95,7 +103,7 @@ const positional: string[] = []
 // Flags that take a value. Every other --flag is a switch, including the
 // harness flags (--opencode, --codex, ...), so `install --opencode owner/mod`
 // never swallows the mod as the flag's value.
-const VALUE_FLAGS = new Set(["registry", "name", "owner", "harness", "base", "out", "ref", "workspace", "at"])
+const VALUE_FLAGS = new Set(["registry", "name", "owner", "harness", "base", "out", "ref", "workspace", "at", "note"])
 const SWITCHES = new Set(["build", "force", "help", "json", "local", "no-path", "typecheck"])
 for (let i = 0; i < args.length; i++) {
   const a = args[i]!
@@ -174,7 +182,7 @@ function loadMod(dir: string, source: Mod["source"] = path.resolve(dir).startsWi
   const support = readJsonFile(supportFile)
   const owner = meta.owner ?? path.basename(path.dirname(root))
   const name = meta.name ?? path.basename(root)
-  const versions = ((support.versions ?? []) as Version[]).slice().sort((a, b) => (newerRelease(a.ref, b.ref) ? -1 : newerRelease(b.ref, a.ref) ? 1 : 0))
+  const versions = ((support.versions ?? []) as Version[]).map((v) => ({ ...v, update: v.update ?? 1 })).sort((a, b) => (newerRelease(a.ref, b.ref) ? -1 : newerRelease(b.ref, a.ref) ? 1 : 0))
   if (versions.length === 0) fail(`${pretty(supportFile)} lists no versions`)
   const newest = versions[0]!
   return {
@@ -186,6 +194,8 @@ function loadMod(dir: string, source: Mod["source"] = path.resolve(dir).startsWi
     harness: path.basename(dir),
     upstream: { ref: newest.ref, commit: newest.commit },
     patches: newest.patches,
+    update: newest.update,
+    note: newest.note,
     versions,
     dir,
     root,
@@ -196,7 +206,7 @@ function loadMod(dir: string, source: Mod["source"] = path.resolve(dir).startsWi
 /** The mod's version for a release, or undefined when it has none. */
 function at(mod: Mod, ref: string): Mod | undefined {
   const v = mod.versions.find((x) => x.ref === ref)
-  return v && { ...mod, upstream: { ref: v.ref, commit: v.commit }, patches: v.patches }
+  return v && { ...mod, upstream: { ref: v.ref, commit: v.commit }, patches: v.patches, update: v.update, note: v.note }
 }
 
 const newestFirst = (refs: string[]) => [...new Set(refs)].sort((a, b) => (newerRelease(a, b) ? -1 : newerRelease(b, a) ? 1 : 0))
@@ -487,6 +497,14 @@ function incompatibleWith(reg: string, mod: Mod): { mod: Mod; why: string }[] {
     })
 }
 
+// What a set of patches changes, without line numbers or context: two sets
+// with the same code rebased onto different releases compare equal.
+function codeOf(texts: string[]): string {
+  return texts
+    .flatMap((t) => t.split("\n").filter((l) => /^[-+]/.test(l) && !/^(\+\+\+|---)( |$)/.test(l)))
+    .join("\n")
+}
+
 function touchedFiles(mod: Mod): string[] {
   const files = new Set<string>()
   for (const p of mod.patches) {
@@ -512,6 +530,7 @@ const loadState = (): State => {
         mods: e.mods ?? [],
         off: e.off ?? [],
         hashes: e.hashes ?? {},
+        updates: e.updates ?? {},
         artifact: e.artifact ?? "",
         enabled: e.enabled ?? existsSync(path.join(HOME, "bin", id)),
       },
@@ -599,9 +618,13 @@ async function applyMods(root: string, mods: Mod[]) {
   }
 }
 
+// "tetris-8.vim-keys-3": each mod and the update it is on, valid as semver
+// build metadata, so `opencode --version` says exactly what is built in.
+const stampOf = (mods: Mod[]) => mods.map((m) => `${m.name}-${m.update}`).join(".")
+
 // Harness install/build commands run with these set, so a build can stamp
 // itself: OPEN_MODS_HARNESS=opencode OPEN_MODS_REF=v1.18.31
-// OPEN_MODS_VERSION=1.18.31 OPEN_MODS_MODS=vim-keys.quiet-startup
+// OPEN_MODS_VERSION=1.18.31 OPEN_MODS_MODS=vim-keys-2.quiet-startup-1
 // (dot-separated, so "${OPEN_MODS_VERSION}+${OPEN_MODS_MODS}" is valid semver)
 let buildEnv: Record<string, string> = {}
 
@@ -692,9 +715,11 @@ const BIN = path.join(HOME, "bin")
 const pretty = (p: string) => p.replace(homedir(), "~")
 
 // The launcher is what `opencode` runs. It starts the modded binary at once
-// and, at most once a day, refreshes the registry in the background. When a
-// newer harness release is supported by every installed mod, the next launch
-// asks whether to update. It never rebuilds without a yes.
+// and, at most once a day, refreshes the registry in the background. When
+// there is something to update (a newer release all installed mods support,
+// or a new update of one of them) the next launch asks, once. A no is final
+// for that offer: it asks again only when there is something new. It never
+// rebuilds without a yes.
 function launcherOf(h: Harness, artifact: string) {
   const cli = Bun.which("open-mods") ?? `${process.execPath} ${path.resolve(import.meta.path)}`
   return `#!/bin/sh
@@ -716,28 +741,25 @@ if [ -z "$OPEN_MODS_NO_CHECK" ]; then
   fi
 fi
 
-# Ask only at an interactive terminal, and not more than once a day after a no.
+# Show each offer once, and only at an interactive terminal.
 # (OPEN_MODS_ASSUME_TTY=1 lets tests drive the prompt without a terminal.)
 if { { [ -t 0 ] && [ -t 1 ]; } || [ -n "$OPEN_MODS_ASSUME_TTY" ]; } && [ -z "$OPEN_MODS_NO_PROMPT" ] && [ -f "$NOTE" ]; then
   . "$NOTE"
-  SNOOZED=$(cat "$NOTE.snooze" 2>/dev/null || echo 0)
-  if [ -n "$AVAILABLE" ] && [ "$AVAILABLE" != "$CURRENT" ] && [ $((NOW - SNOOZED)) -gt 86400 ]; then
-    if [ "$ALL_SUPPORT" = 1 ]; then
-      printf '%s\n' "${h.name} $AVAILABLE is out and all your mods support it ($MODS). You are on $CURRENT."
+  if [ -n "$KEY" ] && [ "$KEY" != "$(cat "$NOTE.seen" 2>/dev/null)" ]; then
+    printf '%s\n' "$KEY" > "$NOTE.seen"
+    printf '%s\n' "$MESSAGE"
+    if [ "$ASK" = 1 ]; then
       printf '%s' "Update now? It rebuilds ${h.name}, which takes a few minutes. [y/N] "
       read -r ANSWER
       case "$ANSWER" in
         y|Y|yes|YES)
           # The update replaces this launcher and removes the old build, so
           # start again from the new launcher rather than the old path above.
-          if $CLI update "$HARNESS"; then rm -f "$NOTE"; exec "$SELF" "$@"; else
+          if $CLI update "$HARNESS"; then exec "$SELF" "$@"; else
             printf '%s\n' "Update failed; starting your current build. Run \"open-mods update $HARNESS\" to try again."
           fi ;;
-        *) echo "$NOW" > "$NOTE.snooze" ;;
+        *) printf '%s\n' "Not now. You will not be asked about this again; \"open-mods update\" does it any time." ;;
       esac
-    else
-      printf '%s\n' "${h.name} $AVAILABLE is out. Not every mod supports it yet ($BLOCKED), so you stay on $CURRENT."
-      echo "$NOW" > "$NOTE.snooze"
     fi
   fi
 fi
@@ -875,7 +897,7 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
   const active = all.filter((m) => !off.includes(m.id))
   if (active.length === 0) {
     switchOff(h)
-    state[harnessId] = { ...(state[harnessId] ?? { ref: all[0]!.upstream.ref, commit: all[0]!.upstream.commit, artifact: "" }), mods: all.map((m) => m.id), off: [...off], hashes: {}, enabled: false }
+    state[harnessId] = { ...(state[harnessId] ?? { ref: all[0]!.upstream.ref, commit: all[0]!.upstream.commit, artifact: "" }), mods: all.map((m) => m.id), off: [...off], hashes: {}, updates: {}, enabled: false }
     saveState(state)
     log(`Every ${h.name} mod is off (${off.join(", ")}), so \`${h.binary}\` runs your stock ${h.name}. \`open-mods on ${off[0]} --${harnessId}\` brings one back.`)
     return
@@ -919,10 +941,10 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     OPEN_MODS_HARNESS: harnessId,
     OPEN_MODS_REF: base.ref,
     OPEN_MODS_VERSION: base.ref.replace(/^[^0-9]*/, ""),
-    OPEN_MODS_MODS: mods.map((m) => m.name).join("."),
+    OPEN_MODS_MODS: stampOf(mods),
   }
   const built = await build(h, root).catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)))
-  const artifact = keepBuild(h, harnessId, built, `${rel(base.ref)}+${mods.map((m) => m.name).join(".")}`)
+  const artifact = keepBuild(h, harnessId, built, `${rel(base.ref)}+${stampOf(mods)}`)
   switchOn(h, artifact)
   state[harnessId] = {
     ref: base.ref,
@@ -930,10 +952,13 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     mods: all.map((m) => m.id),
     off: off.filter((n) => all.some((m) => m.id === n)),
     hashes: Object.fromEntries(mods.map((m) => [m.id, patchHash(m)])),
+    updates: Object.fromEntries(mods.map((m) => [m.id, m.update])),
     artifact,
     enabled: true,
   }
   saveState(state)
+  // The launcher's note described the build this replaces.
+  rmSync(path.join(HOME, "updates", harnessId), { force: true })
   explainSwitch(h, state[harnessId]!)
 }
 
@@ -982,7 +1007,8 @@ async function cmdInfo() {
     const h = loadHarness(reg, m.harness)
     log("")
     log(`  ${bold(h.name)}  for ${rel(m.upstream.ref)} ${dim(`(tag ${m.upstream.ref}, ${m.upstream.commit.slice(0, 12)})`)}   install: open-mods install ${m.id} --${m.harness}`)
-    if (m.versions.length > 1) log(`    versions   ${m.versions.map((v) => rel(v.ref)).join(", ")}  ${dim("(one per release; below is the newest)")}`)
+    log(`    update     ${m.update}${m.note ? `: ${m.note}` : ""}`)
+    if (m.versions.length > 1) log(`    versions   ${m.versions.map((v) => `${rel(v.ref)} (update ${v.update})`).join(", ")}  ${dim("(one per release; below is the newest)")}`)
     log(`    patches`)
     for (const p of m.patches) log(`      ${p}`)
     log(`    touches`)
@@ -1051,6 +1077,8 @@ async function cmdStatus() {
     log(`  modded  ${h.name} ${rel(e.ref)} + ${active.join(" + ") || "(nothing)"}  ${e.enabled ? "on" : "off (open-mods on)"}${built || !active.length ? "" : "  [not built; run open-mods update]"}`)
     for (const m of e.off) log(`          ${m} is off (open-mods on ${m} --${id})`)
     log(`  stock   ${stock ? `${(await versionOf(stock)) ?? "?"}  ${pretty(stock)}` : "not found on PATH"}`)
+    const pending = readNote(id)
+    if (pending?.ASK === "1" && pending.MESSAGE) log(`  update  ${pending.MESSAGE} \`open-mods update ${id}\` does it.`)
     if (e.enabled && !onPath) log(`  note    ${pretty(BIN)} is not on PATH in this shell; open a new terminal or run: export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"`)
   }
 }
@@ -1189,6 +1217,10 @@ async function cmdPack() {
   const prevVersions: Version[] = prevSupport.versions ?? []
   if (prevVersions.some((v) => v.ref === base) && !has("force"))
     fail(`${owner}/${name} already has a version for ${harness.name} ${rel(base)}; pass --force to replace it`)
+  // The latest update's code, read before its folder may be replaced below.
+  const code = (dir: string, files: string[]) => codeOf(files.map((f) => readFileSync(path.join(dir, f), "utf8")))
+  const latest = prevVersions.length ? prevVersions.reduce((a, b) => ((b.update ?? 1) > (a.update ?? 1) ? b : a)) : undefined
+  const latestCode = latest && latest.patches.every((p) => existsSync(path.join(out, p))) ? code(out, latest.patches) : undefined
   const folder = path.join(out, base)
   rmSync(folder, { recursive: true, force: true })
   mkdirSync(folder, { recursive: true })
@@ -1197,7 +1229,14 @@ async function cmdPack() {
     .filter((f) => f.endsWith(".patch"))
     .sort()
     .map((f) => `${base}/${f}`)
-  const versions = [{ ref: base, commit, patches }, ...prevVersions.filter((v) => v.ref !== base)].sort((a, b) =>
+  // The update number: the latest one again when the changed lines are the
+  // same as the latest update's (a rebase onto another release, or a repack),
+  // else one more. The note goes with the update.
+  const same = latestCode !== undefined && latestCode === code(out, patches)
+  const update = latest ? (same ? (latest.update ?? 1) : (latest.update ?? 1) + 1) : 1
+  const note = flag("note") ?? (same ? latest?.note : undefined)
+  const version: Version = { ref: base, commit, patches, update, ...(note ? { note } : {}) }
+  const versions = [version, ...prevVersions.filter((v) => v.ref !== base)].sort((a, b) =>
     newerRelease(a.ref, b.ref) ? -1 : newerRelease(b.ref, a.ref) ? 1 : 0,
   )
 
@@ -1231,6 +1270,7 @@ async function cmdPack() {
   }
   log(`Packed ${count} commit${count === 1 ? "" : "s"} on top of ${harness.name} ${rel(base)} as ${owner}/${name}, in ${pretty(out)}`)
   log(`  ${patches.join("\n  ")}`)
+  log(same ? `Same code as update ${update}, so it stays update ${update}.` : `This is update ${update}${note ? `: ${note}` : ""}.${note || !latest ? "" : " Pass --note to say what changed; users see it when they are offered the update."}`)
   const others = versions.filter((v) => v.ref !== base)
   if (others.length) log(`It keeps its versions for ${others.map((v) => rel(v.ref)).join(", ")}.`)
   // A lockfile in a patch is nearly always build noise, and two mods that
@@ -1267,6 +1307,7 @@ async function cmdCheck() {
         license: "",
         upstream: { ref: flag("ref") ?? fail("--harness needs --ref <tag>"), commit: "" },
         patches: [],
+        update: 0,
         versions: [],
         dir: "",
         root: "",
@@ -1357,46 +1398,91 @@ async function cmdCheckUpdates() {
   mkdirSync(path.join(HOME, "updates"), { recursive: true })
   for (const id of ids) {
     const e = state[id]
-    const note = path.join(HOME, "updates", id)
+    const file = path.join(HOME, "updates", id)
     if (!e) {
-      rmSync(note, { force: true })
+      rmSync(file, { force: true })
       continue
     }
-    const active = e.mods.filter((n) => !e.off.includes(n)).map((n) => resolveMod(reg, n, id))
-    // The newest release every mod has a version for is what update builds.
-    // If some mod has an even newer one, the mods without it block that.
-    const shared = sharedReleases(active)[0] ?? e.ref
-    const latest = newestFirst([e.ref, ...active.flatMap((m) => m.versions.map((v) => v.ref))])[0]!
-    const newer = newerRelease(shared, e.ref) ? shared : ""
-    const newest = newer || (newerRelease(latest, e.ref) ? latest : shared)
-    const behind = newer ? [] : active.filter((m) => !at(m, newest))
-    const changed = newest !== e.ref || active.some((m) => e.hashes[m.id] !== patchHash(at(m, e.ref) ?? m))
-    // The launcher sources this file, so every value is single-quoted.
+    const h = loadHarness(reg, id)
+    // A launcher written by an older open-mods is brought up to date, so a
+    // change to how it asks reaches everyone without a rebuild.
+    const launcher = path.join(BIN, h.binary)
+    if (e.enabled && existsSync(launcher) && e.artifact && readFileSync(launcher, "utf8") !== launcherOf(h, e.artifact)) switchOn(h, e.artifact)
+    const offer = updateOffer(h, e, e.mods.filter((n) => !e.off.includes(n)).map((n) => resolveMod(reg, n, id)))
+    // The launcher sources this file, so every value is single-quoted. KEY
+    // names the offer: the launcher shows each one once, and a no is final
+    // until the key changes (another release, another mod update).
     const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
-    const lines = [
-      `CURRENT=${q(rel(e.ref))}`,
-      `AVAILABLE=${q(changed ? rel(newest) : "")}`,
-      `ALL_SUPPORT=${behind.length === 0 ? 1 : 0}`,
-      `MODS=${q(active.map((m) => m.id).join(", "))}`,
-      `BLOCKED=${q(behind.map((m) => `${m.id} is for ${rel(m.upstream.ref)}`).join(", "))}`,
-      `CHECKED=${Math.floor(Date.now() / 1000)}`,
-    ]
-    writeFileSync(note, lines.join("\n") + "\n")
-    writeFileSync(`${note}.checked`, `${Math.floor(Date.now() / 1000)}\n`)
+    const now = Math.floor(Date.now() / 1000)
+    writeFileSync(file, [`CURRENT=${q(rel(e.ref))}`, `KEY=${q(offer.key)}`, `ASK=${offer.ask ? 1 : 0}`, `MESSAGE=${q(offer.message)}`, `CHECKED=${now}`].join("\n") + "\n")
+    writeFileSync(`${file}.checked`, `${now}\n`)
     if (has("json"))
       console.log(
         JSON.stringify({
           current: rel(e.ref),
           currentTag: e.ref,
-          available: changed ? rel(newest) : "",
-          availableTag: changed ? newest : "",
-          allSupport: behind.length === 0,
-          mods: active.map((m) => m.id),
-          blocked: behind.map((m) => m.id),
+          available: offer.latest ? rel(offer.latest) : "",
+          availableTag: offer.latest,
+          allSupport: offer.blocked.length === 0,
+          blocked: offer.blocked,
+          moveTo: offer.moveTo ? rel(offer.moveTo) : "",
+          updates: offer.updates,
+          ask: offer.ask,
+          message: offer.message,
         }),
       )
-    else log(changed ? `${id}: ${rel(newest)} available${behind.length ? `, blocked by ${behind.map((m) => m.id).join(", ")}` : ", all mods support it"}` : `${id}: up to date (${rel(e.ref)})`)
+    else log(offer.message ? `${id}: ${offer.message}${offer.ask ? ` \`open-mods update ${id}\` does it.` : ""}` : `${id}: up to date (${rel(e.ref)})`)
   }
+}
+
+/** The launcher's note for a harness, as written by check-updates. */
+function readNote(id: string): Record<string, string> | null {
+  const file = path.join(HOME, "updates", id)
+  if (!existsSync(file)) return null
+  const out: Record<string, string> = {}
+  for (const line of readFileSync(file, "utf8").split("\n")) {
+    const m = /^([A-Z_]+)=(.*)$/.exec(line)
+    if (m) out[m[1]!] = m[2]!.replace(/^'|'$/g, "").replaceAll("'\\''", "'")
+  }
+  return out
+}
+
+/**
+ * What there is to offer a user for one harness: a newer release every mod
+ * that is on has a version for (`moveTo`), and new updates of their mods at
+ * the release they would be on (`updates`). Either one is a question; a newer
+ * release that some mods hold back is only a notice. `key` names the offer.
+ */
+function updateOffer(h: Harness, e: State[string], active: Mod[]) {
+  const shared = sharedReleases(active)[0]
+  const moveTo = shared && newerRelease(shared, e.ref) ? shared : ""
+  const newest = newestFirst([e.ref, ...active.flatMap((m) => m.versions.map((v) => v.ref))])[0]!
+  const latest = newerRelease(newest, e.ref) ? newest : ""
+  const blocked = latest ? active.filter((m) => !at(m, latest)).map((m) => m.id) : []
+  const target = moveTo || e.ref
+  // Which update of each mod the build holds; older installs did not record
+  // it, so it is read from the patches when they still match.
+  const installed = (m: Mod) => {
+    if (e.updates[m.id] !== undefined) return e.updates[m.id]!
+    const v = at(m, e.ref)
+    return v && patchHash(v) === e.hashes[m.id] ? v.update : undefined
+  }
+  const updates = active.flatMap((m) => {
+    const v = at(m, target)
+    const have = installed(m)
+    return v && have !== undefined && v.update > have ? [{ id: m.id, update: v.update, ...(v.note ? { note: v.note } : {}) }] : []
+  })
+  const said = updates.map((u) => `${u.id} update ${u.update}${u.note ? ` (${u.note})` : ""}`).join(", ")
+  const ask = !!moveTo || updates.length > 0
+  const message = moveTo
+    ? `${h.name} ${rel(moveTo)} is out, and all your mods support it.${said ? ` New in your mods: ${said}.` : ""}`
+    : updates.length
+      ? `New in your ${h.name} mods: ${said}.`
+      : blocked.length
+        ? `${h.name} ${rel(latest)} is out, but ${blocked.join(", ")} ${blocked.length === 1 ? "has" : "have"} no version for it yet, so you stay on ${rel(e.ref)}.`
+        : ""
+  const key = ask ? `update ${moveTo} ${updates.map((u) => `${u.id}@${u.update}`).join(",")}` : blocked.length ? `blocked ${latest}` : ""
+  return { moveTo, latest, blocked, updates, ask, message, key }
 }
 
 async function cmdRegistry() {

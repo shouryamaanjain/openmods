@@ -59,7 +59,7 @@ const modDirs = (harness: string) => {
 // support.json lists a mod's versions, one per release it has worked on. The
 // newest is what a new release is checked against; older ones stay, for users
 // whose other mods are still on those releases.
-type Version = { ref: string; commit: string; patches: string[] }
+type Version = { ref: string; commit: string; patches: string[]; update?: number; note?: string }
 const byRelease = (a: Version, b: Version) => (newer(a.ref, b.ref) ? -1 : newer(b.ref, a.ref) ? 1 : 0)
 const newestOf = (support: { versions: Version[] }) => support.versions.slice().sort(byRelease)[0]!
 
@@ -269,7 +269,9 @@ async function apply() {
       const sent = Array.isArray(r.patches) && r.patches.length ? (r.patches as { name: string; text: string }[]) : undefined
       const files = sent ?? newestOf(mod).patches.map((p) => ({ name: path.basename(p), text: readFileSync(path.join(modDir, p), "utf8") }))
       for (const patch of files) writeFileSync(path.join(folder, patch.name), patch.text)
-      const version: Version = { ref: r.ref, commit: r.commit, patches: files.map((patch) => `${r.ref}/${patch.name}`) }
+      // Same code on a new release: the same update, and its note.
+      const from = newestOf(mod)
+      const version: Version = { ref: r.ref, commit: r.commit, patches: files.map((patch) => `${r.ref}/${patch.name}`), update: from.update ?? 1, ...(from.note ? { note: from.note } : {}) }
       mod.versions = [version, ...(mod.versions as Version[]).filter((v) => v.ref !== r.ref)].sort(byRelease)
       writeJson(modFile, mod)
       writeJson(path.join(modDir, "status.json"), { tested: r.ref, supports: r.ref, ok: true, checked })

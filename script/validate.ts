@@ -66,7 +66,7 @@ for (const owner of dirs(modsRoot)) {
       }
       const sup = JSON.parse(readFileSync(sfile, "utf8"))
       if ("upstream" in sup || "patches" in sup) errors.push(`${hrel}: support.json lists "versions" now, one per release; repack with open-mods pack`)
-      const versions: { ref?: string; commit?: string; patches?: string[] }[] = Array.isArray(sup.versions) ? sup.versions : []
+      const versions: { ref?: string; commit?: string; patches?: string[]; update?: unknown; note?: unknown }[] = Array.isArray(sup.versions) ? sup.versions : []
       if (versions.length === 0) errors.push(`${hrel}: versions must be a non-empty list`)
       const refs = versions.map((v) => v.ref)
       if (new Set(refs).size !== refs.length) errors.push(`${hrel}: more than one version for the same release`)
@@ -76,6 +76,8 @@ for (const owner of dirs(modsRoot)) {
         if (!v.ref) errors.push(`${vrel}: missing ref`)
         if (!/^[0-9a-f]{40}$/.test(v.commit ?? "")) errors.push(`${vrel}: commit must be a full sha`)
         if (!Array.isArray(v.patches) || v.patches.length === 0) errors.push(`${vrel}: patches must be a non-empty list`)
+        if (!Number.isInteger(v.update) || (v.update as number) < 1) errors.push(`${vrel}: update must be a whole number from 1; open-mods pack sets it`)
+        if (v.note !== undefined && (typeof v.note !== "string" || v.note.length === 0 || v.note.length > 200)) errors.push(`${vrel}: note must be 1-200 characters`)
         for (const p of v.patches ?? []) {
           listed.add(p)
           // Each version's patches live in a folder named after its release tag.

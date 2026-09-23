@@ -119,7 +119,7 @@ describe("the user's side", () => {
     expect(j.available).toBe("1.1.0")
     expect(j.allSupport).toBe(false)
     expect(j.blocked).toEqual(["t/notes"])
-    expect(readFileSync(path.join(sb.om, "updates", "fake"), "utf8")).toContain("BLOCKED='t/notes is for 1.0.0'")
+    expect(readFileSync(path.join(sb.om, "updates", "fake"), "utf8")).toContain("MESSAGE='Fake 1.1.0 is out, but t/notes has no version for it yet, so you stay on 1.0.0.'")
   })
   test("once every mod supports it, update moves the user to the new release", async () => {
     // Bump notes by hand, as the release watch would have.
@@ -132,7 +132,7 @@ describe("the user's side", () => {
     expect(await greeting(sb)).toBe("hello from friendly")
   })
   test("the launcher never prompts when not at a terminal", async () => {
-    writeFileSync(path.join(sb.om, "updates", "fake"), "CURRENT='1.1.0'\nAVAILABLE='9.9.9'\nALL_SUPPORT=1\nMODS='t/friendly'\nBLOCKED=''\nCHECKED=1\n")
+    writeFileSync(path.join(sb.om, "updates", "fake"), "CURRENT='1.1.0'\nKEY='update v9.9.9 '\nASK=1\nMESSAGE='Fake 9.9.9 is out, and all your mods support it.'\nCHECKED=1\n")
     const out = await Bun.$`sh ${path.join(sb.om, "bin", "greet")}`.env({ OPEN_MODS_NO_CHECK: "1" }).text()
     expect(out.trim()).toBe("hello from friendly")
   })

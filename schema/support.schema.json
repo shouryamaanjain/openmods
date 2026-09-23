@@ -21,7 +21,8 @@
         "required": [
           "ref",
           "commit",
-          "patches"
+          "patches",
+          "update"
         ],
         "additionalProperties": false,
         "properties": {
@@ -41,6 +42,17 @@
               "type": "string",
               "pattern": "^[^/]+/\\d{4}-[A-Za-z0-9._-]+\\.patch$"
             }
+          },
+          "update": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Which update of the mod's code this version holds. open-mods pack sets it: one more than the latest when the changed lines differ, the same when only rebased onto another release. CI keeps it when it adds a version for a new release."
+          },
+          "note": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "One line on what this update changed, from open-mods pack --note. Users see it when they are offered the update."
           }
         }
       }

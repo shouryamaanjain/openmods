@@ -78,9 +78,9 @@ git am -3 ../open-mods/mods/<you>/my-mod/opencode/v1.18.31/*.patch   # the newes
 open-mods pack . --name my-mod
 ```
 
-`pack` adds a version for 1.19.0 and keeps the older ones. Open a PR. Mods have no version number of their own: a mod is "for OpenCode 1.19.0", and CI adds that version automatically when the newest one still applies and typechecks on a new release. You only need to do this by hand when CI opens an issue saying the mod no longer supports a release.
+`pack` adds a version for 1.19.0 and keeps the older ones. If the code is the same and only rebased, it stays the same update; if you changed the code, it becomes the next update. Open a PR. Mods have no version number of their own: a mod is "for OpenCode 1.19.0", and CI adds that version automatically when the newest one still applies and typechecks on a new release. You only need to do this by hand when CI opens an issue saying the mod no longer supports a release.
 
-To fix a bug in the version for a release, change your commits on that release and pack again with `--force`: that replaces the version for that release only. `open-mods check <mod-folder> --at <tag>` checks an older version.
+To ship an update, change your commits and pack again, with `--force` if that release already has a version, and say what changed with `--note`. `pack` numbers the update itself: one more than the latest when the changed lines differ, the same number when they do not. Users of your mod are asked once whether to rebuild with it, and see your note. `open-mods check <mod-folder> --at <tag>` checks an older version.
 
 ## Adding a harness
 

@@ -42,7 +42,7 @@ type Mod = {
   upstream: { ref: string; commit: string }
   patches: string[]
   // Every version, one per release, newest first; upstream and patches are the newest.
-  versions: { ref: string; commit: string; patches: string[] }[]
+  versions: { ref: string; commit: string; patches: string[]; update?: number; note?: string }[]
   conflicts?: string[]
   dir: string
   readme: string
@@ -420,8 +420,10 @@ function modPage(e: Entry) {
 <div class="stat"><b>${m.files.length}</b><span>file${m.files.length === 1 ? "" : "s"} touched</span></div>
 <div class="stat"><b><span class="plus">+${added}</span> <span class="minus">−${removed}</span></b><span>lines</span></div>
 <div class="stat"><b>${m.patches.length}</b><span>patch${m.patches.length === 1 ? "" : "es"}</span></div>
+<div class="stat"><b>${m.versions[0]!.update ?? 1}</b><span>update</span></div>
 </div>
-${m.versions.length > 1 ? `<p class="releases">Has a version for ${esc(h.name)} ${m.versions.map((v) => esc(rel(v.ref))).join(", ")}. open-mods builds the newest one all your mods share; the files and diff below are for ${esc(rel(m.upstream.ref))}.</p>` : ""}
+${m.versions[0]!.note ? `<p class="releases">Update ${m.versions[0]!.update ?? 1}: ${esc(m.versions[0]!.note!)}</p>` : ""}
+${m.versions.length > 1 ? `<p class="releases">Has a version for ${esc(h.name)} ${m.versions.map((v) => `${esc(rel(v.ref))} (update ${v.update ?? 1})`).join(", ")}. open-mods builds the newest one all your mods share; the files and diff below are for ${esc(rel(m.upstream.ref))}.</p>` : ""}
 ${notice}
 ${clash(m)}
 <div class="files">${files}</div>
@@ -568,5 +570,5 @@ const installer = path.join(root, "install.sh")
 if (existsSync(installer)) write("install.sh", readFileSync(installer, "utf8"))
 write("404.html", layout({ title: `Not found · ${SITE_NAME}`, depth: 0, nav: "", body: `<div class="wrap"><section class="hero"><h1>Not found</h1><p>There is no page here. <a href="./">Back to the mods.</a></p></section></div>`, path: "404" }))
 if (process.env.SITE_DOMAIN) write("CNAME", process.env.SITE_DOMAIN.trim() + "\n")
-write("index.json", JSON.stringify({ generated: new Date().toISOString(), harnesses: harnesses.map((h) => ({ id: h.id, name: h.name, latest: rel(h.latest ?? ""), tag: h.latest })), mods: entries.map((e) => ({ id: e.id, owner: e.owner, name: e.name, description: e.description, harnesses: Object.fromEntries(e.variants.map((m) => [m.harness, { for: rel(m.upstream.ref), tag: m.upstream.ref, behind: behind(m), files: m.files.length, releases: m.versions.map((v) => rel(v.ref)), incompatible: (clashes.get(m) ?? []).map((c) => c.mod.id) }])) })) }, null, 2))
+write("index.json", JSON.stringify({ generated: new Date().toISOString(), harnesses: harnesses.map((h) => ({ id: h.id, name: h.name, latest: rel(h.latest ?? ""), tag: h.latest })), mods: entries.map((e) => ({ id: e.id, owner: e.owner, name: e.name, description: e.description, harnesses: Object.fromEntries(e.variants.map((m) => [m.harness, { for: rel(m.upstream.ref), tag: m.upstream.ref, behind: behind(m), files: m.files.length, update: m.versions[0]!.update ?? 1, releases: m.versions.map((v) => ({ release: rel(v.ref), update: v.update ?? 1 })), incompatible: (clashes.get(m) ?? []).map((c) => c.mod.id) }])) })) }, null, 2))
 console.log(`site: ${entries.length} mod${entries.length === 1 ? "" : "s"}, ${harnesses.length} harness${harnesses.length === 1 ? "" : "es"} → ${path.relative(process.cwd(), out) || "."}`)

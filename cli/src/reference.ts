@@ -134,9 +134,9 @@ export const COMMANDS: Command[] = [
   {
     name: "check-updates",
     usage: "open-mods check-updates [harness]",
-    summary: "What the launcher does once a day: is a newer supported release available?",
+    summary: "What the launcher does once a day: is there anything to update?",
     description: [
-      "Pulls the registry, compares the versions of your installed mods with your build, and writes a note the launcher reads on the next launch. If every mod has a version for a newer release, that is the update on offer. If only some do, it names the mods that hold the newer release back. Safe to run by hand.",
+      "Pulls the registry, compares the versions of your installed mods with your build, and writes a note the launcher reads on the next launch. On offer: a newer release every mod has a version for, and new updates of your mods. The launcher shows each offer once; after a no it stays quiet until there is something new. A newer release that some mods hold back is mentioned once, naming them. Safe to run by hand.",
     ],
     flags: [{ flag: "--json", description: "The comparison as JSON." }],
     examples: [{ command: "open-mods check-updates opencode --json" }],
@@ -144,11 +144,12 @@ export const COMMANDS: Command[] = [
   },
   {
     name: "pack",
-    usage: "open-mods pack <harness-checkout> --name <mod> [--owner <you>] [--local] [--harness <id>] [--base <tag>] [--out <dir>] [--force]",
+    usage: "open-mods pack <harness-checkout> --name <mod> [--owner <you>] [--note <what changed>] [--local] [--harness <id>] [--base <tag>] [--out <dir>] [--force]",
     short: "open-mods pack <checkout> --name <mod> [--local]",
     summary: "Turn your commits on top of a harness release into a mod folder.",
     description: [
       "Run it against your clone of the harness. It finds the release tag below your commits, runs git format-patch, and writes the mod as owner/name: a shared mod.json and README under mods/<owner>/<name>, and the harness's own folder, mods/<owner>/<name>/<harness>, with support.json and the patches. Pack again from another harness's clone to add support for that harness to the same mod. The release becomes a version of the mod on that harness, with its patches in a folder named after the release tag. Packing at another release adds a version and keeps the others; packing at a release it already has needs --force and replaces only that version.",
+      "Each version records which update of the mod it holds. Pack numbers it: the next update when the changed lines differ from the latest update, the same one when they do not, so a rebase onto another release is not a new update. --note says what the update changed; users see it when they are offered the update.",
       "Warns if a patch touches a lockfile, which is usually a build side effect and would make the mod conflict with every other mod that does the same.",
     ],
     flags: [
@@ -159,6 +160,7 @@ export const COMMANDS: Command[] = [
       { flag: "--base <tag>", description: "The release tag to diff against, when there are several below HEAD." },
       { flag: "--out <dir>", description: "Write somewhere else entirely." },
       { flag: "--force", description: "Replace the version for this release if the mod already has one." },
+      { flag: "--note <text>", description: "One line on what this update changed, shown to users." },
     ],
     examples: [
       { command: "open-mods pack ../opencode --name my-mod --local", note: "try it: open-mods install you/my-mod --opencode" },
