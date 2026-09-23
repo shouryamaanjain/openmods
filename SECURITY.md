@@ -33,4 +33,6 @@ These are checks on the process, not a guarantee about intent. A malicious patch
 
 ## Reporting a problem
 
-Open an issue on the registry, or email the maintainer listed in the mod's `mod.json` for a problem with one mod. If a published mod is doing something harmful, say so in the issue title; it will be removed from the registry first and discussed after.
+Open an issue on the registry, or email the maintainer listed in the mod's `mod.json` for a problem with one mod. If a published mod is doing something harmful, start the issue title with "Harmful mod:" and name it. A maintainer labels it `harmful mod`, removes the mod from the registry first, and discusses it after.
+
+A problem with a modded build that does not happen in your stock harness (`openmods off`) belongs here too, not with the harness's own project.
