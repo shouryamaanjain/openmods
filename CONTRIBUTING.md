@@ -15,13 +15,23 @@ Use the Bun version the release pins in its `package.json` `packageManager` fiel
 cd packages/tui && bun run typecheck
 ```
 
-## 2. Pack it
+## 2. Try it as a mod
 
-From your checkout of this registry:
+From your OpenCode clone:
 
 ```sh
-openmods pack ../opencode --name my-mod --local   # try it: openmods install <you>/my-mod --opencode
-openmods pack ../opencode --name my-mod           # ready to publish
+openmods install .          # builds OpenCode with your commits, as the local mod <you>/<branch name>
+opencode
+```
+
+It packs your commits on top of the release as a local mod and installs it the way users will run it, alongside your other mods and through the launcher. `--name` sets the mod's name when the branch name will not do. Local mods live in `~/.openmods/local` and are never published.
+
+## 3. Pack it into your fork of the registry
+
+Fork this repository and clone your fork next to your OpenCode clone, then:
+
+```sh
+openmods pack . --name my-mod --registry ../openmods
 ```
 
 A mod is named `<owner>/<name>`, where the owner is your GitHub handle. `pack` reads it from `git config github.user`, else from the GitHub CLI; pass `--owner` to set it.
@@ -48,7 +58,7 @@ The same mod can support more than one harness. Make the change in a Codex check
 
 `<harness>/status.json` is written by CI only. It records the last release the mod was tested against there and whether it passed.
 
-## 3. Check it
+## 4. Check it
 
 ```sh
 openmods check mods/<you>/my-mod/opencode --build
@@ -56,7 +66,7 @@ openmods check mods/<you>/my-mod/opencode --build
 
 This clones the harness into a temp directory, applies your patches at the pinned commit, and builds. Run it before opening a PR: CI does not build harnesses, it runs the quick version, `--typecheck`, on every pull request and against each new harness release.
 
-## 4. Open a pull request
+## 5. Open a pull request
 
 Fork this repository, commit the mod's folder, and open an ordinary pull request. The template asks what the mod does; add a screenshot or recording if it changes what you see.
 
@@ -91,7 +101,7 @@ Maintainers also look for a license compatible with the harness.
 cd ../opencode
 git fetch --tags && git checkout v1.19.0
 git am -3 ../openmods/mods/<you>/my-mod/opencode/v1.18.31/*.patch   # the newest version; fix conflicts if any
-openmods pack . --name my-mod
+openmods pack . --name my-mod --registry ../openmods
 ```
 
 `pack` adds a version for 1.19.0 and keeps the older ones. If the code is the same and only rebased, it stays the same update; if you changed the code, it becomes the next update. Open a PR. Mods have no version number of their own: a mod is "for OpenCode 1.19.0", and CI adds that version automatically when the newest one still applies and typechecks on a new release. You only need to do this by hand when CI opens an issue saying the mod no longer supports a release.

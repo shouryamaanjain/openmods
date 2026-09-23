@@ -1,8 +1,8 @@
 // The author's side: pack, local mods, and the site generator.
 import { beforeAll, describe, expect, test } from "bun:test"
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { addFile, cli, createHarness, createMod, sandbox, script, setGreeting, SITE } from "./harness"
+import { addFile, cli, CLI, createHarness, createMod, git, greeting, sandbox, script, setGreeting, SITE } from "./harness"
 
 const sb = sandbox("authoring")
 
@@ -61,5 +61,40 @@ describe("site", () => {
     expect(page).toContain("Works on the latest Fake release")
     expect(page).toContain("NOTES.md")
     expect(JSON.parse(readFileSync(path.join(out, "index.json"), "utf8")).mods.length).toBe(2)
+  })
+})
+
+describe("trying and publishing from a clone", () => {
+  test("install <clone> packs it as a local mod, named after the branch, and installs it", async () => {
+    // It changes the same line as t/friendly, installed above.
+    expect((await cli(sb, "uninstall", "t/friendly")).code).toBe(0)
+    const work = path.join(sb.T, "work-branchy")
+    await Bun.$`git clone -q ${sb.harness} ${work}`.quiet()
+    await git(work, "checkout", "-q", "-b", "Cool_Mod", "v1.0.0")
+    writeFileSync(path.join(work, "greet.sh"), "#!/bin/sh\necho hello from a clone\n")
+    await git(work, "commit", "-qam", "feat: greet from a clone")
+    const r = await cli(sb, "install", work, "--owner", "t", "--fake")
+    expect(r.code, r.all).toBe(0)
+    expect(r.out).toContain("as the local mod t/cool-mod")
+    expect(r.out).toContain("now runs Fake 1.0.0 + t/cool-mod")
+    expect(await greeting(sb)).toBe("hello from a clone")
+  })
+  test("a clone on a detached release needs --name", async () => {
+    const work = path.join(sb.T, "work-branchy")
+    await git(work, "checkout", "-q", "--detach", "HEAD")
+    const r = await cli(sb, "install", work, "--owner", "t", "--fake")
+    expect(r.code).toBe(1)
+    expect(r.err).toContain('cannot name the mod after the branch "HEAD"; pass --name <mod>')
+    expect((await cli(sb, "install", work, "--owner", "t", "--fake", "--name", "cool-mod")).code).toBe(0)
+  })
+  test("pack will not publish into the CLI's own copy of the registry", async () => {
+    const own = path.join(sb.om, "registry")
+    await Bun.$`cp -R ${sb.reg} ${own}`.quiet()
+    const p = await Bun.$`bun ${CLI} pack ${path.join(sb.T, "work-branchy")} --name nope --owner t --harness fake --registry ${own}`
+      .env({ ...process.env, HOME: sb.home, OPENMODS_HOME: sb.om, OPENMODS_NO_CHECK: "1" })
+      .nothrow()
+      .quiet()
+    expect(p.exitCode).toBe(1)
+    expect(p.stderr.toString()).toContain("pack writes the mod into your fork of the registry")
   })
 })

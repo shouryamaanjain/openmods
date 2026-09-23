@@ -145,7 +145,7 @@ export async function createMod(
   sb: Sandbox,
   name: string,
   change: (dir: string) => void,
-  opts: { base?: string; local?: boolean; conflicts?: string[]; harness?: string } = {},
+  opts: { base?: string; local?: boolean; conflicts?: string[]; harness?: string; owner?: string } = {},
 ) {
   const harness = opts.harness ?? "fake"
   const work = path.join(sb.T, `work-${name}`)
@@ -155,9 +155,10 @@ export async function createMod(
   change(work)
   await git(work, "add", "-A")
   await git(work, "commit", "-q", "-m", `feat: ${name}`)
-  const r = await cli(sb, "pack", work, "--name", name, "--owner", "t", "--harness", harness, "--force", ...(opts.local ? ["--local"] : []))
+  const owner = opts.owner ?? "t"
+  const r = await cli(sb, "pack", work, "--name", name, "--owner", owner, "--harness", harness, "--force", ...(opts.local ? ["--local"] : []))
   if (r.code !== 0) throw new Error(`pack failed: ${r.all}`)
-  const root = opts.local ? path.join(sb.om, "local", "t", name) : path.join(sb.reg, "mods", "t", name)
+  const root = opts.local ? path.join(sb.om, "local", owner, name) : path.join(sb.reg, "mods", owner, name)
   const metaFile = path.join(root, "mod.json")
   writeFileSync(metaFile, JSON.stringify({ ...JSON.parse(readFileSync(metaFile, "utf8")), description: `The ${name} mod.` }, null, 2))
   const dir = path.join(root, harness)

@@ -155,3 +155,45 @@ describe("the security review", () => {
     expect((await review()).out).toContain("success: No mod is changed.")
   })
 })
+
+describe("the update diff", () => {
+  const UPDATE_DIFF = path.resolve(import.meta.dir, "../../script/update-diff.ts")
+  const diff = async () => {
+    const head = (await $`git -C ${sb.reg} rev-parse HEAD`.text()).trim()
+    return (await $`bun ${UPDATE_DIFF} --dry-run --registry ${sb.reg}`.env({ ...process.env, HEAD_SHA: head, BASE_SHA: main }).nothrow().quiet()).stdout.toString()
+  }
+  const work = path.join(sb.T, "work-friendly")
+  test("shows an update on the same release as the code it changes", async () => {
+    await git(work, "checkout", "-q", "--detach", "v1.0.0")
+    writeFileSync(path.join(work, "greet.sh"), "#!/bin/sh\necho hello from friendly, update 2\n")
+    await git(work, "commit", "-qam", "fix: friendlier")
+    expect((await cli(sb, "pack", work, "--name", "friendly", "--owner", "t", "--harness", "fake", "--force", "--note", "friendlier")).code).toBe(0)
+    await commit("update 2")
+    const out = await diff()
+    expect(out).toContain("t/friendly on Fake: update 2 (friendlier), compared with update 1")
+    expect(out).toContain("-echo hello from friendly\n+echo hello from friendly, update 2")
+    expect(out).not.toContain("From 0000000") // code, not patch files
+  })
+  test("carries the previous update onto a newer release, so upstream changes stay out", async () => {
+    await Bun.$`git -C ${sb.harness} checkout -q main`.quiet()
+    writeFileSync(path.join(sb.harness, "lines.txt"), readFileSync(path.join(sb.harness, "lines.txt"), "utf8").replace("line 12", "line 12, changed upstream"))
+    await git(sb.harness, "commit", "-qam", "release v1.1.0")
+    await git(sb.harness, "tag", "v1.1.0")
+    await git(work, "fetch", "-q", "--tags")
+    await git(work, "checkout", "-q", "--detach", "v1.1.0")
+    writeFileSync(path.join(work, "greet.sh"), "#!/bin/sh\necho hello from friendly on 1.1\n")
+    await git(work, "commit", "-qam", "feat: friendly on 1.1")
+    expect((await cli(sb, "pack", work, "--name", "friendly", "--owner", "t", "--harness", "fake", "--note", "moved to 1.1")).code).toBe(0)
+    await commit("update 2 on v1.1.0")
+    const out = await diff()
+    expect(out).toContain("update 2 (moved to 1.1), compared with update 1, carried from v1.0.0 to v1.1.0")
+    expect(out).toContain("+echo hello from friendly on 1.1")
+    expect(out).not.toContain("changed upstream")
+  })
+  test("says nothing for a new mod", async () => {
+    await createMod(sb, "lines", setLine(3, "three"))
+    readme("lines")
+    await commit("add t/lines")
+    expect(await diff()).toContain("No update to compare.")
+  })
+})

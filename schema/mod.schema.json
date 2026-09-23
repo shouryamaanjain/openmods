@@ -64,6 +64,10 @@
         "pattern": "^[a-z0-9-]+$"
       },
       "uniqueItems": true
+    },
+    "internal": {
+      "type": "boolean",
+      "description": "Only for openmods/base, the patch OpenMods applies to every modded build: it is kept out of listings and cannot be installed or removed by users."
     }
   }
 }

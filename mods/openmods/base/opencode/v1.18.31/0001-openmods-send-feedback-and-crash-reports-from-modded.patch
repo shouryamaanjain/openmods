@@ -1,0 +1,99 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: OpenMods <bot@openmods>
+Date: Wed, 23 Sep 2026 16:37:26 +0530
+Subject: [PATCH] openmods: send feedback and crash reports from modded builds
+ to OpenMods
+
+
+diff --git a/packages/opencode/src/session/prompt/anthropic.txt b/packages/opencode/src/session/prompt/anthropic.txt
+index 21d9c0e9f2163f2c5124c8cd1754cbb7dd9d7f06..37bb88bf73c248640e2d0d055d1da93ede6e7e24 100644
+--- a/packages/opencode/src/session/prompt/anthropic.txt
++++ b/packages/opencode/src/session/prompt/anthropic.txt
+@@ -6,8 +6,7 @@ IMPORTANT: You must NEVER generate or guess URLs for the user unless you are con
+ 
+ If the user asks for help or wants to give feedback inform them of the following:
+ - ctrl+p to list available actions
+-- To give feedback, users should report the issue at
+-  https://github.com/anomalyco/opencode
++- This is a modded build of opencode, made with OpenMods (https://openmods.dev). To give feedback or report a problem, users should first check whether it also happens in their stock opencode: run `openmods off`, try again, and `openmods on` to switch back. If it also happens there, report it at https://github.com/anomalyco/opencode/issues; if not, report it to OpenMods at https://github.com/shouryamaanjain/openmods/issues
+ 
+ When the user directly asks about OpenCode (eg. "can OpenCode do...", "does OpenCode have..."), or asks in second person (eg. "are you able...", "can you do..."), or asks how to use a specific OpenCode feature (eg. implement a hook, write a slash command, or install an MCP server), use the WebFetch tool to gather information to answer the question from OpenCode docs. The list of available docs is available at https://opencode.ai/docs
+ 
+diff --git a/packages/opencode/src/session/prompt/default.txt b/packages/opencode/src/session/prompt/default.txt
+index c8d904665e2d357a4c0b64a7f533dc247a1d67dd..cf058f6fad92fecb687a4bd49e569f871795222a 100644
+--- a/packages/opencode/src/session/prompt/default.txt
++++ b/packages/opencode/src/session/prompt/default.txt
+@@ -4,7 +4,7 @@ IMPORTANT: You must NEVER generate or guess URLs for the user unless you are con
+ 
+ If the user asks for help or wants to give feedback inform them of the following:
+ - /help: Get help with using opencode
+-- To give feedback, users should report the issue at https://github.com/anomalyco/opencode/issues
++- This is a modded build of opencode, made with OpenMods (https://openmods.dev). To give feedback or report a problem, users should first check whether it also happens in their stock opencode: run `openmods off`, try again, and `openmods on` to switch back. If it also happens there, report it at https://github.com/anomalyco/opencode/issues; if not, report it to OpenMods at https://github.com/shouryamaanjain/openmods/issues
+ 
+ When the user directly asks about opencode (eg 'can opencode do...', 'does opencode have...') or asks in second person (eg 'are you able...', 'can you do...'), first use the WebFetch tool to gather information to answer the question from opencode docs at https://opencode.ai
+ 
+diff --git a/packages/opencode/src/session/prompt/meta.txt b/packages/opencode/src/session/prompt/meta.txt
+index d5aa008c03f84823e3b6a6de0a2346b93fb2839a..6276fe62db334c57401f7b5dba2537ecdd184daf 100644
+--- a/packages/opencode/src/session/prompt/meta.txt
++++ b/packages/opencode/src/session/prompt/meta.txt
+@@ -61,5 +61,5 @@ Use the instructions below and the tools available to assist the user.
+ - NEVER use comments as a place for long-winded chain-of-thought. Long thinking texts must be generated as private reasoning. Comments in code must be appropriately concise.
+ 
+ # User Help & Feedback
+-- Users can give feedback or report issues at https://github.com/anomalyco/opencode and mention that they are using Meta {{MODEL_NAME}}.
++- This is a modded build of opencode, made with OpenMods (https://openmods.dev). To give feedback or report a problem, users should first check whether it also happens in their stock opencode: run `openmods off`, try again, and `openmods on` to switch back. If it also happens there, report it at https://github.com/anomalyco/opencode/issues; if not, report it to OpenMods at https://github.com/shouryamaanjain/openmods/issues Mention that they are using Meta {{MODEL_NAME}}.
+ - When users ask directly about OpenCode (eg. "can OpenCode do...", "are you able to do...") or its features (eg. implement a hook, write a slash command, or install an MCP server), use the WebFetch tool to gather information to answer the question from the OpenCode docs at https://opencode.ai/docs.
+diff --git a/packages/tui/src/component/error-component.tsx b/packages/tui/src/component/error-component.tsx
+index 48f5f93309fb09568f3859e4a6ec154be0c28e8d..4e735d5015b6c03250ac2440fd481e9cecf30f01 100644
+--- a/packages/tui/src/component/error-component.tsx
++++ b/packages/tui/src/component/error-component.tsx
+@@ -189,8 +189,8 @@ export function ErrorComponent(props: { error: Error; reset: () => void; mode?:
+           <box flexDirection="column" alignItems="center" flexShrink={0}>
+             <text fg={colors.muted}>
+               {copied()
+-                ? "Report copied — paste it into a new GitHub issue."
+-                : "Copy the report and open a GitHub issue to help us fix this."}
++                ? "Report copied — paste it into a new OpenMods issue."
++                : "This is a modded opencode. Check it with `openmods off`, then report it to OpenMods."}
+             </text>
+             <text fg={colors.muted}>opencode {InstallationVersion}</text>
+           </box>
+@@ -201,18 +201,11 @@ export function ErrorComponent(props: { error: Error; reset: () => void; mode?:
+ }
+ 
+ function buildIssueURL(message: string, stack: string) {
+-  // Field keys match the ids in .github/ISSUE_TEMPLATE/bug-report.yml so the issue
+-  // form opens pre-filled. Populating os/terminal/reproduce keeps the report past
+-  // the contributing-guidelines compliance check, which pushes for system info.
+-  const url = new URL("https://github.com/anomalyco/opencode/issues/new?template=bug-report.yml")
+-  url.searchParams.set("title", `TUI crash: ${message}`)
+-  url.searchParams.set("opencode-version", InstallationVersion)
+-  url.searchParams.set("os", describeOS())
+-  url.searchParams.set("terminal", describeTerminal())
+-  url.searchParams.set(
+-    "reproduce",
+-    "Reported automatically from the opencode crash screen. If you can, describe what you were doing when it crashed.",
+-  )
++  // A modded build, made with OpenMods: crashes are reported to OpenMods, not
++  // to the opencode project, which did not ship the mods. The version names
++  // the mods built in.
++  const url = new URL("https://github.com/shouryamaanjain/openmods/issues/new")
++  url.searchParams.set("title", `Crash in modded opencode: ${message}`)
+ 
+   // Budget the stack against the fully URL-encoded length (not the raw length) so
+   // the final link stays under GitHub's practical limit; flag truncation so a
+@@ -220,8 +213,12 @@ function buildIssueURL(message: string, stack: string) {
+   // so measuring url.toString() is both correct and safe on any input.
+   const MAX_URL_LENGTH = 6000
+   const marker = "\n… (truncated)"
+-  const head = `The opencode TUI crashed with an unexpected error.\n\n**Error:** ${message}\n\n**Stack trace:**\n`
+-  const setBody = (body: string) => url.searchParams.set("description", head + "```\n" + body + "\n```")
++  const head =
++    `The opencode TUI crashed in a modded build.\n\n` +
++    `**Version:** ${InstallationVersion}\n**OS:** ${describeOS()}\n**Terminal:** ${describeTerminal()}\n\n` +
++    `Does it also crash in stock opencode (\`openmods off\`)? If so, report it to opencode instead.\n\n` +
++    `**Error:** ${message}\n\n**Stack trace:**\n`
++  const setBody = (body: string) => url.searchParams.set("body", head + "```\n" + body + "\n```")
+ 
+   setBody(stack)
+   if (url.toString().length <= MAX_URL_LENGTH) return url

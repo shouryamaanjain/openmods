@@ -24,6 +24,7 @@ The registry only carries patches. Nothing is prebuilt: your machine compiles th
 - The hourly job that moves mods to new releases never changes a mod's code: if a rebase would change the reviewed lines, the mod waits for its maintainer instead.
 - When the harness ships a new release, the hourly check applies and typechecks every mod against it, so a mod cannot silently drift, and holds every mod if the release changed how the harness builds.
 - Your machine builds everything you install, from the release and the patches.
+- Every modded build carries the OpenMods base patch, which sends feedback and crash reports to OpenMods rather than to the upstream project. Report problems with a modded build here, after checking whether they also happen with `openmods off`.
 
 These are checks on the process, not a guarantee about intent. A malicious patch can pass all of them. Reading the diff is what protects you.
 

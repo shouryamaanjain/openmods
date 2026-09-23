@@ -1,6 +1,7 @@
 # Checks every pull request before a maintainer reviews it: the mod
 # standards (script/pr-check.ts) and the security review
-# (script/security-review.ts). Greptile reviews the code separately.
+# (script/security-review.ts), plus a comment showing what an update changes
+# as plain code (script/update-diff.ts). Greptile reviews the code separately.
 #
 # This runs from the base branch (pull_request_target) so the security review
 # can use its API key and neither check can be changed by the pull request it
@@ -74,3 +75,22 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SECURITY_MODEL: ${{ vars.SECURITY_MODEL }}
         run: bun script/security-review.ts
+
+  update-diff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Fetch the pull request's commits, as data
+        run: git fetch --no-tags origin "+refs/pull/${{ github.event.pull_request.number }}/head:refs/remotes/pr/head"
+      - name: Show what an update changes, as code
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: bun script/update-diff.ts

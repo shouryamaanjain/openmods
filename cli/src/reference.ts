@@ -52,7 +52,7 @@ export const COMMANDS: Command[] = [
   {
     name: "install",
     aliases: ["add"],
-    usage: "openmods install <owner>/<mod> [<owner>/<mod> ...] [--<harness> ...]",
+    usage: "openmods install <owner>/<mod> [<owner>/<mod> ...] [--<harness> ...]\nopenmods install <path to a harness clone> [--name <mod>]",
     short: "openmods install <owner>/<mod> [--<harness>]",
     summary: "Build a harness with these mods and switch it on.",
     description: [
@@ -61,6 +61,8 @@ export const COMMANDS: Command[] = [
       "Picks one release for all your mods on that harness: the one you are on if every mod has a version for it, else the newest release they all have a version for (it says so when that changes your release). Mods that share no release are refused. Then it clones the harness once (blobless), checks out that release, applies each mod's version for it in order, builds with the exact toolchain that release pins, copies the build aside, and writes the launcher to ~/.openmods/bin. The first time, that folder is added to the front of PATH in your shell config, and if a harness installer later adds its own PATH line after it, the openmods line is moved back to the end so modded builds stay first.",
       "Mods stack on one checkout. Two mods that change the same lines of the release, or lines right next to each other, cannot be combined: that is worked out from the patches before anything is built, and the install is refused with the mods and lines named. Your current build keeps running. A mod that still fails to apply, or a build that fails, also leaves the previous build in place.",
       "Installing a mod that is already installed reinstalls it. A mod that was switched off comes back on.",
+      "Given the path of a harness clone instead, it packs your commits on top of the release as a local mod, named after the branch unless --name says otherwise, and installs that: the way an author tries a mod exactly as users will run it.",
+      "Every modded build also carries the OpenMods base patch, applied first. It sends feedback and crash reports from the modded build to OpenMods instead of the upstream project, which did not ship the mods.",
     ],
     flags: [
       { flag: "--no-path", description: "Do not edit your shell config to put ~/.openmods/bin on PATH." },
@@ -70,6 +72,7 @@ export const COMMANDS: Command[] = [
       { command: "openmods install shouryamaanjain/tetris", note: "asks which harness" },
       { command: "openmods install shouryamaanjain/tetris --opencode" },
       { command: "openmods install shouryamaanjain/tetris shouryamaanjain/hello-placeholder --codex", note: "two mods, one build" },
+      { command: "openmods install .", note: "in your OpenCode clone: try your commits as a mod" },
     ],
     audience: "users",
   },
@@ -144,12 +147,13 @@ export const COMMANDS: Command[] = [
   },
   {
     name: "pack",
-    usage: "openmods pack <harness-checkout> --name <mod> [--owner <you>] [--note <what changed>] [--local] [--harness <id>] [--base <tag>] [--out <dir>] [--force]",
-    short: "openmods pack <checkout> --name <mod> [--local]",
+    usage: "openmods pack <harness-checkout> --name <mod> --registry <your registry fork> [--owner <you>] [--note <what changed>] [--harness <id>] [--base <tag>] [--force]\nopenmods pack <harness-checkout> --name <mod> --local",
+    short: "openmods pack <checkout> --name <mod> --registry <fork>",
     summary: "Turn your commits on top of a harness release into a mod folder.",
     description: [
       "Run it against your clone of the harness. It finds the release tag below your commits, runs git format-patch, and writes the mod as owner/name: a shared mod.json and README under mods/<owner>/<name>, and the harness's own folder, mods/<owner>/<name>/<harness>, with support.json and the patches. Pack again from another harness's clone to add support for that harness to the same mod. The release becomes a version of the mod on that harness, with its patches in a folder named after the release tag. Packing at another release adds a version and keeps the others; packing at a release it already has needs --force and replaces only that version.",
       "Each version records which update of the mod it holds. Pack numbers it: the next update when the changed lines differ from the latest update, the same one when they do not, so a rebase onto another release is not a new update. --note says what the update changed; users see it when they are offered the update.",
+      "It writes into the registry you name with --registry, your fork's checkout, and refuses to write into the copy in ~/.openmods that the CLI updates itself from.",
       "Warns if a patch touches a lockfile, which is usually a build side effect and would make the mod conflict with every other mod that does the same.",
     ],
     flags: [
@@ -163,8 +167,8 @@ export const COMMANDS: Command[] = [
       { flag: "--note <text>", description: "One line on what this update changed, shown to users." },
     ],
     examples: [
-      { command: "openmods pack ../opencode --name my-mod --local", note: "try it: openmods install you/my-mod --opencode" },
-      { command: "openmods pack ../opencode --name my-mod", note: "into the registry, ready for a pull request" },
+      { command: "openmods pack . --name my-mod --registry ../openmods", note: "from your harness clone, into your fork of the registry" },
+      { command: "openmods pack . --name my-mod --registry ../openmods --force --note \"fixes the resize crash\"", note: "an update" },
     ],
     audience: "authors",
   },

@@ -61,7 +61,7 @@ A mod's version is the harness release it works on, and it keeps a version for e
 
 1. Blobless clone of the harness into `~/.openmods/harnesses/<id>/src`.
 2. Pick one release for all the mods on that harness: the one you are on, if every mod has a version for it, else the newest release they all have a version for. Mods that share no release are refused, with the releases each one has. Then check out that release.
-3. `git am -3` each mod's patches for that release, in the order you listed them.
+3. `git am -3` each mod's patches for that release, in the order you listed them, after OpenMods' own base patch. That patch is in every modded build: it sends feedback and crash reports to OpenMods instead of the upstream project, which did not ship the mods, and asks people to check with `openmods off` first.
 4. Run the harness's own install and build commands, with the exact toolchain version that release pins. Building OpenCode 1.18.31 with Bun 1.4 instead of its pinned 1.3.14 produces a binary that logs errors on every launch, so this is not optional.
 5. Write the launcher at `~/.openmods/bin/<binary>` and, the first time, add that folder to the front of PATH in your shell config. The build is stamped, so `opencode --version` reports the release plus the mods, e.g. `1.18.31+vim-keys`.
 
@@ -104,9 +104,9 @@ A mod's updates are numbered: every time its author packs changed code, it becom
 git clone https://github.com/anomalyco/opencode && cd opencode
 git checkout v1.18.31            # the release you want to mod
 # ... change anything, then commit as many times as you like ...
-openmods pack . --name my-mod --local   # installable now from ~/.openmods/local, not published
-openmods pack . --name my-mod           # writes mods/<you>/my-mod/opencode/ into the registry
-openmods check mods/<you>/my-mod/opencode --build   # build it yourself; CI only typechecks
+openmods install .                       # try it: builds OpenCode with your commits as a local mod
+openmods pack . --name my-mod --registry ../openmods   # into your fork of the registry, for a pull request
+openmods check ../openmods/mods/<you>/my-mod/opencode --build   # build it once more; CI only typechecks
 ```
 
 `pack` names the mod after your GitHub handle, from `git config github.user` or the GitHub CLI; `--owner` sets it. Packing the same name from a Codex checkout adds `codex/` to the same mod.
