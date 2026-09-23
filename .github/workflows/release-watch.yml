@@ -31,7 +31,6 @@ concurrency:
 permissions:
   contents: write
   issues: write
-  actions: write
 
 jobs:
   plan:
@@ -97,7 +96,12 @@ jobs:
     needs: [plan, check]
     if: ${{ always() && needs.plan.result == 'success' && (needs.plan.outputs.matrix != '[]' || needs.plan.outputs.recipe != '[]') }}
     steps:
+      # Pushes with the release bot's deploy key: main requires a reviewed pull
+      # request, and this key is the one bypass besides maintainers. The bot
+      # only commits new versions whose code a maintainer already reviewed.
       - uses: actions/checkout@v4
+        with:
+          ssh-key: ${{ secrets.RELEASE_BOT_KEY }}
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
@@ -118,9 +122,5 @@ jobs:
           git add mods status
           git diff --cached --quiet && exit 0
           git commit -F results/COMMIT_MSG
+          # A push with the deploy key starts the site rebuild like any push.
           git push
-          # A push made with the workflow token starts no other workflow, so
-          # start the site rebuild explicitly.
-          gh workflow run site --ref "${GITHUB_REF_NAME}"
-        env:
-          GH_TOKEN: ${{ github.token }}
