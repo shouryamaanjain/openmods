@@ -33,6 +33,14 @@ These are checks on the process, not a guarantee about intent. A malicious patch
 
 ## Reporting a problem
 
-Open an issue on the registry, or email the maintainer listed in the mod's `mod.json` for a problem with one mod. If a published mod is doing something harmful, start the issue title with "Harmful mod:" and name it. A maintainer labels it `harmful mod`, removes the mod from the registry first, and discusses it after.
+Open an issue on the registry, or email the maintainer listed in the mod's `mod.json` for a problem with one mod. If a published mod is doing something harmful, start the issue title with "Harmful mod:" and name it. A maintainer labels it `harmful mod`, revokes the mod first, and discusses it after.
+
+## Revoked mods
+
+A maintainer revokes a mod, or some of its updates, by listing it in `revoked.json` in the registry with the reason. From then on:
+
+- `openmods` refuses to install or build it.
+- On machines that already have it, the daily update check replaces the launcher: every launch says the mod was removed and why, and starts the stock harness instead of the modded build. `openmods on` refuses to switch the build back on.
+- `openmods uninstall <owner>/<mod>` removes it, even after the mod's folder is gone from the registry.
 
 A problem with a modded build that does not happen in your stock harness (`openmods off`) belongs here too, not with the harness's own project.

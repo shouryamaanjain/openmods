@@ -291,6 +291,28 @@ function resolveMod(reg: string, spec: string, harness: string): Mod {
   return all.find((x) => x.harness === harness) ?? fail(`${spec} does not support ${harness}. It supports: ${all.map((x) => x.harness).join(", ")}.`)
 }
 
+/** One installed mod on one harness, or undefined when the registry no longer has it. */
+const findMod = (reg: string, id: string, harness: string) => listMods(reg, harness).find((m) => m.id === id && !m.internal)
+
+// revoked.json in the registry: mods, or some of their updates, removed for
+// doing harm. They are never built, and a build that has one stops running
+// it: the launcher warns and starts the stock harness instead.
+type Revocation = { id: string; updates?: number[]; reason: string }
+function revocations(reg: string): Revocation[] {
+  const file = path.join(reg, "revoked.json")
+  return existsSync(file) ? ((readJsonFile(file).revoked ?? []) as Revocation[]) : []
+}
+const revocationOf = (reg: string, id: string, update: number | undefined) =>
+  revocations(reg).find((r) => r.id === id && (!r.updates || update === undefined || r.updates.includes(update)))
+
+/** The mods built into a harness's current build that are revoked. */
+function revokedIn(reg: string, e: State[string]) {
+  return e.mods.filter((id) => !e.off.includes(id)).flatMap((id) => {
+    const r = revocationOf(reg, id, e.updates[id])
+    return r ? [{ id, reason: r.reason }] : []
+  })
+}
+
 /** The harnesses named on the command line: --opencode, --codex, or --harness <id>. */
 function harnessFlags(reg: string): string[] {
   const ids = allHarnesses(reg).map((h) => h.id)
@@ -780,6 +802,24 @@ exec "$REAL" "$@"
 `
 }
 
+// The launcher for a build that contains a revoked mod: it never runs the
+// build again. It says why on every launch and starts the stock harness.
+function revokedLauncherOf(h: Harness, bad: { id: string; reason: string }[], stock: string | null) {
+  const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
+  const ids = bad.map((b) => b.id).join(" ")
+  const message = [
+    ...bad.map((b) => `${b.id} was removed from OpenMods: ${b.reason}`),
+    stock
+      ? `Your modded ${h.name} will not run again; this starts your stock ${h.name}. \`openmods uninstall ${ids}\` removes the mod.`
+      : `Your modded ${h.name} will not run again. \`openmods uninstall ${ids}\` removes the mod.`,
+  ].join("\n")
+  return `#!/bin/sh
+# openmods: this ${h.name} build contains a mod removed from OpenMods, so it does not run.
+printf '%s\\n' ${q(message)} >&2
+${stock ? `exec ${JSON.stringify(stock)} "$@"` : "exit 1"}
+`
+}
+
 function switchOn(h: Harness, artifact: string) {
   mkdirSync(BIN, { recursive: true })
   const target = path.join(BIN, h.binary)
@@ -939,6 +979,10 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     log(`note: building ${h.name} ${rel(release)}, not ${rel(current)}: ${lacking.map((m) => shown(m.id)).join(", ")} ${lacking.length === 1 ? "has" : "have"} no version for ${rel(current)}.`)
   }
   const mods = set.map((m) => at(m, release)!)
+  for (const m of mods) {
+    const r = revocationOf(reg, m.id, m.update)
+    if (r) fail(`${m.id} was removed from OpenMods: ${r.reason} It cannot be built. \`openmods uninstall ${m.id}\` removes it.`)
+  }
   // Refuse a combination that cannot work before anything is touched. The
   // mods being added go last, so each clash is reported against them.
   const order = [...mods.filter((m) => !adding.includes(m.id)), ...mods.filter((m) => adding.includes(m.id))]
@@ -1096,7 +1140,18 @@ async function cmdUninstall() {
     const id = parseId(reg, spec)
     const on = Object.keys(state).filter((h) => state[h]!.mods.includes(id))
     if (on.length === 0) fail(`${id} is not installed`)
-    for (const m of await chooseHarnesses(reg, id, "Uninstall", { among: on })) byHarness.set(m.harness, [...(byHarness.get(m.harness) ?? []), id])
+    // A mod removed from the registry can still be uninstalled: which
+    // harnesses have it comes from what is installed.
+    const known = listMods(reg).some((m) => m.id === id && !m.internal)
+    const picked = harnessFlags(reg)
+    const targets = known
+      ? (await chooseHarnesses(reg, id, "Uninstall", { among: on })).map((m) => m.harness)
+      : picked.length
+        ? on.filter((h) => picked.includes(h))
+        : on.length === 1
+          ? on
+          : fail(`${id} is installed on ${on.join(", ")}; choose with ${on.map((h) => `--${h}`).join(" or ")}`)
+    for (const h of targets) byHarness.set(h, [...(byHarness.get(h) ?? []), id])
   }
   for (const [id, names] of byHarness) {
     const remaining = state[id]!.mods.filter((n) => !names.includes(n)).map((n) => resolveMod(reg, n, id))
@@ -1126,6 +1181,7 @@ async function cmdStatus() {
     log(`  modded  ${h.name} ${rel(e.ref)} + ${active.join(" + ") || "(nothing)"}  ${e.enabled ? "on" : "off (openmods on)"}${built || !active.length ? "" : "  [not built; run openmods update]"}`)
     for (const m of e.off) log(`          ${m} is off (openmods on ${m} --${id})`)
     log(`  stock   ${stock ? `${(await versionOf(stock)) ?? "?"}  ${pretty(stock)}` : "not found on PATH"}`)
+    for (const b of revokedIn(reg, e)) log(`  removed ${b.id} was removed from OpenMods: ${b.reason} \`openmods uninstall ${b.id}\``)
     const pending = readNote(id)
     if (pending?.ASK === "1" && pending.MESSAGE) log(`  update  ${pending.MESSAGE} \`openmods update ${id}\` does it.`)
     if (e.enabled && !onPath) log(`  note    ${pretty(BIN)} is not on PATH in this shell; open a new terminal or run: export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"`)
@@ -1168,6 +1224,8 @@ async function cmdOn() {
     if (e.mods.every((m) => e.off.includes(m))) fail(`every ${h.name} mod is off; \`openmods on ${e.off[0]} --${id}\` builds one back in`)
     e.artifact ||= artifactPath(h, path.join(HOME, "harnesses", id, "src"))
     if (!existsSync(e.artifact)) fail(`the modded ${h.name} build is missing; run: openmods update ${id}`)
+    const bad = revokedIn(reg, e)
+    if (bad.length) fail(`this ${h.name} build has ${bad.map((b) => `${b.id}, which was removed from OpenMods: ${b.reason}`).join("; ")} \`openmods uninstall ${bad.map((b) => b.id).join(" ")}\` removes it.`)
     switchOn(h, e.artifact)
     e.enabled = true
     saveState(state)
@@ -1487,11 +1545,23 @@ async function cmdCheckUpdates() {
       continue
     }
     const h = loadHarness(reg, id)
+    const launcher = path.join(BIN, h.binary)
+    // A revoked mod stops running: the launcher warns on every launch and
+    // starts the stock harness instead, until the mod is uninstalled.
+    const bad = revokedIn(reg, e)
+    if (bad.length) {
+      if (e.enabled && existsSync(launcher)) writeFileSync(launcher, revokedLauncherOf(h, bad, stockBinary(h)), { mode: 0o755 })
+      const message = `${bad.map((b) => `${b.id} was removed from OpenMods: ${b.reason}`).join(" ")} \`openmods uninstall ${bad.map((b) => b.id).join(" ")}\` removes it.`
+      log(`${id}: ${message}`)
+      if (has("json")) console.log(JSON.stringify({ current: rel(e.ref), revoked: bad }))
+      continue
+    }
     // A launcher written by an older openmods is brought up to date, so a
     // change to how it asks reaches everyone without a rebuild.
-    const launcher = path.join(BIN, h.binary)
     if (e.enabled && existsSync(launcher) && e.artifact && readFileSync(launcher, "utf8") !== launcherOf(h, e.artifact)) switchOn(h, e.artifact)
-    const offer = updateOffer(h, e, e.mods.filter((n) => !e.off.includes(n)).map((n) => resolveMod(reg, n, id)), baseFor(reg, id))
+    // A mod the registry no longer has keeps running as built; it just has no updates.
+    const active = e.mods.filter((n) => !e.off.includes(n)).flatMap((n) => findMod(reg, n, id) ?? [])
+    const offer = updateOffer(h, e, active, baseFor(reg, id))
     // The launcher sources this file, so every value is single-quoted. KEY
     // names the offer: the launcher shows each one once, and a no is final
     // until the key changes (another release, another mod update).

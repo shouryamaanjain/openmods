@@ -79,6 +79,7 @@ A check called **standards** enforces these before anyone reviews the pull reque
 - The README has a `## Permissions` section that says what the mod does with the network, files, commands and the agent's instructions. Write "none" or "unchanged" where it does nothing. `openmods pack` writes the section for you to fill in.
 - Every new update says what changed: `openmods pack --note "..."`.
 - The patches are readable source: no binary files, no minified or generated code, nothing over 1 MB.
+- The mod's folder holds only `mod.json`, `README.md`, and per harness `support.json` and its patches. `status.json` is written by CI.
 
 Changes to the harness's dependencies or build files are allowed, but the check lists them so reviewers read them first.
 
@@ -97,14 +98,18 @@ Maintainers also look for a license compatible with the harness.
 
 ## Updating a mod for a new release
 
+When a new release breaks your mod, CI opens an issue that mentions you, labelled `conflict`, with these steps filled in. They work on any machine, because the registry keeps your mod's commits, messages included:
+
 ```sh
-cd ../opencode
-git fetch --tags && git checkout v1.19.0
-git am -3 ../openmods/mods/<you>/my-mod/opencode/v1.18.31/*.patch   # the newest version; fix conflicts if any
-openmods pack . --name my-mod --registry ../openmods
+cd opencode && git fetch --tags
+git checkout -b my-mod v1.18.31                                    # the last release the mod supports
+git am ../openmods/mods/<you>/my-mod/opencode/v1.18.31/*.patch    # the mod as it last worked
+git rebase --onto v1.19.0 v1.18.31 my-mod                         # resolve conflicts, then git rebase --continue
+openmods install .                                                 # try it on 1.19.0
+openmods pack . --name my-mod --registry ../openmods --note "works on OpenCode 1.19.0"
 ```
 
-`pack` adds a version for 1.19.0 and keeps the older ones. If the code is the same and only rebased, it stays the same update; if you changed the code, it becomes the next update. Open a PR. Mods have no version number of their own: a mod is "for OpenCode 1.19.0", and CI adds that version automatically when the newest one still applies and typechecks on a new release. You only need to do this by hand when CI opens an issue saying the mod no longer supports a release.
+`pack` adds a version for 1.19.0 and keeps the older ones. The issue closes itself once that version is merged. If the code is the same and only rebased, it stays the same update; if you changed the code, it becomes the next update. Open a PR. Mods have no version number of their own: a mod is "for OpenCode 1.19.0", and CI adds that version automatically when the newest one still applies and typechecks on a new release. You only need to do this by hand when CI opens an issue saying the mod no longer supports a release.
 
 To ship an update, change your commits and pack again, with `--force` if that release already has a version, and say what changed with `--note`. `pack` numbers the update itself: one more than the latest when the changed lines differ, the same number when they do not. Users of your mod are asked once whether to rebuild with it, and see your note. `openmods check <mod-folder> --at <tag>` checks an older version.
 
