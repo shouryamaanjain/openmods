@@ -1,0 +1,15 @@
+{
+  "$schema": "../../../schema/mod.schema.json",
+  "owner": "shouryamaanjain",
+  "name": "fast-start",
+  "description": "Makes OpenCode start faster by warming the model catalog.",
+  "author": {
+    "name": "t",
+    "github": "shouryamaanjain"
+  },
+  "maintainers": [
+    "shouryamaanjain"
+  ],
+  "license": "MIT",
+  "tags": []
+}
