@@ -36,10 +36,12 @@ jobs:
           fi
           # A mod on one harness is mods/<owner>/<name>/<harness>. A change
           # anywhere in a mod checks every harness it supports; a change to
-          # harnesses/ or the CLI alone checks every mod.
-          roots=$(git diff --name-only "$base" HEAD -- mods harnesses cli \
+          # harnesses/ or the CLI checks every mod; anything else checks none.
+          roots=$(git diff --name-only "$base" HEAD -- mods \
             | grep -E '^mods/[^/]+/[^/]+/' | cut -d/ -f1-3 | sort -u || true)
-          [ -n "$roots" ] || roots=$(ls -d mods/*/* 2>/dev/null || true)
+          if [ -z "$roots" ] && [ -n "$(git diff --name-only "$base" HEAD -- harnesses cli)" ]; then
+            roots=$(ls -d mods/*/* 2>/dev/null || true)
+          fi
           mods=$(for r in $roots; do ls "$r"/*/support.json 2>/dev/null | xargs -n1 dirname; done \
             | jq -R . | jq -sc .)
           echo "mods=$mods" >> "$GITHUB_OUTPUT"
