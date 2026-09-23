@@ -34,6 +34,8 @@ for (const id of harnesses) {
 // harness with support.json and one folder of patches per version.
 const ID = /^[a-z0-9][a-z0-9-]{0,63}$/
 const modsRoot = path.join(root, "mods")
+const walk = (d: string): string[] =>
+  readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]))
 const dirs = (p: string) => (existsSync(p) ? readdirSync(p, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name) : [])
 for (const owner of dirs(modsRoot)) {
   if (!ID.test(owner)) errors.push(`mods/${owner}: owner must be lowercase letters, digits and hyphens`)
@@ -54,6 +56,12 @@ for (const owner of dirs(modsRoot)) {
       errors.push(`${rel}: description must be 1-200 characters and not a TODO`)
     if (!m.license) errors.push(`${rel}: missing license`)
     if (!existsSync(path.join(dir, "README.md"))) errors.push(`${rel}: missing README.md`)
+    // A mod's folder holds only what OpenMods reads: its metadata, its README,
+    // and per harness its support.json, patches, and the status CI writes.
+    // Anything else would be published without being reviewed as code.
+    for (const f of walk(dir).map((f) => path.relative(dir, f).replaceAll("\\", "/")))
+      if (!/^(mod\.json|README\.md|[^/]+\/(support|status)\.json|[^/]+\/[^/]+\/\d{4}-[A-Za-z0-9._-]+\.patch)$/.test(f))
+        errors.push(`${rel}: ${f} is not a file a mod may contain (mod.json, README.md, and per harness support.json and patches)`)
     const supported = dirs(dir)
     if (supported.length === 0) errors.push(`${rel}: supports no harness; add a <harness>/support.json`)
     for (const h of supported) {
@@ -88,11 +96,24 @@ for (const owner of dirs(modsRoot)) {
         }
       }
       // Every patch file belongs to a version, so nothing stale is left behind.
-      const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]))
       for (const f of walk(path.join(dir, h)).map((f) => path.relative(path.join(dir, h), f)))
         if (f.endsWith(".patch") && !listed.has(f)) errors.push(`${hrel}: ${f} is not listed in support.json`)
       for (const c of sup.conflicts ?? []) if (!/^[a-z0-9-]+\/[a-z0-9-]+$/.test(c)) errors.push(`${hrel}: conflicts entry "${c}" must be owner/mod`)
     }
+  }
+}
+
+// revoked.json: mods, or some of their updates, removed from the registry
+// for doing harm. The CLI refuses to build them and stops running them.
+const revokedFile = path.join(root, "revoked.json")
+if (existsSync(revokedFile)) {
+  const r = JSON.parse(readFileSync(revokedFile, "utf8"))
+  if (!Array.isArray(r.revoked)) errors.push(`revoked.json: "revoked" must be a list`)
+  for (const [i, e] of (Array.isArray(r.revoked) ? r.revoked : []).entries()) {
+    if (!/^[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/.test(e?.id ?? "")) errors.push(`revoked.json entry ${i + 1}: "id" must be owner/mod`)
+    if (typeof e?.reason !== "string" || !e.reason.trim()) errors.push(`revoked.json entry ${i + 1}: needs a "reason" users will read`)
+    if (e?.updates !== undefined && (!Array.isArray(e.updates) || e.updates.some((u: unknown) => !Number.isInteger(u) || (u as number) < 1)))
+      errors.push(`revoked.json entry ${i + 1}: "updates" must be a list of update numbers; leave it out to revoke every update`)
   }
 }
 

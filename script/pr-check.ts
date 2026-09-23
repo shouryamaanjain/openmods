@@ -71,6 +71,9 @@ let ok = "Nothing here needs the mod or harness standards."
 if (modFiles.length) await modStandards()
 else if (harnessFiles.length) await harnessStandards()
 else labels.add(changed.every((f) => f.endsWith(".md")) ? "docs" : "product")
+// Revoking a mod stops it running on users' machines: maintainers only.
+if (changed.includes("revoked.json") && !admins.includes(author))
+  problems.push("revoked.json lists mods removed for doing harm, and only registry maintainers change it. To report a harmful mod, open an issue titled \"Harmful mod: <owner>/<mod>\".")
 
 report(problems.length ? "" : ok)
 process.exit(problems.length ? 1 : 0)
@@ -101,6 +104,14 @@ async function modStandards() {
           ? `${id} belongs to ${allowed.map((a) => `@${a}`).join(", ")}; @${author} cannot change it. Ask its owner to add you to "maintainers" first.`
           : `A new mod's owner is its author's GitHub handle: @${author} can add mods under mods/${author}/, not mods/${owner}/.`,
       )
+
+    // Only the files OpenMods reads. status.json is written by CI.
+    for (const f of modFiles.filter((f) => f.startsWith(`${modRoot}/`))) {
+      const inside = f.slice(modRoot.length + 1)
+      if (!/^(mod\.json|README\.md|[^/]+\/(support|status)\.json|[^/]+\/[^/]+\/\d{4}-[A-Za-z0-9._-]+\.patch)$/.test(inside))
+        problems.push(`${f} is not a file a mod may contain. A mod's folder holds mod.json, README.md, and per harness support.json and its patches.`)
+      else if (/\/status\.json$/.test(inside) && !admins.includes(author)) problems.push(`${f} is written by CI; a pull request does not change it.`)
+    }
 
     if ((await atHead(`${modRoot}/mod.json`)) === undefined) {
       notes.push(`${id} is removed.`)

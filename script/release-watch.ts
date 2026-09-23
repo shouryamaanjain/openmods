@@ -141,7 +141,30 @@ async function recipeChanges(h: { id: string; repo: string; recipe?: RecipeEntry
   return changes
 }
 
+// Closes the conflict issues a fix has resolved: "<mod> does not support
+// <harness> <release>" once the mod has a version for that release or a newer
+// one, or is gone from the registry.
+async function closeFixed() {
+  const repo = process.env.GITHUB_REPOSITORY
+  if (!has("issues") || !repo) return
+  const list = (await $`gh issue list --repo ${repo} --state open --label conflict --json number,title`.nothrow().text()).trim()
+  for (const issue of list ? (JSON.parse(list) as { number: number; title: string }[]) : []) {
+    const m = /^([a-z0-9-]+\/[a-z0-9-]+) does not support (.+) (\d\S*)$/.exec(issue.title)
+    if (!m) continue
+    const [, id, name, release] = m as unknown as [string, string, string, string]
+    const h = harnesses().find((x) => x.name === name)
+    if (!h) continue
+    const support = readJson(path.join(root, "mods", ...id.split("/"), h.id, "support.json"))
+    const fixed = support?.versions?.find((v: Version) => rel(v.ref) === release || newer(v.ref, release))
+    if (support && !fixed) continue
+    const why = support ? `${id} now supports ${name} ${rel(fixed.ref)}.` : `${id} is no longer in the registry.`
+    const closed = await $`gh issue close ${String(issue.number)} --repo ${repo} --comment ${why}`.nothrow().quiet()
+    console.error(closed.exitCode === 0 ? `closed #${issue.number}: ${why}` : `could not close #${issue.number}: ${closed.stderr.toString().trim()}`)
+  }
+}
+
 async function plan() {
+  await closeFixed()
   const latest: Record<string, string> = {}
   const matrix: { mod: string; harness: string; ref: string }[] = []
   const recipe: RecipeCheck[] = []
@@ -188,14 +211,18 @@ async function issueFor(id: string, harnessId: string, meta: any, support: any, 
   const body = [
     `${who} ${harness.name} ${rel(ref)} (tag \`${ref}\`) is out and \`${id}\` no longer applies or typechecks on it. Its newest version stays ${harness.name} ${rel(newestOf(support).ref)} until this is fixed.`,
     "",
-    "To fix it, rebase the patches on the new release and open a PR:",
+    "To fix it, restore the mod from the registry, move it onto the new release, and open a pull request. This works on any machine: the registry has the mod's commits, messages included. Run it with a clone of the harness and your fork of this registry, cloned as `openmods`, side by side:",
     "",
     "```sh",
-    `git clone ${harness.repo} && cd ${path.basename(harness.repo)}`,
-    `git checkout ${ref}`,
-    `git am -3 ../openmods/mods/${id}/${harnessId}/${newestOf(support).ref}/*.patch   # resolve conflicts if any`,
-    `openmods pack . --name ${id.split("/")[1]} --owner ${id.split("/")[0]}`,
+    `git clone ${harness.repo} && cd ${path.basename(harness.repo)}   # or cd into your clone and run: git fetch --tags`,
+    `git checkout -b ${id.split("/")[1]} ${newestOf(support).ref}`,
+    `git am ../openmods/mods/${id}/${harnessId}/${newestOf(support).ref}/*.patch   # the mod as it last worked`,
+    `git rebase --onto ${ref} ${newestOf(support).ref} ${id.split("/")[1]}   # resolve conflicts, then git rebase --continue`,
+    `openmods install . --owner ${id.split("/")[0]}   # try it on ${harness.name} ${rel(ref)}`,
+    `openmods pack . --name ${id.split("/")[1]} --owner ${id.split("/")[0]} --registry ../openmods --note "works on ${harness.name} ${rel(ref)}"`,
     "```",
+    "",
+    "This issue closes itself once the mod has a version for this release.",
     "",
     "What CI saw:",
     "",

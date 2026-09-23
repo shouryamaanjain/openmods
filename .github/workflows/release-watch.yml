@@ -47,7 +47,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          bun script/release-watch.ts plan \
+          bun script/release-watch.ts plan --issues \
             ${{ inputs.ref && format('--ref {0}', inputs.ref) || '' }} \
             ${{ inputs.harness && format('--harness {0}', inputs.harness) || '' }}
 
