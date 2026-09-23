@@ -41,6 +41,8 @@ type Mod = {
   tags?: string[]
   upstream: { ref: string; commit: string }
   patches: string[]
+  // Every version, one per release, newest first; upstream and patches are the newest.
+  versions: { ref: string; commit: string; patches: string[] }[]
   conflicts?: string[]
   dir: string
   readme: string
@@ -121,7 +123,24 @@ function modsIn(base: string, local: boolean): Mod[] {
             const dir = path.join(root, h)
             const support = readJson(path.join(dir, "support.json"))
             const status = existsSync(path.join(dir, "status.json")) ? readJson(path.join(dir, "status.json")) : undefined
-            return { ...meta, ...support, owner, name, id: `${owner}/${name}`, harness: h, dir, readme, status, local, ...parsePatches(dir, support.patches) } as Mod
+            const versions = (support.versions as Mod["versions"]).slice().sort((a, b) => (newer(a.ref, b.ref) ? -1 : newer(b.ref, a.ref) ? 1 : 0))
+            const newest = versions[0]!
+            return {
+              ...meta,
+              conflicts: support.conflicts,
+              owner,
+              name,
+              id: `${owner}/${name}`,
+              harness: h,
+              upstream: { ref: newest.ref, commit: newest.commit },
+              patches: newest.patches,
+              versions,
+              dir,
+              readme,
+              status,
+              local,
+              ...parsePatches(dir, newest.patches),
+            } as Mod
           })
       }),
   )
@@ -133,15 +152,28 @@ const mods: Mod[] = args.includes("--local")
   : published
 
 // Which mods cannot be installed together with which, per harness: the same
-// rule the CLI applies before it builds.
-const footprints = new Map<Mod, Footprint>(mods.map((m) => [m, footprint(m.patches.map((p) => readFileSync(path.join(m.dir, p), "utf8")))]))
+// rule the CLI applies before it builds, at the newest release both have a
+// version for.
+const footprints = new Map<string, Footprint>()
+const versionAt = (m: Mod, ref: string) => {
+  const v = m.versions.find((x) => x.ref === ref)!
+  const key = `${m.dir}@${ref}`
+  if (!footprints.has(key)) footprints.set(key, footprint(v.patches.map((p) => readFileSync(path.join(m.dir, p), "utf8"))))
+  return { mod: { id: m.id, conflicts: m.conflicts, upstream: { commit: v.commit } }, fp: footprints.get(key)! }
+}
+const clashOf = (a: Mod, b: Mod) => {
+  const shared = a.versions.map((v) => v.ref).filter((r) => b.versions.some((v) => v.ref === r))
+  const x = versionAt(a, shared[0] ?? a.upstream.ref)
+  const y = versionAt(b, shared[0] ?? b.upstream.ref)
+  return incompatibility(x.mod, x.fp, y.mod, y.fp)
+}
 const clashes = new Map<Mod, { mod: Mod; why: string }[]>(
   mods.map((m) => [
     m,
     mods
       .filter((o) => o.harness === m.harness && o.id !== m.id)
       .flatMap((o) => {
-        const why = incompatibility(m, footprints.get(m)!, o, footprints.get(o)!)
+        const why = clashOf(m, o)
         return why ? [{ mod: o, why }] : []
       }),
   ]),
@@ -215,6 +247,7 @@ td.num{text-align:right;white-space:nowrap;color:var(--muted);font-family:var(--
 .notice{border-radius:8px;padding:12px 14px;margin:18px 0;border:1px solid}
 .notice.behind{background:var(--yellow-bg);border-color:transparent;color:var(--yellow)}.notice.ok{background:var(--green-bg);border-color:transparent;color:var(--green)}
 .notice a{color:inherit;text-decoration:underline}
+.releases{color:var(--muted);font-size:14px;margin:10px 0 0}
 .notice.clash{background:var(--soft);border-color:var(--line);color:var(--muted)}.notice.clash b{color:var(--fg)}.notice.clash ul{margin:6px 0 0;padding-left:18px}
 .md{max-width:70ch}.md h1{font-size:22px}.md h2{text-transform:none;letter-spacing:0;font-size:18px;color:var(--fg);margin:26px 0 8px}.md h3{font-size:16px}
 .md pre{background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto}.md code{background:var(--soft);padding:1px 5px;border-radius:4px}.md pre code{background:none;padding:0}
@@ -388,6 +421,7 @@ function modPage(e: Entry) {
 <div class="stat"><b><span class="plus">+${added}</span> <span class="minus">−${removed}</span></b><span>lines</span></div>
 <div class="stat"><b>${m.patches.length}</b><span>patch${m.patches.length === 1 ? "" : "es"}</span></div>
 </div>
+${m.versions.length > 1 ? `<p class="releases">Has a version for ${esc(h.name)} ${m.versions.map((v) => esc(rel(v.ref))).join(", ")}. open-mods builds the newest one all your mods share; the files and diff below are for ${esc(rel(m.upstream.ref))}.</p>` : ""}
 ${notice}
 ${clash(m)}
 <div class="files">${files}</div>
@@ -534,5 +568,5 @@ const installer = path.join(root, "install.sh")
 if (existsSync(installer)) write("install.sh", readFileSync(installer, "utf8"))
 write("404.html", layout({ title: `Not found · ${SITE_NAME}`, depth: 0, nav: "", body: `<div class="wrap"><section class="hero"><h1>Not found</h1><p>There is no page here. <a href="./">Back to the mods.</a></p></section></div>`, path: "404" }))
 if (process.env.SITE_DOMAIN) write("CNAME", process.env.SITE_DOMAIN.trim() + "\n")
-write("index.json", JSON.stringify({ generated: new Date().toISOString(), harnesses: harnesses.map((h) => ({ id: h.id, name: h.name, latest: rel(h.latest ?? ""), tag: h.latest })), mods: entries.map((e) => ({ id: e.id, owner: e.owner, name: e.name, description: e.description, harnesses: Object.fromEntries(e.variants.map((m) => [m.harness, { for: rel(m.upstream.ref), tag: m.upstream.ref, behind: behind(m), files: m.files.length, incompatible: (clashes.get(m) ?? []).map((c) => c.mod.id) }])) })) }, null, 2))
+write("index.json", JSON.stringify({ generated: new Date().toISOString(), harnesses: harnesses.map((h) => ({ id: h.id, name: h.name, latest: rel(h.latest ?? ""), tag: h.latest })), mods: entries.map((e) => ({ id: e.id, owner: e.owner, name: e.name, description: e.description, harnesses: Object.fromEntries(e.variants.map((m) => [m.harness, { for: rel(m.upstream.ref), tag: m.upstream.ref, behind: behind(m), files: m.files.length, releases: m.versions.map((v) => rel(v.ref)), incompatible: (clashes.get(m) ?? []).map((c) => c.mod.id) }])) })) }, null, 2))
 console.log(`site: ${entries.length} mod${entries.length === 1 ? "" : "s"}, ${harnesses.length} harness${harnesses.length === 1 ? "" : "es"} → ${path.relative(process.cwd(), out) || "."}`)

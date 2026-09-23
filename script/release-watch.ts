@@ -56,6 +56,13 @@ const modDirs = (harness: string) => {
   )
 }
 
+// support.json lists a mod's versions, one per release it has worked on. The
+// newest is what a new release is checked against; older ones stay, for users
+// whose other mods are still on those releases.
+type Version = { ref: string; commit: string; patches: string[] }
+const byRelease = (a: Version, b: Version) => (newer(a.ref, b.ref) ? -1 : newer(b.ref, a.ref) ? 1 : 0)
+const newestOf = (support: { versions: Version[] }) => support.versions.slice().sort(byRelease)[0]!
+
 const readJson = (file: string) => (existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : undefined)
 const writeJson = (file: string, data: unknown) => writeFileSync(file, JSON.stringify(data, null, 2) + "\n")
 
@@ -135,7 +142,9 @@ async function plan() {
     if (!ref) continue
     latest[h.id] = ref
     const mods = modDirs(h.id).map((dir) => ({ dir, mod: readJson(path.join(dir, "support.json")), status: readJson(path.join(dir, "status.json")) }))
-    const pending = mods.filter(({ mod, status }) => mod.upstream.ref !== ref && (status?.tested !== ref || has("retest")))
+    const pending = mods.filter(
+      ({ mod, status }) => !mod.versions.some((v: Version) => v.ref === ref) && newer(ref, newestOf(mod).ref) && (status?.tested !== ref || has("retest")),
+    )
     if (!pending.length) continue
     // Where the recipe was last known to work: the last release this harness
     // was checked at, else the newest release any of its mods is on.
@@ -144,7 +153,7 @@ async function plan() {
       recipe.push({ harness: h.id, name: h.name, from: st.from, to: ref, state: "held", changes: st.changes ?? [] })
       continue
     }
-    const from = st?.tested && st.tested !== ref ? st.tested : mods.map(({ mod }) => mod.upstream.ref).reduce((a, b) => (newer(b, a) ? b : a))
+    const from = st?.tested && st.tested !== ref ? st.tested : mods.map(({ mod }) => newestOf(mod).ref).reduce((a, b) => (newer(b, a) ? b : a))
     const changes = st?.tested === ref ? [] : await recipeChanges(h, from, ref)
     recipe.push({ harness: h.id, name: h.name, from, to: ref, state: changes.length ? "changed" : "unchanged", changes })
     if (changes.length) continue
@@ -169,15 +178,15 @@ async function issueFor(id: string, harnessId: string, meta: any, support: any, 
   const title = `${id} does not support ${harness.name} ${rel(ref)}`
   const who = maintainersOf(meta).join(" ")
   const body = [
-    `${who} ${harness.name} ${rel(ref)} (tag \`${ref}\`) is out and \`${id}\` no longer applies or typechecks on it. It stays listed for ${harness.name} ${rel(support.upstream.ref)} until this is fixed.`,
+    `${who} ${harness.name} ${rel(ref)} (tag \`${ref}\`) is out and \`${id}\` no longer applies or typechecks on it. Its newest version stays ${harness.name} ${rel(newestOf(support).ref)} until this is fixed.`,
     "",
     "To fix it, rebase the patches on the new release and open a PR:",
     "",
     "```sh",
     `git clone ${harness.repo} && cd ${path.basename(harness.repo)}`,
     `git checkout ${ref}`,
-    `git am -3 ../open-mods/mods/${id}/${harnessId}/patches/*.patch   # resolve conflicts if any`,
-    `open-mods pack . --name ${id.split("/")[1]} --owner ${id.split("/")[0]} --force`,
+    `git am -3 ../open-mods/mods/${id}/${harnessId}/${newestOf(support).ref}/*.patch   # resolve conflicts if any`,
+    `open-mods pack . --name ${id.split("/")[1]} --owner ${id.split("/")[0]}`,
     "```",
     "",
     "What CI saw:",
@@ -252,20 +261,22 @@ async function apply() {
     const ok = r.applies === true && (r.builds === true || r.typechecks === true)
     const checked = new Date().toISOString()
     if (ok) {
-      // Save the patches as they apply to the new release, when CI sent them.
-      if (Array.isArray(r.patches) && r.patches.length) {
-        const pdir = path.join(modDir, "patches")
-        for (const f of readdirSync(pdir)) if (f.endsWith(".patch")) rmSync(path.join(pdir, f))
-        for (const patch of r.patches as { name: string; text: string }[]) writeFileSync(path.join(pdir, patch.name), patch.text)
-        mod.patches = (r.patches as { name: string }[]).map((patch) => `patches/${patch.name}`)
-      }
-      mod.upstream = { ref: r.ref, commit: r.commit }
+      // A new version for the new release, next to the others: the patches as
+      // they apply to it, when CI sent them, else the newest version's as they are.
+      const folder = path.join(modDir, r.ref)
+      rmSync(folder, { recursive: true, force: true })
+      mkdirSync(folder, { recursive: true })
+      const sent = Array.isArray(r.patches) && r.patches.length ? (r.patches as { name: string; text: string }[]) : undefined
+      const files = sent ?? newestOf(mod).patches.map((p) => ({ name: path.basename(p), text: readFileSync(path.join(modDir, p), "utf8") }))
+      for (const patch of files) writeFileSync(path.join(folder, patch.name), patch.text)
+      const version: Version = { ref: r.ref, commit: r.commit, patches: files.map((patch) => `${r.ref}/${patch.name}`) }
+      mod.versions = [version, ...(mod.versions as Version[]).filter((v) => v.ref !== r.ref)].sort(byRelease)
       writeJson(modFile, mod)
       writeJson(path.join(modDir, "status.json"), { tested: r.ref, supports: r.ref, ok: true, checked })
       bumped.push(id)
     } else {
       const error = String(r.error ?? (r.applies ? "typecheck failed" : "patches do not apply"))
-      writeJson(path.join(modDir, "status.json"), { tested: r.ref, supports: mod.upstream.ref, ok: false, error: error.split("\n").slice(0, 40).join("\n"), checked })
+      writeJson(path.join(modDir, "status.json"), { tested: r.ref, supports: newestOf(mod).ref, ok: false, error: error.split("\n").slice(0, 40).join("\n"), checked })
       const issue = has("issues") ? await issueFor(id, harness, meta, mod, r.ref, error) : undefined
       broken.push(`${id}${issue ? ` (${issue})` : ""}`)
     }

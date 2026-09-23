@@ -5,7 +5,7 @@
 import { beforeAll, describe, expect, test } from "bun:test"
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { cli, createHarness, createMod, release, sandbox, script, setLine, WATCH } from "./harness"
+import { cli, createHarness, createMod, release, sandbox, script, setLine, versions, WATCH } from "./harness"
 
 const sb = sandbox("overlap")
 let mod = ""
@@ -59,14 +59,13 @@ describe("a new release", () => {
 describe("a bump", () => {
   let dir = ""
   const patchText = () => {
-    const mod = JSON.parse(readFileSync(path.join(dir, "support.json"), "utf8"))
-    return mod.patches.map((p: string) => readFileSync(path.join(dir, p), "utf8")).join("\n")
+    return versions(dir)[0]!.patches.map((p: string) => readFileSync(path.join(dir, p), "utf8")).join("\n")
   }
 
   test("starts from an old-style patch with short blob ids", async () => {
     dir = await createMod(sb, "line-nine", setLine(9, "line 9, changed by the mod"))
-    for (const f of readdirSync(path.join(dir, "patches"))) {
-      const p = path.join(dir, "patches", f)
+    for (const f of readdirSync(path.join(dir, "v1.0.0"))) {
+      const p = path.join(dir, "v1.0.0", f)
       writeFileSync(p, readFileSync(p, "utf8").replace(/^index ([0-9a-f]{7})[0-9a-f]+\.\.([0-9a-f]{7})[0-9a-f]+/m, "index $1..$2"))
     }
     expect(patchText()).toMatch(/^index [0-9a-f]{7}\.\.[0-9a-f]{7} /m)
@@ -82,8 +81,9 @@ describe("a bump", () => {
     writeFileSync(path.join(results, "line-nine.json"), r.out)
     const apply = await script(sb, WATCH, "apply", results, "--registry", sb.reg)
     expect(apply.code, apply.err).toBe(0)
-    const mod = JSON.parse(readFileSync(path.join(dir, "support.json"), "utf8"))
-    expect(mod.upstream.ref).toBe("v1.4.0")
+    // A new version next to the old one, not in its place.
+    expect(versions(dir).map((v) => v.ref)).toEqual(["v1.4.0", "v1.0.0"])
+    expect(readFileSync(path.join(dir, versions(dir)[1]!.patches[0]!), "utf8")).toMatch(/^index [0-9a-f]{7}\.\.[0-9a-f]{7} /m)
     // The new patch's context is the new release's text, with full blob ids.
     expect(patchText()).toContain(" line 7, changed upstream")
     expect(patchText()).toMatch(/^index [0-9a-f]{40}\.\.[0-9a-f]{40} /m)

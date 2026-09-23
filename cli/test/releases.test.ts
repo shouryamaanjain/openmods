@@ -4,11 +4,11 @@
 import { beforeAll, describe, expect, test } from "bun:test"
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { addFile, cli, createHarness, createMod, greeting, release, sandbox, script, setGreeting, SITE, WATCH } from "./harness"
+import { addFile, addVersion, cli, createHarness, createMod, greeting, release, sandbox, script, setGreeting, SITE, versions, WATCH } from "./harness"
 
 const sb = sandbox("releases")
 const modDir = () => path.join(sb.reg, "mods", "t", "friendly", "fake")
-const modJson = () => JSON.parse(readFileSync(path.join(modDir(), "support.json"), "utf8"))
+const newestRef = () => versions(modDir())[0]!.ref
 
 beforeAll(async () => {
   await createHarness(sb)
@@ -85,7 +85,7 @@ describe("release watch", () => {
     const r = await script(sb, WATCH, "apply", path.join(sb.T, "results"), "--recipe", recipe, "--registry", sb.reg)
     expect(r.code, r.err).toBe(0)
     expect(r.out).toContain("1 mod now supports it, 0 do not")
-    expect(modJson().upstream.ref).toBe("v1.1.0")
+    expect(versions(modDir()).map((v) => v.ref)).toEqual(["v1.1.0", "v1.0.0"])
     expect(JSON.parse(readFileSync(path.join(modDir(), "status.json"), "utf8")).ok).toBe(true)
     expect(JSON.parse(readFileSync(path.join(sb.reg, "status", "fake.json"), "utf8"))).toMatchObject({ tested: "v1.1.0", recipe: "unchanged" })
     // harnesses/ holds only definitions: anything else there is read as a harness.
@@ -95,7 +95,7 @@ describe("release watch", () => {
     writeFileSync(path.join(sb.T, "results", "friendly.json"), JSON.stringify({ mod: "t/friendly", harness: "fake", ref: "v2.0.0", commit: "x", applies: false, error: "patch does not apply" }))
     const r = await script(sb, WATCH, "apply", path.join(sb.T, "results"), "--registry", sb.reg)
     expect(r.code).toBe(0)
-    expect(modJson().upstream.ref).toBe("v1.1.0")
+    expect(newestRef()).toBe("v1.1.0")
     const status = JSON.parse(readFileSync(path.join(modDir(), "status.json"), "utf8"))
     expect(status).toMatchObject({ ok: false, tested: "v2.0.0", supports: "v1.1.0" })
   })
@@ -123,10 +123,7 @@ describe("the user's side", () => {
   })
   test("once every mod supports it, update moves the user to the new release", async () => {
     // Bump notes by hand, as the release watch would have.
-    const file = path.join(sb.reg, "mods", "t", "notes", "fake", "support.json")
-    const notes = JSON.parse(readFileSync(file, "utf8"))
-    const commit = (await Bun.$`git -C ${sb.harness} rev-parse v1.1.0^{commit}`.text()).trim()
-    writeFileSync(file, JSON.stringify({ ...notes, upstream: { ref: "v1.1.0", commit } }))
+    await addVersion(sb, path.join(sb.reg, "mods", "t", "notes", "fake"), "v1.1.0")
     const note = await cli(sb, "check-updates", "fake", "--json")
     expect(JSON.parse(note.out)).toMatchObject({ available: "1.1.0", allSupport: true })
     const r = await cli(sb, "update", "fake")

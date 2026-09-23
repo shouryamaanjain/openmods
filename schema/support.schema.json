@@ -2,41 +2,47 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/shouryamaanjain/open-mods/main/schema/support.schema.json",
   "title": "OpenMods support for one harness",
-  "description": "mods/<owner>/<name>/<harness>/support.json: the harness release the mod's patches are for, and the patches.",
+  "description": "mods/<owner>/<name>/<harness>/support.json: the mod's versions on this harness, one per harness release it has worked on, each with its patches.",
   "type": "object",
   "required": [
-    "upstream",
-    "patches"
+    "versions"
   ],
   "additionalProperties": false,
   "properties": {
     "$schema": {
       "type": "string"
     },
-    "upstream": {
-      "type": "object",
-      "required": [
-        "ref",
-        "commit"
-      ],
-      "additionalProperties": false,
-      "properties": {
-        "ref": {
-          "type": "string",
-          "description": "The harness release the patches are for, e.g. v1.18.32. This is the mod's version on this harness; CI moves it forward when the patches still apply and typecheck on a newer release."
-        },
-        "commit": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{40}$"
-        }
-      }
-    },
-    "patches": {
+    "versions": {
       "type": "array",
       "minItems": 1,
+      "description": "Newest first. CI adds a version when the newest one still applies and typechecks on a newer release; older versions stay, so mods that move at different speeds can still be built together at a release they all have.",
       "items": {
-        "type": "string",
-        "pattern": "^patches/\\d{4}-[A-Za-z0-9._-]+\\.patch$"
+        "type": "object",
+        "required": [
+          "ref",
+          "commit",
+          "patches"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "ref": {
+            "type": "string",
+            "description": "The harness release tag these patches are for, e.g. v1.18.32."
+          },
+          "commit": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "patches": {
+            "type": "array",
+            "minItems": 1,
+            "description": "Applied in order with git am, from a folder named after the release tag, e.g. v1.18.32/0001-add-tetris.patch.",
+            "items": {
+              "type": "string",
+              "pattern": "^[^/]+/\\d{4}-[A-Za-z0-9._-]+\\.patch$"
+            }
+          }
+        }
       }
     },
     "conflicts": {
@@ -45,7 +51,7 @@
         "type": "string",
         "pattern": "^[a-z0-9-]+/[a-z0-9-]+$"
       },
-      "description": "Mods, as owner/name, known not to work together with this one on this harness."
+      "description": "Mods, as owner/name, that break this one on this harness without changing the same lines. Mods that change the same lines are found automatically."
     }
   }
 }

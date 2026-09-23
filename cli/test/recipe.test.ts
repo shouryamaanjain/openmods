@@ -18,7 +18,7 @@ const setPackageJson = (fields: Record<string, string>) => (dir: string) => {
   writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), ...fields }, null, 2) + "\n")
 }
 const status = () => JSON.parse(readFileSync(path.join(sb.reg, "status", "fake.json"), "utf8"))
-const modRef = () => JSON.parse(readFileSync(path.join(sb.reg, "mods", "t", "friendly", "fake", "support.json"), "utf8")).upstream.ref
+const modRef = () => JSON.parse(readFileSync(path.join(sb.reg, "mods", "t", "friendly", "fake", "support.json"), "utf8")).versions[0].ref
 
 beforeAll(async () => {
   await createHarness(sb)

@@ -30,15 +30,22 @@ type Harness = {
   releaseTagPattern?: string
 }
 
-// A mod is `owner/name`, with one folder per harness it supports:
+// A mod is `owner/name`, with one folder per harness it supports, and in it
+// one version per harness release it has worked on:
 //
-//   mods/<owner>/<name>/mod.json              shared: description, license, maintainers
-//   mods/<owner>/<name>/<harness>/support.json   the release it is for, its patches
-//   mods/<owner>/<name>/<harness>/patches/
+//   mods/<owner>/<name>/mod.json                 shared: description, license, maintainers
+//   mods/<owner>/<name>/<harness>/support.json   its versions, newest first
+//   mods/<owner>/<name>/<harness>/<release tag>/0001-….patch
 //
-// This type is one mod on one harness: the shared fields plus that harness's
-// support.json. `dir` is the harness folder (patch paths are relative to it),
-// `root` the mod's folder.
+// A version is never replaced when the mod moves to a newer release, so mods
+// that move at different speeds can still be built together at a release
+// they all have.
+type Version = { ref: string; commit: string; patches: string[] }
+
+// This type is one mod on one harness at one version: the shared fields,
+// that version's release and patches, and every version it has. Loading a
+// mod gives its newest version; `at` gives another. `dir` is the harness
+// folder (patch paths are relative to it), `root` the mod's folder.
 type Mod = {
   owner: string
   name: string
@@ -51,6 +58,7 @@ type Mod = {
   tags?: string[]
   upstream: { ref: string; commit: string }
   patches: string[]
+  versions: Version[]
   conflicts?: string[]
   dir: string
   root: string
@@ -67,6 +75,12 @@ const HOME = process.env.OPEN_MODS_HOME ?? path.join(homedir(), ".open-mods")
 // A release as people see it: "1.18.31" for the tag v1.18.31, "0.155.1" for
 // rust-v0.155.1. The tag itself stays raw in mod.json and in git commands.
 const rel = (ref: string) => ref.replace(/^[^0-9]*/, "")
+const releaseKey = (ref: string) => ref.replace(/^[^0-9]*/, "").split(/[.+-]/).map((x) => Number(x) || 0)
+const newerRelease = (a: string, b: string) => {
+  const [x, y] = [releaseKey(a), releaseKey(b)]
+  for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0)
+  return false
+}
 const DEFAULT_REGISTRY = "https://github.com/shouryamaanjain/open-mods"
 const GIT_IDENTITY = {
   GIT_AUTHOR_NAME: "open-mods",
@@ -81,7 +95,7 @@ const positional: string[] = []
 // Flags that take a value. Every other --flag is a switch, including the
 // harness flags (--opencode, --codex, ...), so `install --opencode owner/mod`
 // never swallows the mod as the flag's value.
-const VALUE_FLAGS = new Set(["registry", "name", "owner", "harness", "base", "out", "ref", "workspace"])
+const VALUE_FLAGS = new Set(["registry", "name", "owner", "harness", "base", "out", "ref", "workspace", "at"])
 const SWITCHES = new Set(["build", "force", "help", "json", "local", "no-path", "typecheck"])
 for (let i = 0; i < args.length; i++) {
   const a = args[i]!
@@ -160,8 +174,41 @@ function loadMod(dir: string, source: Mod["source"] = path.resolve(dir).startsWi
   const support = readJsonFile(supportFile)
   const owner = meta.owner ?? path.basename(path.dirname(root))
   const name = meta.name ?? path.basename(root)
-  return { ...meta, ...support, owner, name, id: `${owner}/${name}`, harness: path.basename(dir), dir, root, source }
+  const versions = ((support.versions ?? []) as Version[]).slice().sort((a, b) => (newerRelease(a.ref, b.ref) ? -1 : newerRelease(b.ref, a.ref) ? 1 : 0))
+  if (versions.length === 0) fail(`${pretty(supportFile)} lists no versions`)
+  const newest = versions[0]!
+  return {
+    ...meta,
+    conflicts: support.conflicts,
+    owner,
+    name,
+    id: `${owner}/${name}`,
+    harness: path.basename(dir),
+    upstream: { ref: newest.ref, commit: newest.commit },
+    patches: newest.patches,
+    versions,
+    dir,
+    root,
+    source,
+  }
 }
+
+/** The mod's version for a release, or undefined when it has none. */
+function at(mod: Mod, ref: string): Mod | undefined {
+  const v = mod.versions.find((x) => x.ref === ref)
+  return v && { ...mod, upstream: { ref: v.ref, commit: v.commit }, patches: v.patches }
+}
+
+const newestFirst = (refs: string[]) => [...new Set(refs)].sort((a, b) => (newerRelease(a, b) ? -1 : newerRelease(b, a) ? 1 : 0))
+
+/** Releases every one of these mods has a version for, newest first. */
+function sharedReleases(mods: Mod[]): string[] {
+  if (mods.length === 0) return []
+  return newestFirst(mods[0]!.versions.map((v) => v.ref)).filter((ref) => mods.every((m) => m.versions.some((v) => v.ref === ref)))
+}
+
+/** "t/a is for 1.19.0, 1.18.31; t/b is for 1.18.0" */
+const releasesSaid = (mods: Mod[]) => mods.map((m) => `${m.id} is for ${m.versions.map((v) => rel(v.ref)).join(", ")}`).join("; ")
 
 function modsUnder(base: string, source: Mod["source"], harness?: string): Mod[] {
   const dirs = (p: string) => (existsSync(p) ? readdirSync(p, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name) : [])
@@ -354,7 +401,7 @@ async function chooseHarnesses(reg: string, spec: string, verb: string, opts: { 
         const h = loadHarness(reg, m.harness)
         const e = state[m.harness]
         const clash = needHarness
-          ? listMods(reg, m.harness).find((o) => o.id !== m.id && e?.mods.includes(o.id) && !e.off.includes(o.id) && incompatibility(m, o))
+          ? listMods(reg, m.harness).find((o) => o.id !== m.id && e?.mods.includes(o.id) && !e.off.includes(o.id) && clashBetween(m, o))
           : undefined
         const mine = e?.mods.includes(m.id)
           ? "already installed"
@@ -424,12 +471,18 @@ function footprintOf(mod: Mod): Footprint {
 /** Why two mods cannot be on together on one harness, or null (see overlap.ts). */
 const incompatibility = (a: Mod, b: Mod) => whyNot(a, footprintOf(a), b, footprintOf(b))
 
+/** Two mods compared at the newest release both have a version for. */
+function clashBetween(a: Mod, b: Mod): string | null {
+  const r = sharedReleases([a, b])[0]
+  return r ? incompatibility(at(a, r)!, at(b, r)!) : incompatibility(a, b)
+}
+
 /** Every other mod on the same harness that `mod` cannot be on together with. */
 function incompatibleWith(reg: string, mod: Mod): { mod: Mod; why: string }[] {
   return listMods(reg, mod.harness)
     .filter((o) => o.id !== mod.id)
     .flatMap((o) => {
-      const why = incompatibility(mod, o)
+      const why = clashBetween(mod, o)
       return why ? [{ mod: o, why }] : []
     })
 }
@@ -792,7 +845,10 @@ function explainSwitch(h: Harness, entry: State[string]) {
 
 // `adding` names the mods this rebuild brings in (install, on), so a clash is
 // reported as theirs and the advice points at the mods already there.
-async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[] = [], adding: string[] = []) {
+// The release is `target` when given (update), else the one the user is on
+// if every mod has a version for it, else the newest release they all have.
+// Nothing else moves the user to another release.
+async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[] = [], adding: string[] = [], target?: string) {
   const h = loadHarness(reg, harnessId)
   await checkRequirements(h)
   const root = path.join(HOME, "harnesses", harnessId, "src")
@@ -816,14 +872,31 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     log(`\`${h.binary}\` runs your stock ${h.name}. The ${h.name} source checkout stays at ${pretty(root)} as a cache; delete it if you want the space back.`)
     return
   }
-  const mods = all.filter((m) => !off.includes(m.id))
-  if (mods.length === 0) {
+  const active = all.filter((m) => !off.includes(m.id))
+  if (active.length === 0) {
     switchOff(h)
     state[harnessId] = { ...(state[harnessId] ?? { ref: all[0]!.upstream.ref, commit: all[0]!.upstream.commit, artifact: "" }), mods: all.map((m) => m.id), off: [...off], hashes: {}, enabled: false }
     saveState(state)
     log(`Every ${h.name} mod is off (${off.join(", ")}), so \`${h.binary}\` runs your stock ${h.name}. \`open-mods on ${off[0]} --${harnessId}\` brings one back.`)
     return
   }
+  // One release for all of them, and each mod's version for it.
+  const current = state[harnessId]?.ref
+  const shared = sharedReleases(active)
+  if (shared.length === 0)
+    fail(`${active.map((m) => m.id).join(" and ")} have no ${h.name} release in common, so they cannot be built together: ${releasesSaid(active)}. Nothing was changed.`)
+  const release = target
+    ? shared.includes(target)
+      ? target
+      : fail(`not every mod has a version for ${h.name} ${rel(target)}: ${releasesSaid(active)}`)
+    : current && shared.includes(current)
+      ? current
+      : shared[0]!
+  if (current && release !== current && !target) {
+    const lacking = active.filter((m) => !at(m, current))
+    log(`note: building ${h.name} ${rel(release)}, not ${rel(current)}: ${lacking.map((m) => m.id).join(", ")} ${lacking.length === 1 ? "has" : "have"} no version for ${rel(current)}.`)
+  }
+  const mods = active.map((m) => at(m, release)!)
   // Refuse a combination that cannot work before anything is touched. The
   // mods being added go last, so each clash is reported against them.
   const order = [...mods.filter((m) => !adding.includes(m.id)), ...mods.filter((m) => adding.includes(m.id))]
@@ -840,12 +913,6 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     }
   }
   const base = mods[0]!.upstream
-  const strays = mods.filter((m) => m.upstream.commit !== base.commit)
-  if (strays.length > 0) {
-    log(
-      `note: ${strays.map((m) => m.id).join(", ")} ${strays.length === 1 ? "is" : "are"} for a different ${h.name} release than ${mods[0]!.id} (${rel(base.ref)}); trying anyway.`,
-    )
-  }
   await ensureCheckout(h, root, base.commit, base.ref)
   await applyMods(root, mods)
   buildEnv = {
@@ -915,6 +982,7 @@ async function cmdInfo() {
     const h = loadHarness(reg, m.harness)
     log("")
     log(`  ${bold(h.name)}  for ${rel(m.upstream.ref)} ${dim(`(tag ${m.upstream.ref}, ${m.upstream.commit.slice(0, 12)})`)}   install: open-mods install ${m.id} --${m.harness}`)
+    if (m.versions.length > 1) log(`    versions   ${m.versions.map((v) => rel(v.ref)).join(", ")}  ${dim("(one per release; below is the newest)")}`)
     log(`    patches`)
     for (const p of m.patches) log(`      ${p}`)
     log(`    touches`)
@@ -1064,16 +1132,19 @@ async function cmdUpdate() {
     const e = state[id]
     const mods = (e?.mods ?? []).map((n) => resolveMod(reg, n, id))
     const active = mods.filter((m) => !e?.off.includes(m.id))
+    // The newest release every mod that is on has a version for.
+    const target = sharedReleases(active)[0]
     const same =
       e &&
       existsSync(e.artifact) &&
       active.length > 0 &&
-      active.every((m) => m.upstream.commit === e.commit && e.hashes[m.id] === patchHash(m))
+      target === e.ref &&
+      active.every((m) => e.hashes[m.id] === patchHash(at(m, e.ref)!))
     if (same && !has("force")) {
       log(`${loadHarness(reg, id).name} ${rel(e.ref)} + ${active.map((m) => m.id).join(" + ")} is already up to date.`)
       continue
     }
-    await rebuild(reg, id, mods, e?.off ?? [])
+    await rebuild(reg, id, mods, e?.off ?? [], [], target)
   }
 }
 
@@ -1110,14 +1181,25 @@ async function cmdPack() {
 
   const root = path.resolve(flag("out") ?? path.join(has("local") ? LOCAL : path.join(reg, "mods"), owner, name))
   const out = path.join(root, harness.id)
-  if (existsSync(path.join(out, "support.json")) && !has("force")) fail(`${pretty(out)} already exists; pass --force to overwrite`)
-  rmSync(path.join(out, "patches"), { recursive: true, force: true })
-  mkdirSync(path.join(out, "patches"), { recursive: true })
-  await $`git -C ${checkout} format-patch --no-signature --no-stat --zero-commit --full-index -N -o ${path.join(out, "patches")} ${base}..HEAD`.quiet()
-  const patches = readdirSync(path.join(out, "patches"))
+  // Each release gets its own version, in a folder named after its tag. Other
+  // versions stay: users building with mods that are still on those releases
+  // need them.
+  const supportFile = path.join(out, "support.json")
+  const prevSupport = existsSync(supportFile) ? readJsonFile(supportFile) : {}
+  const prevVersions: Version[] = prevSupport.versions ?? []
+  if (prevVersions.some((v) => v.ref === base) && !has("force"))
+    fail(`${owner}/${name} already has a version for ${harness.name} ${rel(base)}; pass --force to replace it`)
+  const folder = path.join(out, base)
+  rmSync(folder, { recursive: true, force: true })
+  mkdirSync(folder, { recursive: true })
+  await $`git -C ${checkout} format-patch --no-signature --no-stat --zero-commit --full-index -N -o ${folder} ${base}..HEAD`.quiet()
+  const patches = readdirSync(folder)
     .filter((f) => f.endsWith(".patch"))
     .sort()
-    .map((f) => `patches/${f}`)
+    .map((f) => `${base}/${f}`)
+  const versions = [{ ref: base, commit, patches }, ...prevVersions.filter((v) => v.ref !== base)].sort((a, b) =>
+    newerRelease(a.ref, b.ref) ? -1 : newerRelease(b.ref, a.ref) ? 1 : 0,
+  )
 
   // mod.json is shared by every harness the mod supports: create it once,
   // keep what the author filled in.
@@ -1135,12 +1217,9 @@ async function cmdPack() {
     tags: existing.tags ?? [],
   }
   writeFileSync(metaFile, JSON.stringify(meta, null, 2) + "\n")
-  const supportFile = path.join(out, "support.json")
-  const prevSupport = existsSync(supportFile) ? readJsonFile(supportFile) : {}
   const support = {
     $schema: path.relative(out, path.join(reg, "schema", "support.schema.json")).replaceAll("\\", "/"),
-    upstream: { ref: base, commit },
-    patches,
+    versions,
     ...(prevSupport.conflicts ? { conflicts: prevSupport.conflicts } : {}),
   }
   writeFileSync(supportFile, JSON.stringify(support, null, 2) + "\n")
@@ -1152,9 +1231,11 @@ async function cmdPack() {
   }
   log(`Packed ${count} commit${count === 1 ? "" : "s"} on top of ${harness.name} ${rel(base)} as ${owner}/${name}, in ${pretty(out)}`)
   log(`  ${patches.join("\n  ")}`)
+  const others = versions.filter((v) => v.ref !== base)
+  if (others.length) log(`It keeps its versions for ${others.map((v) => rel(v.ref)).join(", ")}.`)
   // A lockfile in a patch is nearly always build noise, and two mods that
   // both carry one cannot stack. Say so; the author decides.
-  const lockfiles = touchedFiles(loadMod(out, has("local") ? "local" : "registry")).filter((f) => /(^|\/)(Cargo\.lock|bun\.lock|bun\.lockb|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|go\.sum)$/.test(f))
+  const lockfiles = touchedFiles(at(loadMod(out, has("local") ? "local" : "registry"), base)!).filter((f) => /(^|\/)(Cargo\.lock|bun\.lock|bun\.lockb|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|go\.sum)$/.test(f))
   if (lockfiles.length) {
     log(`warning: the patches change ${lockfiles.join(", ")}. That is usually a build side effect, not part of the mod, and mods that both touch a lockfile cannot be installed together. Reset the file to the release and commit again unless the mod really needs it.`)
   }
@@ -1171,10 +1252,12 @@ async function cmdCheck() {
   // with --<harness>.
   const bare = harnessFlags(reg)
   const spec = positional[1] ?? (bare.length ? undefined : fail("usage: open-mods check <mod-folder | owner/mod --<harness>> [--ref <tag>] [--typecheck | --build] [--json]\n       open-mods check --harness <id> --ref <tag> [--typecheck | --build] [--json]"))
-  const mod: Mod = spec
-    ? existsSync(path.join(spec, "support.json"))
-      ? loadMod(spec)
-      : (await chooseHarnesses(reg, spec, "Check"))[0]!
+  const found = spec ? (existsSync(path.join(spec, "support.json")) ? loadMod(spec) : (await chooseHarnesses(reg, spec, "Check"))[0]!) : undefined
+  // The newest version, or the one for the release --at names.
+  const mod: Mod = found
+    ? flag("at")
+      ? (at(found, flag("at")!) ?? fail(`${found.id} has no version for ${flag("at")} on ${found.harness}; it has ${found.versions.map((v) => v.ref).join(", ")}`))
+      : found
     : {
         owner: "",
         name: "(stock)",
@@ -1184,6 +1267,7 @@ async function cmdCheck() {
         license: "",
         upstream: { ref: flag("ref") ?? fail("--harness needs --ref <tag>"), commit: "" },
         patches: [],
+        versions: [],
         dir: "",
         root: "",
         source: "registry",
@@ -1265,12 +1349,6 @@ async function cmdCheck() {
 // Compare what is installed with what the registry now says, and leave a
 // note for the launcher. Runs in the background from the launcher once a
 // day; safe to run by hand.
-const releaseKey = (ref: string) => ref.replace(/^[^0-9]*/, "").split(/[.+-]/).map((x) => Number(x) || 0)
-const newerRelease = (a: string, b: string) => {
-  const [x, y] = [releaseKey(a), releaseKey(b)]
-  for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0)
-  return false
-}
 
 async function cmdCheckUpdates() {
   const reg = await refreshRegistry()
@@ -1285,10 +1363,14 @@ async function cmdCheckUpdates() {
       continue
     }
     const active = e.mods.filter((n) => !e.off.includes(n)).map((n) => resolveMod(reg, n, id))
-    const refs = [...new Set(active.map((m) => m.upstream.ref))]
-    const newest = refs.reduce((a, b) => (newerRelease(b, a) ? b : a), e.ref)
-    const behind = active.filter((m) => m.upstream.ref !== newest)
-    const changed = active.some((m) => m.upstream.commit !== e.commit || e.hashes[m.id] !== patchHash(m))
+    // The newest release every mod has a version for is what update builds.
+    // If some mod has an even newer one, the mods without it block that.
+    const shared = sharedReleases(active)[0] ?? e.ref
+    const latest = newestFirst([e.ref, ...active.flatMap((m) => m.versions.map((v) => v.ref))])[0]!
+    const newer = newerRelease(shared, e.ref) ? shared : ""
+    const newest = newer || (newerRelease(latest, e.ref) ? latest : shared)
+    const behind = newer ? [] : active.filter((m) => !at(m, newest))
+    const changed = newest !== e.ref || active.some((m) => e.hashes[m.id] !== patchHash(at(m, e.ref) ?? m))
     // The launcher sources this file, so every value is single-quoted.
     const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
     const lines = [

@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, test } from "bun:test"
 import { readFileSync, rmSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { $ } from "bun"
-import { addFile, cli, createHarness, createMod, release, sandbox, setGreeting } from "./harness"
+import { addFile, addVersion, cli, createHarness, createMod, release, sandbox, setGreeting } from "./harness"
 
 const sb = sandbox("launcher")
 const launcher = () => path.join(sb.om, "bin", "greet")
@@ -28,9 +28,7 @@ beforeAll(async () => {
   // A release that leaves the mod's lines alone, and the bump the release
   // watch would commit for it.
   await release(sb, "v1.1.0", addFile("CHANGELOG.md", "1.1.0\n"))
-  const file = path.join(sb.reg, "mods", "t", "friendly", "fake", "support.json")
-  const commit = (await $`git -C ${sb.harness} rev-parse v1.1.0^{commit}`.text()).trim()
-  writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), upstream: { ref: "v1.1.0", commit } }))
+  await addVersion(sb, path.join(sb.reg, "mods", "t", "friendly", "fake"), "v1.1.0")
   await cli(sb, "check-updates", "fake")
 })
 

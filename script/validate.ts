@@ -6,7 +6,9 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs"
 import path from "node:path"
 
-const root = path.resolve(import.meta.dir, "..")
+// The registry to check: this checkout, or another with --registry <dir>.
+const at = process.argv.indexOf("--registry")
+const root = path.resolve(at === -1 ? path.join(import.meta.dir, "..") : process.argv[at + 1]!)
 const errors: string[] = []
 const harnesses = new Set(
   readdirSync(path.join(root, "harnesses"))
@@ -29,7 +31,7 @@ for (const id of harnesses) {
 }
 
 // mods/<owner>/<name>/mod.json, README.md, and one folder per supported
-// harness with support.json and its patches.
+// harness with support.json and one folder of patches per version.
 const ID = /^[a-z0-9][a-z0-9-]{0,63}$/
 const modsRoot = path.join(root, "mods")
 const dirs = (p: string) => (existsSync(p) ? readdirSync(p, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name) : [])
@@ -63,17 +65,30 @@ for (const owner of dirs(modsRoot)) {
         continue
       }
       const sup = JSON.parse(readFileSync(sfile, "utf8"))
-      if (!/^[0-9a-f]{40}$/.test(sup.upstream?.commit ?? "")) errors.push(`${hrel}: upstream.commit must be a full sha`)
-      if (!sup.upstream?.ref) errors.push(`${hrel}: missing upstream.ref`)
-      if (!Array.isArray(sup.patches) || sup.patches.length === 0) errors.push(`${hrel}: patches must be a non-empty list`)
-      for (const p of sup.patches ?? []) {
-        if (!/^patches\/\d{4}-[A-Za-z0-9._-]+\.patch$/.test(p)) errors.push(`${hrel}: bad patch path "${p}"`)
-        else if (!existsSync(path.join(dir, h, p))) errors.push(`${hrel}: ${p} does not exist`)
-        else if (/^index [0-9a-f]{1,39}\.\./m.test(readFileSync(path.join(dir, h, p), "utf8")))
-          errors.push(`${hrel}: ${p} has short blob ids; regenerate it with open-mods pack (git format-patch --full-index)`)
+      if ("upstream" in sup || "patches" in sup) errors.push(`${hrel}: support.json lists "versions" now, one per release; repack with open-mods pack`)
+      const versions: { ref?: string; commit?: string; patches?: string[] }[] = Array.isArray(sup.versions) ? sup.versions : []
+      if (versions.length === 0) errors.push(`${hrel}: versions must be a non-empty list`)
+      const refs = versions.map((v) => v.ref)
+      if (new Set(refs).size !== refs.length) errors.push(`${hrel}: more than one version for the same release`)
+      const listed = new Set<string>()
+      for (const v of versions) {
+        const vrel = `${hrel} ${v.ref ?? "(no ref)"}`
+        if (!v.ref) errors.push(`${vrel}: missing ref`)
+        if (!/^[0-9a-f]{40}$/.test(v.commit ?? "")) errors.push(`${vrel}: commit must be a full sha`)
+        if (!Array.isArray(v.patches) || v.patches.length === 0) errors.push(`${vrel}: patches must be a non-empty list`)
+        for (const p of v.patches ?? []) {
+          listed.add(p)
+          // Each version's patches live in a folder named after its release tag.
+          if (!p.startsWith(`${v.ref}/`) || !/\/\d{4}-[A-Za-z0-9._-]+\.patch$/.test(p)) errors.push(`${vrel}: bad patch path "${p}"; patches go in ${v.ref}/`)
+          else if (!existsSync(path.join(dir, h, p))) errors.push(`${vrel}: ${p} does not exist`)
+          else if (/^index [0-9a-f]{1,39}\.\./m.test(readFileSync(path.join(dir, h, p), "utf8")))
+            errors.push(`${vrel}: ${p} has short blob ids; regenerate it with open-mods pack (git format-patch --full-index)`)
+        }
       }
-      const onDisk = existsSync(path.join(dir, h, "patches")) ? readdirSync(path.join(dir, h, "patches")).filter((f) => f.endsWith(".patch")) : []
-      for (const f of onDisk) if (!sup.patches?.includes(`patches/${f}`)) errors.push(`${hrel}: patches/${f} is not listed in support.json`)
+      // Every patch file belongs to a version, so nothing stale is left behind.
+      const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]))
+      for (const f of walk(path.join(dir, h)).map((f) => path.relative(path.join(dir, h), f)))
+        if (f.endsWith(".patch") && !listed.has(f)) errors.push(`${hrel}: ${f} is not listed in support.json`)
       for (const c of sup.conflicts ?? []) if (!/^[a-z0-9-]+\/[a-z0-9-]+$/.test(c)) errors.push(`${hrel}: conflicts entry "${c}" must be owner/mod`)
     }
   }

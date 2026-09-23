@@ -168,6 +168,26 @@ export async function createMod(
   return dir
 }
 
+/** A mod's versions on one harness, newest first, from its support.json. */
+export const versions = (dir: string): { ref: string; commit: string; patches: string[] }[] => JSON.parse(readFileSync(path.join(dir, "support.json"), "utf8")).versions
+
+/**
+ * Adds a version for `tag` with the newest version's patches, as the release
+ * watch does when a new release leaves the mod's lines alone.
+ */
+export async function addVersion(sb: Sandbox, dir: string, tag: string) {
+  const file = path.join(dir, "support.json")
+  const support = JSON.parse(readFileSync(file, "utf8"))
+  const newest = support.versions[0]
+  const commit = (await $`git -C ${sb.harness} rev-parse ${tag}^{commit}`.text()).trim()
+  mkdirSync(path.join(dir, tag), { recursive: true })
+  const patches = newest.patches.map((p: string) => {
+    writeFileSync(path.join(dir, tag, path.basename(p)), readFileSync(path.join(dir, p)))
+    return `${tag}/${path.basename(p)}`
+  })
+  writeFileSync(file, JSON.stringify({ ...support, versions: [{ ref: tag, commit, patches }, ...support.versions] }, null, 2))
+}
+
 /** Replaces line `n` (1-based) of lines.txt. */
 export const setLine = (n: number, text: string) => (dir: string) => {
   const file = path.join(dir, "lines.txt")

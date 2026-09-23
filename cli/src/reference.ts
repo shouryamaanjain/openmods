@@ -58,7 +58,7 @@ export const COMMANDS: Command[] = [
     description: [
       "Which harness: name it with a flag, --opencode or --codex, or --harness <id>; several flags install on several harnesses. Without one, a mod that supports a single harness uses it, and a mod that supports several asks with a selector that lists only the harnesses it supports, and which of them you have. With no terminal to ask at, it prints the flags to choose from.",
       "If you do not have the harness, it says so: the selector marks it as not installed, and a mod for that harness alone gets a notice. It then shows the harness's official installer (for OpenCode, curl -fsSL https://opencode.ai/install | bash) and asks before running it. No leaves everything as it was; with no terminal it prints the command instead. Your stock harness is what `open-mods off` switches back to.",
-      "Clones the harness once (blobless), checks out the release the mods are for, applies each mod's patches in order, builds with the exact toolchain that release pins, copies the build aside, and writes the launcher to ~/.open-mods/bin. The first time, that folder is added to the front of PATH in your shell config, and if a harness installer later adds its own PATH line after it, the open-mods line is moved back to the end so modded builds stay first.",
+      "Picks one release for all your mods on that harness: the one you are on if every mod has a version for it, else the newest release they all have a version for (it says so when that changes your release). Mods that share no release are refused. Then it clones the harness once (blobless), checks out that release, applies each mod's version for it in order, builds with the exact toolchain that release pins, copies the build aside, and writes the launcher to ~/.open-mods/bin. The first time, that folder is added to the front of PATH in your shell config, and if a harness installer later adds its own PATH line after it, the open-mods line is moved back to the end so modded builds stay first.",
       "Mods stack on one checkout. Two mods that change the same lines of the release, or lines right next to each other, cannot be combined: that is worked out from the patches before anything is built, and the install is refused with the mods and lines named. Your current build keeps running. A mod that still fails to apply, or a build that fails, also leaves the previous build in place.",
       "Installing a mod that is already installed reinstalls it. A mod that was switched off comes back on.",
     ],
@@ -125,7 +125,7 @@ export const COMMANDS: Command[] = [
     usage: "open-mods update [harness]",
     summary: "Pull the registry and rebuild if anything you have installed changed.",
     description: [
-      "A rebuild happens only when a mod's patches changed or the release it is for moved forward, which is what the registry's release check does when a mod still applies and typechecks on a new harness release. Otherwise it says the build is already up to date. This is also what the launcher runs when you answer yes to its update prompt.",
+      "Moves you to the newest release that every mod you have on has a version for, using each mod's version for it. The registry's release check adds those versions when a mod still applies and typechecks on a new harness release. A rebuild happens only when that release, or a mod's patches for it, changed; otherwise it says the build is already up to date. This is also what the launcher runs when you answer yes to its update prompt.",
     ],
     flags: [{ flag: "--force", description: "Rebuild even if nothing changed." }],
     examples: [{ command: "open-mods update" }, { command: "open-mods update codex --force" }],
@@ -136,7 +136,7 @@ export const COMMANDS: Command[] = [
     usage: "open-mods check-updates [harness]",
     summary: "What the launcher does once a day: is a newer supported release available?",
     description: [
-      "Pulls the registry, compares each installed mod's release with your build, and writes a note the launcher reads on the next launch. Says whether every installed mod supports the newer release or which mod still lags. Safe to run by hand.",
+      "Pulls the registry, compares the versions of your installed mods with your build, and writes a note the launcher reads on the next launch. If every mod has a version for a newer release, that is the update on offer. If only some do, it names the mods that hold the newer release back. Safe to run by hand.",
     ],
     flags: [{ flag: "--json", description: "The comparison as JSON." }],
     examples: [{ command: "open-mods check-updates opencode --json" }],
@@ -148,7 +148,7 @@ export const COMMANDS: Command[] = [
     short: "open-mods pack <checkout> --name <mod> [--local]",
     summary: "Turn your commits on top of a harness release into a mod folder.",
     description: [
-      "Run it against your clone of the harness. It finds the release tag below your commits, runs git format-patch, and writes the mod as owner/name: a shared mod.json and README under mods/<owner>/<name>, and the harness's own folder, mods/<owner>/<name>/<harness>, with support.json and the patches. Pack again from another harness's clone to add support for that harness to the same mod. The release becomes the mod's version on that harness.",
+      "Run it against your clone of the harness. It finds the release tag below your commits, runs git format-patch, and writes the mod as owner/name: a shared mod.json and README under mods/<owner>/<name>, and the harness's own folder, mods/<owner>/<name>/<harness>, with support.json and the patches. Pack again from another harness's clone to add support for that harness to the same mod. The release becomes a version of the mod on that harness, with its patches in a folder named after the release tag. Packing at another release adds a version and keeps the others; packing at a release it already has needs --force and replaces only that version.",
       "Warns if a patch touches a lockfile, which is usually a build side effect and would make the mod conflict with every other mod that does the same.",
     ],
     flags: [
@@ -158,7 +158,7 @@ export const COMMANDS: Command[] = [
       { flag: "--harness <id>", description: "Which harness, when the clone's remote does not say." },
       { flag: "--base <tag>", description: "The release tag to diff against, when there are several below HEAD." },
       { flag: "--out <dir>", description: "Write somewhere else entirely." },
-      { flag: "--force", description: "Overwrite an existing mod folder." },
+      { flag: "--force", description: "Replace the version for this release if the mod already has one." },
     ],
     examples: [
       { command: "open-mods pack ../opencode --name my-mod --local", note: "try it: open-mods install you/my-mod --opencode" },
@@ -176,7 +176,8 @@ export const COMMANDS: Command[] = [
       "With --harness and no mod, it builds the stock harness: what the manual harness build workflow runs to prove a harness definition, or to confirm it after a release changed the build recipe. Exits non-zero on any failure.",
     ],
     flags: [
-      { flag: "--ref <tag>", description: "Release to test against; defaults to the one the mod is for." },
+      { flag: "--ref <tag>", description: "Release to test against; defaults to the one the version is for." },
+      { flag: "--at <tag>", description: "Check the mod's version for this release instead of its newest." },
       { flag: "--typecheck", description: "Run the harness's typecheck after applying." },
       { flag: "--build", description: "Run the harness's full build after applying." },
       { flag: "--harness <id>", description: "Check the stock harness with no mod." },

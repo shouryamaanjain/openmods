@@ -47,18 +47,21 @@ mods/<owner>/<mod>/
   mod.json            owner, name, description, license: shared by every harness
   README.md
   opencode/
-    support.json      the OpenCode release it supports (its version) and its patches
-    patches/0001-…    git format-patch output, applied in order with git am
+    support.json      its versions on OpenCode: one per release, newest first
+    v1.18.32/0001-…   the patches for OpenCode 1.18.32, applied in order with git am
+    v1.18.31/0001-…   the patches for 1.18.31, kept after the mod moved on
   codex/
-    support.json      the same for Codex, against a Codex release
-    patches/0001-…
+    support.json      the same for Codex, against Codex releases
+    rust-v0.155.1/0001-…
 ```
+
+A mod's version is the harness release it works on, and it keeps a version for every release it has worked on. Mods move to new releases at different speeds. Keeping the old versions means you can still build a set of mods together at a release they all have.
 
 `open-mods install` does the mechanical part:
 
 1. Blobless clone of the harness into `~/.open-mods/harnesses/<id>/src`.
-2. Check out the commit the mods were written against.
-3. `git am -3` each mod's patches, in the order you listed them.
+2. Pick one release for all the mods on that harness: the one you are on, if every mod has a version for it, else the newest release they all have a version for. Mods that share no release are refused, with the releases each one has. Then check out that release.
+3. `git am -3` each mod's patches for that release, in the order you listed them.
 4. Run the harness's own install and build commands, with the exact toolchain version that release pins. Building OpenCode 1.18.31 with Bun 1.4 instead of its pinned 1.3.14 produces a binary that logs errors on every launch, so this is not optional.
 5. Write the launcher at `~/.open-mods/bin/<binary>` and, the first time, add that folder to the front of PATH in your shell config. The build is stamped, so `opencode --version` reports the release plus the mods, e.g. `1.18.31+vim-keys`.
 
@@ -75,7 +78,7 @@ A mod is "for" one harness release, and that release is the mod's version. Harne
 1. A job runs every hour and notices when a harness publishes a new release.
 2. The lines our build recipe depends on (the harness's `recipe` list: its build script, its toolchain pin, and so on) are compared between the last release it was checked at and the new one. If any changed, every mod for that harness is held where it is and one issue asks a person to run the manual **harness build** workflow; a successful build lifts the hold. CI never builds a harness on its own.
 3. Otherwise every mod for that harness is applied to the new release and typechecked, one job per mod. The apply is a three-way merge, which fails exactly when the release changed the mod's own lines. The typecheck is the compiler's front half: it verifies every name, type and signature the mod relies on, in minutes, without producing a binary, and only for the packages the mod touches.
-4. A mod that passes gets its release moved forward in that harness's `support.json`, and its patches are saved as they apply to the new release. The mod's code does not change, but its patches now match the release it claims, so installing it needs no merge and the next release is compared against this one.
+4. A mod that passes gets a new version for the new release in that harness's `support.json`, with its patches saved as they apply there. The mod's code does not change, but the new version's patches match the new release, so installing it needs no merge and the next release is compared against it. Its older versions stay.
 5. A mod that fails keeps its current release and gets a `status.json` saying which release it does not support. The recipe check's result is kept in `status/<harness>.json`. The listing shows it in yellow, and the bot opens an issue that mentions the mod's maintainers with the error and the steps to rebase.
 
 Compiled dependencies are cached between runs, so a check starts from warm.
@@ -87,7 +90,7 @@ OpenCode v1.19.0 is out and all your mods support it (tetris, vim-keys). You are
 Update now? It rebuilds OpenCode, which takes a few minutes. [y/N]
 ```
 
-`y` rebuilds and launches the new build. Anything else launches your current build and asks again tomorrow. `open-mods update` does the same rebuild on demand, and only rebuilds when a mod's patches or supported release actually changed. If one of your mods does not support the new release yet, it says so instead and you stay where you are. It never rebuilds on its own, never asks when `opencode` is not at a terminal, and `OPEN_MODS_NO_PROMPT=1` turns the question off.
+`y` rebuilds and launches the new build. Anything else launches your current build and asks again tomorrow. `open-mods update` does the same rebuild on demand: it moves you to the newest release every mod you have on has a version for, and only rebuilds when that release or a mod's patches for it changed. If one of your mods has no version for a newer release yet, the launcher says which one and you stay where you are. Nothing else moves you to another release, except installing a mod that has no version for the one you are on; then the CLI builds the newest release all your mods share and says so. It never rebuilds on its own, never asks when `opencode` is not at a terminal, and `OPEN_MODS_NO_PROMPT=1` turns the question off.
 
 ## The site
 
