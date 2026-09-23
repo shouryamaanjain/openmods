@@ -4,7 +4,7 @@
 // script that prints a greeting, so a mod is a commit that changes the
 // greeting and "does it work" is one line of output.
 //
-// Every test file gets its own sandbox: HOME, OPEN_MODS_HOME and the
+// Every test file gets its own sandbox: HOME, OPENMODS_HOME and the
 // registry all live under a temp folder, and the CLI runs as a subprocess,
 // so nothing on the machine is read or written.
 import { $ } from "bun"
@@ -19,7 +19,7 @@ export const SITE = path.resolve(import.meta.dir, "../../script/site.ts")
 export type Sandbox = ReturnType<typeof sandbox>
 
 export function sandbox(name: string) {
-  const T = path.join(tmpdir(), `open-mods-test-${name}-${process.pid}`)
+  const T = path.join(tmpdir(), `openmods-test-${name}-${process.pid}`)
   rmSync(T, { recursive: true, force: true })
   const dirs = {
     T,
@@ -46,10 +46,10 @@ export async function run(sb: Sandbox, opts: { answer?: string; env?: Record<str
     env: {
       ...process.env,
       HOME: sb.home,
-      OPEN_MODS_HOME: sb.om,
-      OPEN_MODS_NO_CHECK: "1",
+      OPENMODS_HOME: sb.om,
+      OPENMODS_NO_CHECK: "1",
       PATH: process.env.PATH ?? "",
-      ...(opts.answer !== undefined ? { OPEN_MODS_ASSUME_TTY: "1" } : {}),
+      ...(opts.answer !== undefined ? { OPENMODS_ASSUME_TTY: "1" } : {}),
       ...opts.env,
     },
     stdin: opts.answer !== undefined ? new TextEncoder().encode(opts.answer) : "ignore",
@@ -137,7 +137,7 @@ export async function release(sb: Sandbox, tag: string, change: (dir: string) =>
 
 /**
  * Makes a mod from a change on top of a release and packs it into the
- * registry (or ~/.open-mods/local with `local`) as t/<name>, for the fake
+ * registry (or ~/.openmods/local with `local`) as t/<name>, for the fake
  * harness unless `harness` says otherwise. Returns the harness folder,
  * mods/t/<name>/<harness>.
  */
@@ -204,5 +204,5 @@ export const addFile = (name: string, text: string) => (dir: string) => writeFil
 export async function greeting(sb: Sandbox) {
   const launcher = path.join(sb.om, "bin", "greet")
   if (!existsSync(launcher)) return null
-  return (await $`sh ${launcher}`.env({ OPEN_MODS_NO_CHECK: "1", OPEN_MODS_NO_PROMPT: "1" }).text()).trim()
+  return (await $`sh ${launcher}`.env({ OPENMODS_NO_CHECK: "1", OPENMODS_NO_PROMPT: "1" }).text()).trim()
 }

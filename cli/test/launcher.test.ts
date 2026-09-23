@@ -12,7 +12,7 @@ const launcher = () => path.join(sb.om, "bin", "greet")
 
 async function launch(answer: string) {
   const p = Bun.spawn(["sh", launcher()], {
-    env: { ...process.env, HOME: sb.home, OPEN_MODS_HOME: sb.om, OPEN_MODS_REGISTRY: sb.reg, OPEN_MODS_NO_CHECK: "1", OPEN_MODS_ASSUME_TTY: "1" },
+    env: { ...process.env, HOME: sb.home, OPENMODS_HOME: sb.om, OPENMODS_REGISTRY: sb.reg, OPENMODS_NO_CHECK: "1", OPENMODS_ASSUME_TTY: "1" },
     stdin: new TextEncoder().encode(answer),
     stdout: "pipe",
     stderr: "pipe",

@@ -66,7 +66,7 @@ describe("updates", () => {
     await addVersion(sb, dirOf("notes"), "v1.1.0")
     const note = await cli(sb, "check-updates", "fake", "--json")
     expect(JSON.parse(note.out)).toMatchObject({ available: "1.1.0", allSupport: true, blocked: [], moveTo: "1.1.0", ask: true })
-    expect((await cli(sb, "status")).out).toContain("update  Fake 1.1.0 is out, and all your mods support it. `open-mods update fake` does it.")
+    expect((await cli(sb, "status")).out).toContain("update  Fake 1.1.0 is out, and all your mods support it. `openmods update fake` does it.")
     const r = await cli(sb, "update", "fake")
     expect(r.code, r.all).toBe(0)
     expect(r.out).toContain("now runs Fake 1.1.0 + t/friendly + t/notes")

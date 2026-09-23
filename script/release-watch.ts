@@ -15,7 +15,7 @@
 // release it was checked at and the new one. If any changed, the harness is
 // held: no mod is checked or bumped, and one issue asks a person to run the
 // manual harness build. If none changed, `plan` lists the mods not yet on the
-// new release, CI applies and typechecks each one (`open-mods check
+// new release, CI applies and typechecks each one (`openmods check
 // --typecheck --json`), and `apply` bumps the ones that pass and marks the
 // ones that fail, which the site shows in yellow.
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
@@ -99,7 +99,7 @@ const statusFile = (harness: string) => path.join(root, "status", `${harness}.js
 // almost never. Only trees and the few watched files are fetched.
 async function recipeChanges(h: { id: string; repo: string; recipe?: RecipeEntry[] }, from: string, to: string): Promise<string[]> {
   if (!h.recipe?.length || from === to) return []
-  const dir = path.join((process.env.RUNNER_TEMP ?? "/tmp"), `open-mods-recipe-${h.id}-${process.pid}`)
+  const dir = path.join((process.env.RUNNER_TEMP ?? "/tmp"), `openmods-recipe-${h.id}-${process.pid}`)
   rmSync(dir, { recursive: true, force: true })
   mkdirSync(dir, { recursive: true })
   await $`git -C ${dir} init -q`.quiet()
@@ -185,8 +185,8 @@ async function issueFor(id: string, harnessId: string, meta: any, support: any, 
     "```sh",
     `git clone ${harness.repo} && cd ${path.basename(harness.repo)}`,
     `git checkout ${ref}`,
-    `git am -3 ../open-mods/mods/${id}/${harnessId}/${newestOf(support).ref}/*.patch   # resolve conflicts if any`,
-    `open-mods pack . --name ${id.split("/")[1]} --owner ${id.split("/")[0]}`,
+    `git am -3 ../openmods/mods/${id}/${harnessId}/${newestOf(support).ref}/*.patch   # resolve conflicts if any`,
+    `openmods pack . --name ${id.split("/")[1]} --owner ${id.split("/")[0]}`,
     "```",
     "",
     "What CI saw:",

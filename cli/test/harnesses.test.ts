@@ -10,7 +10,7 @@ import path from "node:path"
 import { cli, createHarness, createMod, greeting, registerHarness, run, sandbox, setGreeting, stockInstaller } from "./harness"
 
 const sb = sandbox("harnesses")
-const hello = async () => (await $`sh ${path.join(sb.om, "bin", "hello")}`.env({ OPEN_MODS_NO_CHECK: "1", OPEN_MODS_NO_PROMPT: "1" }).text()).trim()
+const hello = async () => (await $`sh ${path.join(sb.om, "bin", "hello")}`.env({ OPENMODS_NO_CHECK: "1", OPENMODS_NO_PROMPT: "1" }).text()).trim()
 const otherInstalled = () => existsSync(path.join(sb.home, ".hello", "bin", "hello"))
 
 beforeAll(async () => {
@@ -86,20 +86,20 @@ describe("a mod for two harnesses", () => {
 })
 
 describe("PATH", () => {
-  test("a harness installer's later PATH line is moved behind open-mods", async () => {
+  test("a harness installer's later PATH line is moved behind openmods", async () => {
     const rc = path.join(sb.home, ".zshrc")
-    const ours = `\n# open-mods: modded builds go first; \`open-mods off\` steps aside\nexport PATH="${sb.om}/bin:$PATH"  # open-mods\n`
+    const ours = `\n# openmods: modded builds go first; \`openmods off\` steps aside\nexport PATH="${sb.om}/bin:$PATH"  # openmods\n`
     writeFileSync(rc, `alias ll='ls -l'\n${ours}\nexport PATH=$HOME/.hello/bin:$PATH\n`)
     const r = await run(sb, { path: true, env: { SHELL: "/bin/zsh" } }, "on")
     expect(r.code, r.all).toBe(0)
-    expect(r.out).toContain("Moved the open-mods line")
+    expect(r.out).toContain("Moved the openmods line")
     const lines = readFileSync(rc, "utf8").trim().split("\n")
-    expect(lines.at(-1)).toContain("# open-mods")
-    expect(lines.filter((l) => l.includes("# open-mods")).length).toBe(2)
+    expect(lines.at(-1)).toContain("# openmods")
+    expect(lines.filter((l) => l.includes("# openmods")).length).toBe(2)
     expect(lines).toContain("export PATH=$HOME/.hello/bin:$PATH")
     expect(lines[0]).toBe("alias ll='ls -l'")
     const again = await run(sb, { path: true, env: { SHELL: "/bin/zsh" } }, "on")
-    expect(again.out).not.toContain("Moved the open-mods line")
+    expect(again.out).not.toContain("Moved the openmods line")
   })
 })
 
@@ -107,7 +107,7 @@ describe("mistakes", () => {
   test("the old harness/mod form points to the new one", async () => {
     const r = await cli(sb, "install", "fake/solo")
     expect(r.code).toBe(1)
-    expect(r.err).toContain("open-mods install t/solo --fake")
+    expect(r.err).toContain("openmods install t/solo --fake")
   })
   test("a misspelled harness flag is refused", async () => {
     const r = await cli(sb, "install", "t/both", "--othr")

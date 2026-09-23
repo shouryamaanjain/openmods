@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/shouryamaanjain/open-mods/main/schema/support.schema.json",
+  "$id": "https://raw.githubusercontent.com/shouryamaanjain/openmods/main/schema/support.schema.json",
   "title": "OpenMods support for one harness",
   "description": "mods/<owner>/<name>/<harness>/support.json: the mod's versions on this harness, one per harness release it has worked on, each with its patches.",
   "type": "object",
@@ -46,13 +46,13 @@
           "update": {
             "type": "integer",
             "minimum": 1,
-            "description": "Which update of the mod's code this version holds. open-mods pack sets it: one more than the latest when the changed lines differ, the same when only rebased onto another release. CI keeps it when it adds a version for a new release."
+            "description": "Which update of the mod's code this version holds. openmods pack sets it: one more than the latest when the changed lines differ, the same when only rebased onto another release. CI keeps it when it adds a version for a new release."
           },
           "note": {
             "type": "string",
             "minLength": 1,
             "maxLength": 200,
-            "description": "One line on what this update changed, from open-mods pack --note. Users see it when they are offered the update."
+            "description": "One line on what this update changed, from openmods pack --note. Users see it when they are offered the update."
           }
         }
       }

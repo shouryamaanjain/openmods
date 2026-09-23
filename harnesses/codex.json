@@ -29,7 +29,7 @@
   ],
   "install": "true",
   "typecheck": "cd codex-rs && cargo check -p codex-cli --bin codex",
-  "build": "cd codex-rs && sed -i.open-mods.bak '1,/^version = \"/s/^version = \"[^\"]*\"/version = \"'\"${OPEN_MODS_VERSION}+${OPEN_MODS_MODS}\"'\"/' Cargo.toml && rm -f Cargo.toml.open-mods.bak && CARGO_PROFILE_RELEASE_LTO=off CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 cargo build --release -p codex-cli --bin codex",
+  "build": "cd codex-rs && sed -i.openmods.bak '1,/^version = \"/s/^version = \"[^\"]*\"/version = \"'\"${OPENMODS_VERSION}+${OPENMODS_MODS}\"'\"/' Cargo.toml && rm -f Cargo.toml.openmods.bak && CARGO_PROFILE_RELEASE_LTO=off CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 cargo build --release -p codex-cli --bin codex",
   "artifact": "codex-rs/target/release/codex",
   "recipe": [
     {

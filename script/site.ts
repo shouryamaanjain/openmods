@@ -5,7 +5,7 @@
 //
 //   bun script/site.ts [--registry <dir>] [--out <dir>] [--offline] [--local]
 //
-// --local also lists the unpublished mods under ~/.open-mods/local, marked as
+// --local also lists the unpublished mods under ~/.openmods/local, marked as
 // such, for previewing the site with content that is not in the registry.
 // SITE_URL=https://openmods.dev sets canonical and Open Graph URLs.
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
@@ -22,7 +22,7 @@ const flag = (k: string) => {
 }
 const root = path.resolve(flag("registry") ?? path.join(import.meta.dir, ".."))
 const out = path.resolve(flag("out") ?? path.join(root, "site"))
-const REPO = process.env.SITE_REPO ?? "shouryamaanjain/open-mods"
+const REPO = process.env.SITE_REPO ?? "shouryamaanjain/openmods"
 const SITE_NAME = "OpenMods"
 const SITE_URL = (process.env.SITE_URL ?? "").replace(/\/$/, "")
 
@@ -148,7 +148,7 @@ function modsIn(base: string, local: boolean): Mod[] {
 
 const published = modsIn(path.join(root, "mods"), false)
 const mods: Mod[] = args.includes("--local")
-  ? [...published, ...modsIn(path.join(process.env.OPEN_MODS_HOME ?? path.join(homedir(), ".open-mods"), "local"), true).filter((l) => !published.some((p) => p.id === l.id && p.harness === l.harness))]
+  ? [...published, ...modsIn(path.join(process.env.OPENMODS_HOME ?? path.join(homedir(), ".openmods"), "local"), true).filter((l) => !published.some((p) => p.id === l.id && p.harness === l.harness))]
   : published
 
 // Which mods cannot be installed together with which, per harness: the same
@@ -300,7 +300,7 @@ ${SITE_URL ? `<link rel="canonical" href="${SITE_URL}/${opts.path ?? ""}">\n<met
 </head>
 <body>
 <header><div class="wrap">
-<a class="brand" href="${link("")}">open-mods</a>
+<a class="brand" href="${link("")}">openmods</a>
 <nav>
 <a href="${link("")}#mods"${on("mods")}>Mods</a>
 <a href="${link("harnesses/")}"${on("harnesses")}>Harnesses</a>
@@ -358,7 +358,7 @@ function home() {
     .map(
       (e) => `<tr class="mod" data-harness="${e.variants.map((m) => m.harness).join(" ")}" data-text="${esc(`${e.id} ${e.description} ${(e.tags ?? []).join(" ")} ${e.variants.map((m) => m.harness).join(" ")}`.toLowerCase())}">
 <td class="name"><a href="${modUrl(e, 0)}">${esc(e.id)}</a><div class="desc">${esc(e.description)}</div></td>
-<td class="harnesses">${harnessBadges(e)}${e.local ? ' <span class="badge local" title="Unpublished; from ~/.open-mods/local on this machine">local</span>' : ""}</td>
+<td class="harnesses">${harnessBadges(e)}${e.local ? ' <span class="badge local" title="Unpublished; from ~/.openmods/local on this machine">local</span>' : ""}</td>
 </tr>`,
     )
     .join("\n")
@@ -369,7 +369,7 @@ function home() {
 <h1>Source-level mods for open-source coding agents.</h1>
 <p>A mod is a set of patches to a harness like OpenCode or Codex, made against one of its releases. Install one and your <code>opencode</code> becomes that release with the mod built in. Your stock install is never touched, and you can switch back any time.</p>
 <div class="cmd"><span class="dollar">$</span><span>curl -fsSL https://openmods.dev/install.sh | sh</span></div>
-<p style="margin:10px 0 0;color:var(--muted);font-size:14px">Installs the <code>open-mods</code> command. Then <code>open-mods install &lt;owner&gt;/&lt;mod&gt;</code>, and pick the harness. <a href="install.sh">Read the script first</a> if you like; it is short.</p>
+<p style="margin:10px 0 0;color:var(--muted);font-size:14px">Installs the <code>openmods</code> command. Then <code>openmods install &lt;owner&gt;/&lt;mod&gt;</code>, and pick the harness. <a href="install.sh">Read the script first</a> if you like; it is short.</p>
 <div class="chips">
 ${harnesses.map((h) => `<a class="chip" href="harnesses/${h.id}/">${esc(h.name)} · ${esc(rel(h.latest ?? ""))}</a>`).join("")}
 ${PLANNED.map((p) => `<span class="chip dim" title="Planned">${esc(p.name)} · planned</span>`).join("")}
@@ -384,7 +384,7 @@ ${
     : `<div class="empty">No mods published yet. <a href="make-a-mod/">Make the first one.</a></div>`
 }
 <h2>How it works</h2>
-<div class="md"><p>A mod is named <code>owner/mod</code> and supports one or more harnesses, each with its own patches made against one of that harness's releases. <code>open-mods install</code> clones that release, applies the patches, builds it with the exact toolchain the release pins, and puts the result first on your PATH. <code>open-mods off</code> steps aside so the stock binary runs again.</p>
+<div class="md"><p>A mod is named <code>owner/mod</code> and supports one or more harnesses, each with its own patches made against one of that harness's releases. <code>openmods install</code> clones that release, applies the patches, builds it with the exact toolchain the release pins, and puts the result first on your PATH. <code>openmods off</code> steps aside so the stock binary runs again.</p>
 <p>When a harness ships a new release, CI applies and typechecks every mod for it. A mod that still works has its release moved forward here automatically. A mod that does not stays on its last working release, shows as <span class="badge behind">behind</span>, and its maintainers get an issue with the error and the steps to rebase.</p></div>
 </section>`
   return layout({ title: `${SITE_NAME} · source-level mods for open-source coding agents`, depth: 0, nav: "mods", body, js: true, path: "" })
@@ -395,7 +395,7 @@ function clash(m: Mod) {
   const list = clashes.get(m) ?? []
   if (!list.length) return ""
   const h = harnessOf(m.harness)
-  return `<div class="notice clash"><b>Cannot be installed together with</b> these ${esc(h.name)} mods; open-mods refuses the combination:<ul>${list
+  return `<div class="notice clash"><b>Cannot be installed together with</b> these ${esc(h.name)} mods; openmods refuses the combination:<ul>${list
     .map((c) => `<li><a href="../../../mods/${esc(c.mod.owner)}/${esc(c.mod.name)}/#${esc(m.harness)}">${esc(c.mod.id)}</a>: ${esc(c.why)}</li>`)
     .join("")}</ul></div>`
 }
@@ -414,7 +414,7 @@ function modPage(e: Entry) {
       .join("")
     return `<section class="variant" id="${m.harness}">
 <h2>${esc(h.name)} ${badge(m)}</h2>
-<div class="cmd block"><span class="dollar">$</span><span>open-mods install ${esc(e.id)} --${esc(m.harness)}</span></div>
+<div class="cmd block"><span class="dollar">$</span><span>openmods install ${esc(e.id)} --${esc(m.harness)}</span></div>
 <div class="stats">
 <div class="stat"><b>${esc(rel(m.upstream.ref))}</b><span>${esc(h.name)} release</span></div>
 <div class="stat"><b>${m.files.length}</b><span>file${m.files.length === 1 ? "" : "s"} touched</span></div>
@@ -423,7 +423,7 @@ function modPage(e: Entry) {
 <div class="stat"><b>${m.versions[0]!.update ?? 1}</b><span>update</span></div>
 </div>
 ${m.versions[0]!.note ? `<p class="releases">Update ${m.versions[0]!.update ?? 1}: ${esc(m.versions[0]!.note!)}</p>` : ""}
-${m.versions.length > 1 ? `<p class="releases">Has a version for ${esc(h.name)} ${m.versions.map((v) => `${esc(rel(v.ref))} (update ${v.update ?? 1})`).join(", ")}. open-mods builds the newest one all your mods share; the files and diff below are for ${esc(rel(m.upstream.ref))}.</p>` : ""}
+${m.versions.length > 1 ? `<p class="releases">Has a version for ${esc(h.name)} ${m.versions.map((v) => `${esc(rel(v.ref))} (update ${v.update ?? 1})`).join(", ")}. openmods builds the newest one all your mods share; the files and diff below are for ${esc(rel(m.upstream.ref))}.</p>` : ""}
 ${notice}
 ${clash(m)}
 <div class="files">${files}</div>
@@ -436,8 +436,8 @@ ${clash(m)}
 <div class="crumbs"><a href="../../../">mods</a> / ${esc(e.owner)} / ${esc(e.name)}</div>
 <h1 class="title">${esc(e.id)}</h1>
 <p class="lead">${esc(e.description)}</p>
-<div class="cmd block"><span class="dollar">$</span><span>open-mods install ${esc(e.id)}</span></div>
-<p style="color:var(--muted);font-size:14px;margin-top:-4px">Supports ${e.variants.map((m) => `<a href="#${m.harness}">${esc(harnessOf(m.harness).name)}</a>`).join(" and ")}. ${e.variants.length > 1 ? "Without a harness flag, open-mods asks which one." : ""}</p>
+<div class="cmd block"><span class="dollar">$</span><span>openmods install ${esc(e.id)}</span></div>
+<p style="color:var(--muted);font-size:14px;margin-top:-4px">Supports ${e.variants.map((m) => `<a href="#${m.harness}">${esc(harnessOf(m.harness).name)}</a>`).join(" and ")}. ${e.variants.length > 1 ? "Without a harness flag, openmods asks which one." : ""}</p>
 <article class="md">${marked.parse(e.readme.replace(/^# .*\n/, "")) as string}</article>
 ${e.variants.map(section).join("\n")}
 </main>
@@ -456,9 +456,9 @@ ${e.variants.map((m) => `<span>${esc(harnessOf(m.harness).name)}</span><div>${ba
 <li><a href="${issues}">Issues for this mod</a></li>
 </ul></section>
 <section><h3>Switch</h3><ul>
-<li><code>open-mods off</code> stock harness again</li>
-<li><code>open-mods on</code> mods back</li>
-<li><code>open-mods uninstall ${esc(e.id)}</code></li>
+<li><code>openmods off</code> stock harness again</li>
+<li><code>openmods on</code> mods back</li>
+<li><code>openmods uninstall ${esc(e.id)}</code></li>
 </ul></section>
 </aside>
 </div>`
@@ -487,7 +487,7 @@ function harnessPage(h: Harness) {
 <div class="crumbs"><a href="../">harnesses</a> / ${esc(h.id)}</div>
 <h1 class="title">${esc(h.name)}</h1>
 <p class="lead">${esc(h.language ?? "")}. Latest release <b>${esc(rel(h.latest ?? ""))}</b> (tag <code>${esc(h.latest ?? "")}</code>).</p>
-<div class="cmd block"><span class="dollar">$</span><span>open-mods install &lt;owner&gt;/&lt;mod&gt; --${esc(h.id)}</span></div>
+<div class="cmd block"><span class="dollar">$</span><span>openmods install &lt;owner&gt;/&lt;mod&gt; --${esc(h.id)}</span></div>
 <h2>Mods for ${esc(h.name)}</h2>
 ${list.length ? `<div class="table"><table><tbody>${rows}</tbody></table></div>` : `<div class="empty">No mods yet. <a href="../../make-a-mod/">Make the first one.</a></div>`}
 </main><aside>
@@ -517,10 +517,10 @@ ${c.examples?.length ? `<pre class="examples">${c.examples.map((e) => `<span cla
   const kv = (title: string, id: string, list: typeof GLOBAL_FLAGS) =>
     `<h2 id="${id}">${esc(title)}</h2><div class="flags">${list.map((f) => `<div><code>${esc(f.flag)}</code><span>${esc(f.description)}</span></div>`).join("")}</div>`
   const body = `<div class="wrap page"><main class="cli">
-<h1 class="title">open-mods</h1>
+<h1 class="title">openmods</h1>
 <p class="lead">${esc(INTRO)}</p>
 <div class="cmd block"><span class="dollar">$</span><span>curl -fsSL https://openmods.dev/install.sh | sh</span></div>
-<p style="color:var(--muted);font-size:14px">Every command also answers <code>open-mods help &lt;command&gt;</code>. This page and that text come from the same source.</p>
+<p style="color:var(--muted);font-size:14px">Every command also answers <code>openmods help &lt;command&gt;</code>. This page and that text come from the same source.</p>
 ${group("Commands", "users")}
 ${group("For mod authors", "authors")}
 ${kv("Options", "options", GLOBAL_FLAGS)}
@@ -529,14 +529,14 @@ ${kv("Files", "files", FILES)}
 </main>
 <aside><section><h3>On this page</h3><ul>${COMMANDS.map((c) => `<li><a href="#${c.name}"><code>${esc(c.name)}</code></a></li>`).join("")}<li><a href="#options">options</a></li><li><a href="#environment">environment</a></li><li><a href="#files">files</a></li></ul></section></aside>
 </div>`
-  return layout({ title: `CLI reference · ${SITE_NAME}`, depth: 1, nav: "cli", body, path: "cli/", description: "Every open-mods command, option, environment variable and file." })
+  return layout({ title: `CLI reference · ${SITE_NAME}`, depth: 1, nav: "cli", body, path: "cli/", description: "Every openmods command, option, environment variable and file." })
 }
 
 function makePage() {
   const md = readFileSync(path.join(root, "CONTRIBUTING.md"), "utf8")
   const html = (marked.parse(md, { renderer: headingIds() }) as string).replace(/<h1>.*?<\/h1>/, "")
   const body = `<div class="wrap page"><main><h1 class="title">Make a mod</h1><p class="lead">Clone the harness, change what you want, commit, pack. The registry does the rest.</p><article class="md">${html}</article></main>
-<aside><section><h3>Commands</h3><ul><li><code>open-mods pack . --name my-mod --local</code></li><li><code>open-mods install you/my-mod --opencode</code></li><li><code>open-mods check mods/you/my-mod/opencode --build</code></li></ul></section>
+<aside><section><h3>Commands</h3><ul><li><code>openmods pack . --name my-mod --local</code></li><li><code>openmods install you/my-mod --opencode</code></li><li><code>openmods check mods/you/my-mod/opencode --build</code></li></ul></section>
 <section><h3>Links</h3><ul><li><a href="https://github.com/${REPO}/blob/main/CONTRIBUTING.md">This guide on GitHub</a></li><li><a href="https://github.com/${REPO}/blob/main/schema/mod.schema.json">mod.json schema</a></li></ul></section></aside></div>`
   return layout({ title: `Make a mod · ${SITE_NAME}`, depth: 1, nav: "make", body, path: "make-a-mod/" })
 }

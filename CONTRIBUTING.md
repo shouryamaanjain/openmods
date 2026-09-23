@@ -9,7 +9,7 @@ git checkout v1.18.31
 
 Pick the latest release tag, not the default branch. Mods are pinned to releases because that is what users have installed and what CI can reproduce.
 
-Use the Bun version the release pins in its `package.json` `packageManager` field; `open-mods` does this for you when it builds, but for your own dev runs install it with `curl -fsSL https://bun.sh/install | bash -s bun-v1.3.14`. Change whatever you want. Commit as you go; each commit becomes one patch, so keep them meaningful (`feat(tui): add vim keys to the session list`). Keep the harness's own tests and typecheck passing:
+Use the Bun version the release pins in its `package.json` `packageManager` field; `openmods` does this for you when it builds, but for your own dev runs install it with `curl -fsSL https://bun.sh/install | bash -s bun-v1.3.14`. Change whatever you want. Commit as you go; each commit becomes one patch, so keep them meaningful (`feat(tui): add vim keys to the session list`). Keep the harness's own tests and typecheck passing:
 
 ```sh
 cd packages/tui && bun run typecheck
@@ -20,15 +20,15 @@ cd packages/tui && bun run typecheck
 From your checkout of this registry:
 
 ```sh
-open-mods pack ../opencode --name my-mod --local   # try it: open-mods install <you>/my-mod --opencode
-open-mods pack ../opencode --name my-mod           # ready to publish
+openmods pack ../opencode --name my-mod --local   # try it: openmods install <you>/my-mod --opencode
+openmods pack ../opencode --name my-mod           # ready to publish
 ```
 
 A mod is named `<owner>/<name>`, where the owner is your GitHub handle. `pack` reads it from `git config github.user`, else from the GitHub CLI; pass `--owner` to set it.
 
-`--local` writes the mod under `~/.open-mods/local`, where it is installable but not part of the registry. Without it, `pack` finds the release tag below your commits, runs `git format-patch`, and writes `mods/<owner>/my-mod/` with a `mod.json`, a README stub, and an `opencode/` folder holding `support.json` and a folder of patches named after the release, such as `v1.18.31/`. Fill in the description, tags, and license. Describe what the mod changes and why in the README; that page is what people read before they build it.
+`--local` writes the mod under `~/.openmods/local`, where it is installable but not part of the registry. Without it, `pack` finds the release tag below your commits, runs `git format-patch`, and writes `mods/<owner>/my-mod/` with a `mod.json`, a README stub, and an `opencode/` folder holding `support.json` and a folder of patches named after the release, such as `v1.18.31/`. Fill in the description, tags, and license. Describe what the mod changes and why in the README; that page is what people read before they build it.
 
-The same mod can support more than one harness. Make the change in a Codex checkout too and run `open-mods pack ../codex --name my-mod`: it adds `codex/` next to `opencode/` and keeps the shared files as you edited them. Users pick the harness with `--opencode` or `--codex`, or from a list when they leave the flag out.
+The same mod can support more than one harness. Make the change in a Codex checkout too and run `openmods pack ../codex --name my-mod`: it adds `codex/` next to `opencode/` and keeps the shared files as you edited them. Users pick the harness with `--opencode` or `--codex`, or from a list when they leave the flag out.
 
 `mod.json` fields, shared by every harness:
 
@@ -51,7 +51,7 @@ The same mod can support more than one harness. Make the change in a Codex check
 ## 3. Check it
 
 ```sh
-open-mods check mods/<you>/my-mod/opencode --build
+openmods check mods/<you>/my-mod/opencode --build
 ```
 
 This clones the harness into a temp directory, applies your patches at the pinned commit, and builds. Run it before opening a PR: CI does not build harnesses, it runs the quick version, `--typecheck`, on every pull request and against each new harness release.
@@ -65,7 +65,7 @@ A mod changes the harness itself. That is the whole point: it reaches what plugi
 Reviewers look for:
 
 - Patches that apply at the pinned commit and typecheck in CI, and that the author has built.
-- A clear description of every file touched. `open-mods info` prints the list.
+- A clear description of every file touched. `openmods info` prints the list.
 - No network calls, telemetry, or credential access that the README does not mention.
 - A license compatible with the harness.
 
@@ -74,13 +74,13 @@ Reviewers look for:
 ```sh
 cd ../opencode
 git fetch --tags && git checkout v1.19.0
-git am -3 ../open-mods/mods/<you>/my-mod/opencode/v1.18.31/*.patch   # the newest version; fix conflicts if any
-open-mods pack . --name my-mod
+git am -3 ../openmods/mods/<you>/my-mod/opencode/v1.18.31/*.patch   # the newest version; fix conflicts if any
+openmods pack . --name my-mod
 ```
 
 `pack` adds a version for 1.19.0 and keeps the older ones. If the code is the same and only rebased, it stays the same update; if you changed the code, it becomes the next update. Open a PR. Mods have no version number of their own: a mod is "for OpenCode 1.19.0", and CI adds that version automatically when the newest one still applies and typechecks on a new release. You only need to do this by hand when CI opens an issue saying the mod no longer supports a release.
 
-To ship an update, change your commits and pack again, with `--force` if that release already has a version, and say what changed with `--note`. `pack` numbers the update itself: one more than the latest when the changed lines differ, the same number when they do not. Users of your mod are asked once whether to rebuild with it, and see your note. `open-mods check <mod-folder> --at <tag>` checks an older version.
+To ship an update, change your commits and pack again, with `--force` if that release already has a version, and say what changed with `--note`. `pack` numbers the update itself: one more than the latest when the changed lines differ, the same number when they do not. Users of your mod are asked once whether to rebuild with it, and see your note. `openmods check <mod-folder> --at <tag>` checks an older version.
 
 ## Adding a harness
 

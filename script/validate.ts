@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // Registry lint: every mod.json and harness json matches its schema-level
 // invariants, every listed patch exists, every commit is 40 hex chars, and
-// names match folders. Runs in CI on every PR; `open-mods check` does the
+// names match folders. Runs in CI on every PR; `openmods check` does the
 // expensive apply-and-build step per mod.
 import { existsSync, readdirSync, readFileSync } from "node:fs"
 import path from "node:path"
@@ -65,7 +65,7 @@ for (const owner of dirs(modsRoot)) {
         continue
       }
       const sup = JSON.parse(readFileSync(sfile, "utf8"))
-      if ("upstream" in sup || "patches" in sup) errors.push(`${hrel}: support.json lists "versions" now, one per release; repack with open-mods pack`)
+      if ("upstream" in sup || "patches" in sup) errors.push(`${hrel}: support.json lists "versions" now, one per release; repack with openmods pack`)
       const versions: { ref?: string; commit?: string; patches?: string[]; update?: unknown; note?: unknown }[] = Array.isArray(sup.versions) ? sup.versions : []
       if (versions.length === 0) errors.push(`${hrel}: versions must be a non-empty list`)
       const refs = versions.map((v) => v.ref)
@@ -76,7 +76,7 @@ for (const owner of dirs(modsRoot)) {
         if (!v.ref) errors.push(`${vrel}: missing ref`)
         if (!/^[0-9a-f]{40}$/.test(v.commit ?? "")) errors.push(`${vrel}: commit must be a full sha`)
         if (!Array.isArray(v.patches) || v.patches.length === 0) errors.push(`${vrel}: patches must be a non-empty list`)
-        if (!Number.isInteger(v.update) || (v.update as number) < 1) errors.push(`${vrel}: update must be a whole number from 1; open-mods pack sets it`)
+        if (!Number.isInteger(v.update) || (v.update as number) < 1) errors.push(`${vrel}: update must be a whole number from 1; openmods pack sets it`)
         if (v.note !== undefined && (typeof v.note !== "string" || v.note.length === 0 || v.note.length > 200)) errors.push(`${vrel}: note must be 1-200 characters`)
         for (const p of v.patches ?? []) {
           listed.add(p)
@@ -84,7 +84,7 @@ for (const owner of dirs(modsRoot)) {
           if (!p.startsWith(`${v.ref}/`) || !/\/\d{4}-[A-Za-z0-9._-]+\.patch$/.test(p)) errors.push(`${vrel}: bad patch path "${p}"; patches go in ${v.ref}/`)
           else if (!existsSync(path.join(dir, h, p))) errors.push(`${vrel}: ${p} does not exist`)
           else if (/^index [0-9a-f]{1,39}\.\./m.test(readFileSync(path.join(dir, h, p), "utf8")))
-            errors.push(`${vrel}: ${p} has short blob ids; regenerate it with open-mods pack (git format-patch --full-index)`)
+            errors.push(`${vrel}: ${p} has short blob ids; regenerate it with openmods pack (git format-patch --full-index)`)
         }
       }
       // Every patch file belongs to a version, so nothing stale is left behind.

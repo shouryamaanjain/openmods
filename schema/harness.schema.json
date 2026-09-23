@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/shouryamaanjain/open-mods/main/schema/harness.schema.json",
+  "$id": "https://raw.githubusercontent.com/shouryamaanjain/openmods/main/schema/harness.schema.json",
   "title": "OpenMods harness definition",
   "type": "object",
   "required": [

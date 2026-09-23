@@ -113,8 +113,8 @@ jobs:
         run: bun script/release-watch.ts apply results --issues
       - name: Commit
         run: |
-          git config user.name "open-mods bot"
-          git config user.email "bot@open-mods"
+          git config user.name "openmods bot"
+          git config user.email "bot@openmods"
           git add mods status
           git diff --cached --quiet && exit 0
           git commit -F results/COMMIT_MSG

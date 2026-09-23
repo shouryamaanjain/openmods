@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/shouryamaanjain/open-mods/main/schema/mod.schema.json",
+  "$id": "https://raw.githubusercontent.com/shouryamaanjain/openmods/main/schema/mod.schema.json",
   "title": "OpenMods mod",
   "description": "mods/<owner>/<name>/mod.json: what is shared by every harness the mod supports. Each supported harness has its own folder with a support.json.",
   "type": "object",

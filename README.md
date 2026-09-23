@@ -9,20 +9,20 @@ OpenMods is that layer. A mod is a set of git patches against a pinned release o
 ```sh
 curl -fsSL https://openmods.dev/install.sh | sh
 
-open-mods list
-open-mods install <owner>/<mod> --opencode
+openmods list
+openmods install <owner>/<mod> --opencode
 opencode                            # a real OpenCode release with the mod built in
-open-mods off                       # opencode is stock again
-open-mods on                        # and back
-open-mods off <owner>/<mod>         # keep it installed, build it out
-open-mods uninstall <owner>/<mod>   # gone
+openmods off                       # opencode is stock again
+openmods on                        # and back
+openmods off <owner>/<mod>         # keep it installed, build it out
+openmods uninstall <owner>/<mod>   # gone
 ```
 
 A mod is named after its author, like `shouryamaanjain/tetris`, and can support several harnesses. `--opencode` or `--codex` says which one to install it on. Leave the flag out and the CLI asks, listing only the harnesses that mod supports and marking the ones you do not have; a mod for a single harness needs no flag. Picking a harness you do not have offers its official installer, such as `curl -fsSL https://opencode.ai/install | bash`, and runs it only if you say yes.
 
-Your stock OpenCode is never modified. `install` builds a separate modded binary and puts it first on PATH. `off` steps aside so the stock one runs; `on` steps back in. `open-mods status` tells you which one `opencode` runs right now.
+Your stock OpenCode is never modified. `install` builds a separate modded binary and puts it first on PATH. `off` steps aside so the stock one runs; `on` steps back in. `openmods status` tells you which one `opencode` runs right now.
 
-The installer clones the registry under `~/.open-mods`, puts an `open-mods` command in `~/.open-mods/bin`, and installs Bun if you do not have it. Working on the registry itself? `bun link ./cli` from a checkout does the same with your working copy. Requirements: `git` and `bun` to run the CLI. Each harness release pins the exact Bun it builds with, and the CLI installs that version under `~/.open-mods/toolchains` for the build, so your own Bun is never changed. The first install of a harness clones and builds it, which takes a few minutes. Later installs reuse the checkout.
+The installer clones the registry under `~/.openmods`, puts an `openmods` command in `~/.openmods/bin`, and installs Bun if you do not have it. Working on the registry itself? `bun link ./cli` from a checkout does the same with your working copy. Requirements: `git` and `bun` to run the CLI. Each harness release pins the exact Bun it builds with, and the CLI installs that version under `~/.openmods/toolchains` for the build, so your own Bun is never changed. The first install of a harness clones and builds it, which takes a few minutes. Later installs reuse the checkout.
 
 ## Harnesses
 
@@ -36,9 +36,9 @@ Anything open source with a build command can be a harness. See [`harnesses/`](h
 
 ## Mods
 
-The registry lives under [`mods/<owner>/<mod>`](mods). Run `open-mods list` for what is published, or `open-mods info <owner>/<mod>` to see exactly which files a mod touches on each harness before you build it. Every command is documented at [openmods.dev/cli](https://openmods.dev/cli/) and in `open-mods help <command>`.
+The registry lives under [`mods/<owner>/<mod>`](mods). Run `openmods list` for what is published, or `openmods info <owner>/<mod>` to see exactly which files a mod touches on each harness before you build it. Every command is documented at [openmods.dev/cli](https://openmods.dev/cli/) and in `openmods help <command>`.
 
-Mods you are still working on, or do not want to publish, go under `~/.open-mods/local/<owner>/<mod>`, in the same layout. The CLI lists and installs them like registry mods, marked `(local)`.
+Mods you are still working on, or do not want to publish, go under `~/.openmods/local/<owner>/<mod>`, in the same layout. The CLI lists and installs them like registry mods, marked `(local)`.
 
 ## How it works
 
@@ -57,19 +57,19 @@ mods/<owner>/<mod>/
 
 A mod's version is the harness release it works on, and it keeps a version for every release it has worked on. Mods move to new releases at different speeds. Keeping the old versions means you can still build a set of mods together at a release they all have.
 
-`open-mods install` does the mechanical part:
+`openmods install` does the mechanical part:
 
-1. Blobless clone of the harness into `~/.open-mods/harnesses/<id>/src`.
+1. Blobless clone of the harness into `~/.openmods/harnesses/<id>/src`.
 2. Pick one release for all the mods on that harness: the one you are on, if every mod has a version for it, else the newest release they all have a version for. Mods that share no release are refused, with the releases each one has. Then check out that release.
 3. `git am -3` each mod's patches for that release, in the order you listed them.
 4. Run the harness's own install and build commands, with the exact toolchain version that release pins. Building OpenCode 1.18.31 with Bun 1.4 instead of its pinned 1.3.14 produces a binary that logs errors on every launch, so this is not optional.
-5. Write the launcher at `~/.open-mods/bin/<binary>` and, the first time, add that folder to the front of PATH in your shell config. The build is stamped, so `opencode --version` reports the release plus the mods, e.g. `1.18.31+vim-keys`.
+5. Write the launcher at `~/.openmods/bin/<binary>` and, the first time, add that folder to the front of PATH in your shell config. The build is stamped, so `opencode --version` reports the release plus the mods, e.g. `1.18.31+vim-keys`.
 
 `off` removes the launcher, so `opencode` falls through to the stock binary the harness installed. `on` restores it. Neither rebuilds anything. Pass `--no-path` if you would rather manage PATH yourself.
 
-`uninstall` rebuilds without the mod. When the last mod for a harness goes, the launcher, the built binary and the patched commits go with it, and the checkout is reset to the stock release. It is kept only as a cache so the next install does not clone and install dependencies again; delete `~/.open-mods/harnesses/<id>` if you want the space back.
+`uninstall` rebuilds without the mod. When the last mod for a harness goes, the launcher, the built binary and the patched commits go with it, and the checkout is reset to the stock release. It is kept only as a cache so the next install does not clone and install dependencies again; delete `~/.openmods/harnesses/<id>` if you want the space back.
 
-Several mods stack on the same checkout. Some mods cannot be combined: two mods that change the same lines of a release, or lines right next to each other, would not merge. The CLI works this out from the patches before it builds. It refuses the combination, names the mods and the lines they share, and leaves your current build running. `open-mods info` and each mod's page on the site list the mods it cannot be installed with, and the selector marks a harness where it clashes with a mod you have.
+Several mods stack on the same checkout. Some mods cannot be combined: two mods that change the same lines of a release, or lines right next to each other, would not merge. The CLI works this out from the patches before it builds. It refuses the combination, names the mods and the lines they share, and leaves your current build running. `openmods info` and each mod's page on the site list the mods it cannot be installed with, and the selector marks a harness where it clashes with a mod you have.
 
 ## When the harness updates
 
@@ -83,20 +83,20 @@ A mod is "for" one harness release, and that release is the mod's version. Harne
 
 Compiled dependencies are cached between runs, so a check starts from warm.
 
-On your machine, the `opencode` command in `~/.open-mods/bin` is a small launcher. It starts your build immediately and, once a day, refreshes the registry in the background. It asks only when there is something to update: a newer release that every mod you have supports, or a new update of one of your mods. Both go into one question:
+On your machine, the `opencode` command in `~/.openmods/bin` is a small launcher. It starts your build immediately and, once a day, refreshes the registry in the background. It asks only when there is something to update: a newer release that every mod you have supports, or a new update of one of your mods. Both go into one question:
 
 ```
 OpenCode 1.19.0 is out, and all your mods support it. New in your mods: shouryamaanjain/tetris update 8 (fixes the resize crash).
 Update now? It rebuilds OpenCode, which takes a few minutes. [y/N]
 ```
 
-`y` rebuilds and launches the new build. Anything else launches your current build, and that offer is never shown again: the launcher asks next time there is something new, such as another release or another mod update. `open-mods status` shows a pending update if there is one, and `open-mods update` does the same rebuild on demand: it moves you to the newest release every mod you have on has a version for, with each mod's latest update for it. If one of your mods has no version for a newer release yet, the launcher says so once and you stay where you are.
+`y` rebuilds and launches the new build. Anything else launches your current build, and that offer is never shown again: the launcher asks next time there is something new, such as another release or another mod update. `openmods status` shows a pending update if there is one, and `openmods update` does the same rebuild on demand: it moves you to the newest release every mod you have on has a version for, with each mod's latest update for it. If one of your mods has no version for a newer release yet, the launcher says so once and you stay where you are.
 
-A mod's updates are numbered: every time its author packs changed code, it becomes the next update. The number shows in the build's version, e.g. `opencode --version` prints `1.19.0+tetris-8.vim-keys-3`, so a bug report says exactly what was built. Nothing else moves you to another release, except installing a mod that has no version for the one you are on; then the CLI builds the newest release all your mods share and says so. It never rebuilds on its own, never asks when `opencode` is not at a terminal, and `OPEN_MODS_NO_PROMPT=1` turns the question off.
+A mod's updates are numbered: every time its author packs changed code, it becomes the next update. The number shows in the build's version, e.g. `opencode --version` prints `1.19.0+tetris-8.vim-keys-3`, so a bug report says exactly what was built. Nothing else moves you to another release, except installing a mod that has no version for the one you are on; then the CLI builds the newest release all your mods share and says so. It never rebuilds on its own, never asks when `opencode` is not at a terminal, and `OPENMODS_NO_PROMPT=1` turns the question off.
 
 ## The site
 
-`bun run site` builds the site into `site/` from the registry; `bun script/site.ts --local --out site` also includes your unpublished mods from `~/.open-mods/local` for a preview. The output is plain files, so any static host works. The included workflow publishes it to [openmods.dev](https://openmods.dev) on every push to main, as a Cloudflare Worker serving static assets; `wrangler.toml` binds the domain, and the deploy needs the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` repository secrets.
+`bun run site` builds the site into `site/` from the registry; `bun script/site.ts --local --out site` also includes your unpublished mods from `~/.openmods/local` for a preview. The output is plain files, so any static host works. The included workflow publishes it to [openmods.dev](https://openmods.dev) on every push to main, as a Cloudflare Worker serving static assets; `wrangler.toml` binds the domain, and the deploy needs the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` repository secrets.
 
 ## Making a mod
 
@@ -104,9 +104,9 @@ A mod's updates are numbered: every time its author packs changed code, it becom
 git clone https://github.com/anomalyco/opencode && cd opencode
 git checkout v1.18.31            # the release you want to mod
 # ... change anything, then commit as many times as you like ...
-open-mods pack . --name my-mod --local   # installable now from ~/.open-mods/local, not published
-open-mods pack . --name my-mod           # writes mods/<you>/my-mod/opencode/ into the registry
-open-mods check mods/<you>/my-mod/opencode --build   # build it yourself; CI only typechecks
+openmods pack . --name my-mod --local   # installable now from ~/.openmods/local, not published
+openmods pack . --name my-mod           # writes mods/<you>/my-mod/opencode/ into the registry
+openmods check mods/<you>/my-mod/opencode --build   # build it yourself; CI only typechecks
 ```
 
 `pack` names the mod after your GitHub handle, from `git config github.user` or the GitHub CLI; `--owner` sets it. Packing the same name from a Codex checkout adds `codex/` to the same mod.
@@ -119,7 +119,7 @@ A fork is a snapshot. It goes stale silently, it can't be combined with another 
 
 ## Security
 
-A mod is code that runs with your permissions, like any program you build from source. Before installing one, read its patches. `open-mods info` lists the touched files, and each mod's page shows the diff. Nothing is prebuilt: your machine compiles the harness from its release plus the patches, so what you read is what you run. [SECURITY.md](SECURITY.md) has the details and how to report a problem.
+A mod is code that runs with your permissions, like any program you build from source. Before installing one, read its patches. `openmods info` lists the touched files, and each mod's page shows the diff. Nothing is prebuilt: your machine compiles the harness from its release plus the patches, so what you read is what you run. [SECURITY.md](SECURITY.md) has the details and how to report a problem.
 
 ## License
 

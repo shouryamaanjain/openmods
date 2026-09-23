@@ -48,8 +48,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           bun script/release-watch.ts verify ${{ inputs.harness }} ${{ inputs.ref }} --issues
-          git config user.name "open-mods bot"
-          git config user.email "bot@open-mods"
+          git config user.name "openmods bot"
+          git config user.email "bot@openmods"
           git add status
           git diff --cached --quiet && exit 0
           git commit -m "${{ inputs.harness }} ${{ inputs.ref }}: build recipe verified by a harness build"

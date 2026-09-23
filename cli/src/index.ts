@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
-// open-mods: install source-level mods into open-source agent harnesses.
+// openmods: install source-level mods into open-source agent harnesses.
 //
 // A mod is an ordered series of git patches against a pinned upstream commit.
 // Installing one clones the harness, checks out that commit, applies the
-// patches, builds, and links the resulting binary under ~/.open-mods/bin.
+// patches, builds, and links the resulting binary under ~/.openmods/bin.
 // The stock install of the harness is never touched.
 
 import { $ } from "bun"
@@ -70,7 +70,7 @@ type Mod = {
   dir: string
   root: string
   // "registry": published in the registry. "local": unpublished, from
-  // ~/.open-mods/local/<owner>/<name>, where authors keep mods they are
+  // ~/.openmods/local/<owner>/<name>, where authors keep mods they are
   // still working on or do not want to publish.
   source: "registry" | "local"
 }
@@ -79,7 +79,7 @@ type Mod = {
 // updates: which update of each mod the build holds.
 type State = Record<string, { ref: string; commit: string; mods: string[]; off: string[]; hashes: Record<string, string>; updates: Record<string, number>; artifact: string; enabled: boolean }>
 
-const HOME = process.env.OPEN_MODS_HOME ?? path.join(homedir(), ".open-mods")
+const HOME = process.env.OPENMODS_HOME ?? path.join(homedir(), ".openmods")
 // A release as people see it: "1.18.31" for the tag v1.18.31, "0.155.1" for
 // rust-v0.155.1. The tag itself stays raw in mod.json and in git commands.
 const rel = (ref: string) => ref.replace(/^[^0-9]*/, "")
@@ -89,12 +89,12 @@ const newerRelease = (a: string, b: string) => {
   for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0)
   return false
 }
-const DEFAULT_REGISTRY = "https://github.com/shouryamaanjain/open-mods"
+const DEFAULT_REGISTRY = "https://github.com/shouryamaanjain/openmods"
 const GIT_IDENTITY = {
-  GIT_AUTHOR_NAME: "open-mods",
-  GIT_AUTHOR_EMAIL: "open-mods@localhost",
-  GIT_COMMITTER_NAME: "open-mods",
-  GIT_COMMITTER_EMAIL: "open-mods@localhost",
+  GIT_AUTHOR_NAME: "openmods",
+  GIT_AUTHOR_EMAIL: "openmods@localhost",
+  GIT_COMMITTER_NAME: "openmods",
+  GIT_COMMITTER_EMAIL: "openmods@localhost",
 }
 
 const args = process.argv.slice(2)
@@ -131,7 +131,7 @@ const fail = (msg: string): never => {
 // ---------------------------------------------------------------- registry
 
 function registryDir(): string {
-  const explicit = flag("registry") ?? process.env.OPEN_MODS_REGISTRY
+  const explicit = flag("registry") ?? process.env.OPENMODS_REGISTRY
   if (explicit && existsSync(path.join(explicit, "mods"))) return path.resolve(explicit)
   const local = path.resolve(import.meta.dir, "..", "..")
   if (existsSync(path.join(local, "mods")) && existsSync(path.join(local, "harnesses"))) return local
@@ -141,7 +141,7 @@ function registryDir(): string {
 async function ensureRegistry(): Promise<string> {
   const dir = registryDir()
   if (existsSync(path.join(dir, "mods"))) return dir
-  const url = flag("registry") ?? process.env.OPEN_MODS_REGISTRY ?? DEFAULT_REGISTRY
+  const url = flag("registry") ?? process.env.OPENMODS_REGISTRY ?? DEFAULT_REGISTRY
   log(`Fetching registry ${url}`)
   mkdirSync(path.dirname(dir), { recursive: true })
   await $`git clone --depth 1 ${url} ${dir}`.quiet()
@@ -267,8 +267,8 @@ function supportsOf(reg: string, spec: string): Mod[] {
     const [first, name] = id.split("/")
     const h = allHarnesses(reg).find((x) => x.id === first)
     const owners = h ? [...new Set(listMods(reg).filter((m) => m.name === name).map((m) => m.owner))] : []
-    if (h) fail(`no mod "${id}". Mods are named owner/mod, and the harness is a flag: ${owners.length ? `open-mods install ${owners[0]}/${name} --${h.id}` : `open-mods install <owner>/${name} --${h.id}`}.`)
-    fail(`no mod "${id}". \`open-mods list\` shows what is available.`)
+    if (h) fail(`no mod "${id}". Mods are named owner/mod, and the harness is a flag: ${owners.length ? `openmods install ${owners[0]}/${name} --${h.id}` : `openmods install <owner>/${name} --${h.id}`}.`)
+    fail(`no mod "${id}". \`openmods list\` shows what is available.`)
   }
   return found
 }
@@ -347,11 +347,11 @@ async function select(question: string, options: { label: string; hint?: string 
 
 /**
  * A y/N question on the terminal. Anything but y or yes is no. Returns null
- * when there is no terminal to ask on (OPEN_MODS_ASSUME_TTY lets tests answer
+ * when there is no terminal to ask on (OPENMODS_ASSUME_TTY lets tests answer
  * through stdin).
  */
 async function confirm(question: string): Promise<boolean | null> {
-  const tty = (process.stdin.isTTY && process.stdout.isTTY) || !!process.env.OPEN_MODS_ASSUME_TTY
+  const tty = (process.stdin.isTTY && process.stdout.isTTY) || !!process.env.OPENMODS_ASSUME_TTY
   if (!tty || has("json")) return null
   process.stdout.write(`${question} [y/N] `)
   process.stdin.resume()
@@ -623,9 +623,9 @@ async function applyMods(root: string, mods: Mod[]) {
 const stampOf = (mods: Mod[]) => mods.map((m) => `${m.name}-${m.update}`).join(".")
 
 // Harness install/build commands run with these set, so a build can stamp
-// itself: OPEN_MODS_HARNESS=opencode OPEN_MODS_REF=v1.18.31
-// OPEN_MODS_VERSION=1.18.31 OPEN_MODS_MODS=vim-keys-2.quiet-startup-1
-// (dot-separated, so "${OPEN_MODS_VERSION}+${OPEN_MODS_MODS}" is valid semver)
+// itself: OPENMODS_HARNESS=opencode OPENMODS_REF=v1.18.31
+// OPENMODS_VERSION=1.18.31 OPENMODS_MODS=vim-keys-2.quiet-startup-1
+// (dot-separated, so "${OPENMODS_VERSION}+${OPENMODS_MODS}" is valid semver)
 let buildEnv: Record<string, string> = {}
 
 class CommandFailed extends Error {}
@@ -641,7 +641,7 @@ async function shell(cmd: string, cwd: string) {
 // A harness release pins its toolchain (package.json "packageManager":
 // "bun@1.3.14"). Building with a different version can produce a binary that
 // is subtly broken (Bun 1.4.2 miscompiles OpenCode 1.18.31, for one), so the
-// exact pinned version is installed under ~/.open-mods/toolchains and put
+// exact pinned version is installed under ~/.openmods/toolchains and put
 // first on PATH for the build. Nothing global changes.
 async function ensureToolchain(root: string): Promise<string | null> {
   const pkg = path.join(root, "package.json")
@@ -707,7 +707,7 @@ function keepBuild(h: Harness, harnessId: string, artifact: string, stamp: strin
 
 // ------------------------------------------------------------- switching
 //
-// ~/.open-mods/bin sits first on PATH. A modded build is "on" when its
+// ~/.openmods/bin sits first on PATH. A modded build is "on" when its
 // symlink is in that folder and "off" when it is not; either way the stock
 // binary the harness installed is untouched and takes over when we step aside.
 
@@ -721,9 +721,9 @@ const pretty = (p: string) => p.replace(homedir(), "~")
 // for that offer: it asks again only when there is something new. It never
 // rebuilds without a yes.
 function launcherOf(h: Harness, artifact: string) {
-  const cli = Bun.which("open-mods") ?? `${process.execPath} ${path.resolve(import.meta.path)}`
+  const cli = Bun.which("openmods") ?? `${process.execPath} ${path.resolve(import.meta.path)}`
   return `#!/bin/sh
-# open-mods launcher for ${h.binary}. \`open-mods off\` removes it; the stock ${h.name} is untouched.
+# openmods launcher for ${h.binary}. \`openmods off\` removes it; the stock ${h.name} is untouched.
 HARNESS=${h.id}
 SELF=${JSON.stringify(path.join(BIN, h.binary))}
 REAL=${JSON.stringify(artifact)}
@@ -733,7 +733,7 @@ NOTE="$OM/updates/$HARNESS"
 NOW=$(date +%s)
 
 # Refresh the note in the background once a day; never delays startup.
-if [ -z "$OPEN_MODS_NO_CHECK" ]; then
+if [ -z "$OPENMODS_NO_CHECK" ]; then
   LAST=$(cat "$NOTE.checked" 2>/dev/null || echo 0)
   if [ $((NOW - LAST)) -gt 86400 ]; then
     mkdir -p "$OM/updates" && echo "$NOW" > "$NOTE.checked"
@@ -742,8 +742,8 @@ if [ -z "$OPEN_MODS_NO_CHECK" ]; then
 fi
 
 # Show each offer once, and only at an interactive terminal.
-# (OPEN_MODS_ASSUME_TTY=1 lets tests drive the prompt without a terminal.)
-if { { [ -t 0 ] && [ -t 1 ]; } || [ -n "$OPEN_MODS_ASSUME_TTY" ]; } && [ -z "$OPEN_MODS_NO_PROMPT" ] && [ -f "$NOTE" ]; then
+# (OPENMODS_ASSUME_TTY=1 lets tests drive the prompt without a terminal.)
+if { { [ -t 0 ] && [ -t 1 ]; } || [ -n "$OPENMODS_ASSUME_TTY" ]; } && [ -z "$OPENMODS_NO_PROMPT" ] && [ -f "$NOTE" ]; then
   . "$NOTE"
   if [ -n "$KEY" ] && [ "$KEY" != "$(cat "$NOTE.seen" 2>/dev/null)" ]; then
     printf '%s\n' "$KEY" > "$NOTE.seen"
@@ -756,9 +756,9 @@ if { { [ -t 0 ] && [ -t 1 ]; } || [ -n "$OPEN_MODS_ASSUME_TTY" ]; } && [ -z "$OP
           # The update replaces this launcher and removes the old build, so
           # start again from the new launcher rather than the old path above.
           if $CLI update "$HARNESS"; then exec "$SELF" "$@"; else
-            printf '%s\n' "Update failed; starting your current build. Run \"open-mods update $HARNESS\" to try again."
+            printf '%s\n' "Update failed; starting your current build. Run \"openmods update $HARNESS\" to try again."
           fi ;;
-        *) printf '%s\n' "Not now. You will not be asked about this again; \"open-mods update\" does it any time." ;;
+        *) printf '%s\n' "Not now. You will not be asked about this again; \"openmods update\" does it any time." ;;
       esac
     fi
   fi
@@ -803,9 +803,9 @@ async function versionOf(bin: string | null) {
 
 const pathHasBin = () => (process.env.PATH ?? "").split(path.delimiter).some((d) => d && path.resolve(d) === BIN)
 
-// Keeps ~/.open-mods/bin at the front of PATH in the user's shell config.
+// Keeps ~/.openmods/bin at the front of PATH in the user's shell config.
 // Adds the line once. If a later line puts something in front of it, such as
-// a harness installer that appended its own PATH line, the open-mods line
+// a harness installer that appended its own PATH line, the openmods line
 // moves back to the end so modded builds still go first. Returns the file it
 // edited and whether it added or moved the line, or null when nothing changed.
 function setupPath(): { rc: string; moved: boolean } | null {
@@ -819,16 +819,16 @@ function setupPath(): { rc: string; moved: boolean } | null {
         : path.join(homedir(), process.platform === "darwin" ? ".bash_profile" : ".bashrc")
   const line =
     shell === "fish"
-      ? `fish_add_path --prepend --move ${pretty(BIN).replace("~", "$HOME")}  # open-mods`
-      : `export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"  # open-mods`
-  const block = `# open-mods: modded builds go first; \`open-mods off\` steps aside\n${line}\n`
+      ? `fish_add_path --prepend --move ${pretty(BIN).replace("~", "$HOME")}  # openmods`
+      : `export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"  # openmods`
+  const block = `# openmods: modded builds go first; \`openmods off\` steps aside\n${line}\n`
   const current = existsSync(rc) ? readFileSync(rc, "utf8") : ""
   const lines = current.split("\n")
-  const last = lines.findLastIndex((l) => l.includes("# open-mods"))
+  const last = lines.findLastIndex((l) => l.includes("# openmods"))
   if (last >= 0) {
     const later = lines.slice(last + 1).some((l) => !l.trim().startsWith("#") && /PATH|fish_add_path|shellenv/.test(l))
     if (!later) return null
-    const kept = lines.filter((l) => !l.includes("# open-mods")).join("\n").replace(/\n{3,}/g, "\n\n").replace(/\n*$/, "\n")
+    const kept = lines.filter((l) => !l.includes("# openmods")).join("\n").replace(/\n{3,}/g, "\n\n").replace(/\n*$/, "\n")
     writeFileSync(rc, `${kept}\n${block}`)
     return { rc, moved: true }
   }
@@ -844,16 +844,16 @@ function explainSwitch(h: Harness, entry: State[string]) {
   if (entry.enabled) {
     const active = entry.mods.filter((m) => !entry.off.includes(m))
     log(`\`${h.binary}\` now runs ${h.name} ${rel(entry.ref)} + ${active.join(" + ")}${entry.off.length ? ` (off: ${entry.off.join(", ")})` : ""}.`)
-    if (stock) log(`Your stock ${h.name} is untouched at ${pretty(stock)}. \`open-mods off\` switches back to it.`)
+    if (stock) log(`Your stock ${h.name} is untouched at ${pretty(stock)}. \`openmods off\` switches back to it.`)
   } else {
-    log(`\`${h.binary}\` runs your stock ${h.name} again${stock ? ` (${pretty(stock)})` : ""}. \`open-mods on\` brings the mods back.`)
+    log(`\`${h.binary}\` runs your stock ${h.name} again${stock ? ` (${pretty(stock)})` : ""}. \`openmods on\` brings the mods back.`)
   }
   const edited = entry.enabled ? setupPath() : null
   if (edited) {
     log("")
     log(
       edited.moved
-        ? `Moved the open-mods line to the end of ${pretty(edited.rc)}, so ${pretty(BIN)} stays first on PATH after a line added later.`
+        ? `Moved the openmods line to the end of ${pretty(edited.rc)}, so ${pretty(BIN)} stays first on PATH after a line added later.`
         : `Added ${pretty(BIN)} to the front of PATH in ${pretty(edited.rc)}.`,
     )
     log(`Open a new terminal, or run this in the current one:`)
@@ -899,7 +899,7 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     switchOff(h)
     state[harnessId] = { ...(state[harnessId] ?? { ref: all[0]!.upstream.ref, commit: all[0]!.upstream.commit, artifact: "" }), mods: all.map((m) => m.id), off: [...off], hashes: {}, updates: {}, enabled: false }
     saveState(state)
-    log(`Every ${h.name} mod is off (${off.join(", ")}), so \`${h.binary}\` runs your stock ${h.name}. \`open-mods on ${off[0]} --${harnessId}\` brings one back.`)
+    log(`Every ${h.name} mod is off (${off.join(", ")}), so \`${h.binary}\` runs your stock ${h.name}. \`openmods on ${off[0]} --${harnessId}\` brings one back.`)
     return
   }
   // One release for all of them, and each mod's version for it.
@@ -930,7 +930,7 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     if (clashes.length) {
       const ids = clashes.map((c) => c.id)
       fail(
-        `${order[j]!.id} does not work with ${clashes.map((c) => `${c.id} on ${h.name}: ${c.why}`).join("; nor with ")}. They cannot be on at the same time, so nothing was changed. \`open-mods off ${ids.join(" ")}\` or \`open-mods uninstall ${ids.join(" ")}\` makes room.`,
+        `${order[j]!.id} does not work with ${clashes.map((c) => `${c.id} on ${h.name}: ${c.why}`).join("; nor with ")}. They cannot be on at the same time, so nothing was changed. \`openmods off ${ids.join(" ")}\` or \`openmods uninstall ${ids.join(" ")}\` makes room.`,
       )
     }
   }
@@ -938,10 +938,10 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
   await ensureCheckout(h, root, base.commit, base.ref)
   await applyMods(root, mods)
   buildEnv = {
-    OPEN_MODS_HARNESS: harnessId,
-    OPEN_MODS_REF: base.ref,
-    OPEN_MODS_VERSION: base.ref.replace(/^[^0-9]*/, ""),
-    OPEN_MODS_MODS: stampOf(mods),
+    OPENMODS_HARNESS: harnessId,
+    OPENMODS_REF: base.ref,
+    OPENMODS_VERSION: base.ref.replace(/^[^0-9]*/, ""),
+    OPENMODS_MODS: stampOf(mods),
   }
   const built = await build(h, root).catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)))
   const artifact = keepBuild(h, harnessId, built, `${rel(base.ref)}+${stampOf(mods)}`)
@@ -991,7 +991,7 @@ async function cmdList() {
 
 async function cmdInfo() {
   const reg = await ensureRegistry()
-  const spec = positional[1] ?? fail("usage: open-mods info <owner>/<mod> [--<harness>]")
+  const spec = positional[1] ?? fail("usage: openmods info <owner>/<mod> [--<harness>]")
   const picked = harnessFlags(reg)
   const variants = supportsOf(reg, spec).filter((m) => !picked.length || picked.includes(m.harness))
   if (variants.length === 0) fail(`${spec} does not support ${picked.join(", ")}`)
@@ -1006,7 +1006,7 @@ async function cmdInfo() {
   for (const m of variants) {
     const h = loadHarness(reg, m.harness)
     log("")
-    log(`  ${bold(h.name)}  for ${rel(m.upstream.ref)} ${dim(`(tag ${m.upstream.ref}, ${m.upstream.commit.slice(0, 12)})`)}   install: open-mods install ${m.id} --${m.harness}`)
+    log(`  ${bold(h.name)}  for ${rel(m.upstream.ref)} ${dim(`(tag ${m.upstream.ref}, ${m.upstream.commit.slice(0, 12)})`)}   install: openmods install ${m.id} --${m.harness}`)
     log(`    update     ${m.update}${m.note ? `: ${m.note}` : ""}`)
     if (m.versions.length > 1) log(`    versions   ${m.versions.map((v) => `${rel(v.ref)} (update ${v.update})`).join(", ")}  ${dim("(one per release; below is the newest)")}`)
     log(`    patches`)
@@ -1024,7 +1024,7 @@ async function cmdInfo() {
 async function cmdInstall() {
   const reg = await ensureRegistry()
   const specs = positional.slice(1)
-  if (specs.length === 0) fail("install needs a mod, e.g. open-mods install shouryamaanjain/tetris --opencode. `open-mods list` shows what is available.")
+  if (specs.length === 0) fail("install needs a mod, e.g. openmods install shouryamaanjain/tetris --opencode. `openmods list` shows what is available.")
   const wanted: Mod[] = []
   for (const spec of specs) wanted.push(...(await chooseHarnesses(reg, spec, "Install", { needHarness: true })))
   const state = loadState()
@@ -1040,7 +1040,7 @@ async function cmdInstall() {
 async function cmdUninstall() {
   const reg = await ensureRegistry()
   const specs = positional.slice(1)
-  if (specs.length === 0) fail("uninstall needs a mod, e.g. open-mods uninstall shouryamaanjain/tetris. `open-mods status` shows what is installed.")
+  if (specs.length === 0) fail("uninstall needs a mod, e.g. openmods uninstall shouryamaanjain/tetris. `openmods status` shows what is installed.")
   const state = loadState()
   const byHarness = new Map<string, string[]>()
   for (const spec of specs) {
@@ -1061,7 +1061,7 @@ async function cmdStatus() {
   if (has("json")) return console.log(JSON.stringify(state, null, 2))
   const ids = Object.keys(state)
   if (ids.length === 0) {
-    log("No mods installed. `open-mods list` shows what is available.")
+    log("No mods installed. `openmods list` shows what is available.")
     return
   }
   for (const id of ids) {
@@ -1074,11 +1074,11 @@ async function cmdStatus() {
     const runs = e.enabled && built && onPath ? "modded" : "stock"
     log(`${h.binary} → ${runs}`)
     const active = e.mods.filter((m) => !e.off.includes(m))
-    log(`  modded  ${h.name} ${rel(e.ref)} + ${active.join(" + ") || "(nothing)"}  ${e.enabled ? "on" : "off (open-mods on)"}${built || !active.length ? "" : "  [not built; run open-mods update]"}`)
-    for (const m of e.off) log(`          ${m} is off (open-mods on ${m} --${id})`)
+    log(`  modded  ${h.name} ${rel(e.ref)} + ${active.join(" + ") || "(nothing)"}  ${e.enabled ? "on" : "off (openmods on)"}${built || !active.length ? "" : "  [not built; run openmods update]"}`)
+    for (const m of e.off) log(`          ${m} is off (openmods on ${m} --${id})`)
     log(`  stock   ${stock ? `${(await versionOf(stock)) ?? "?"}  ${pretty(stock)}` : "not found on PATH"}`)
     const pending = readNote(id)
-    if (pending?.ASK === "1" && pending.MESSAGE) log(`  update  ${pending.MESSAGE} \`open-mods update ${id}\` does it.`)
+    if (pending?.ASK === "1" && pending.MESSAGE) log(`  update  ${pending.MESSAGE} \`openmods update ${id}\` does it.`)
     if (e.enabled && !onPath) log(`  note    ${pretty(BIN)} is not on PATH in this shell; open a new terminal or run: export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"`)
   }
 }
@@ -1087,7 +1087,7 @@ async function cmdStatus() {
 // (instant, no rebuild). With a mod, owner/name, they build that mod in or out.
 async function modTarget(reg: string, state: State, arg: string | undefined, verb: string): Promise<{ id: string; name: string } | null> {
   if (!arg || !arg.includes("/")) {
-    if (arg && !state[arg]) fail(`"${arg}" is neither an installed mod nor a harness; \`open-mods status\` lists both`)
+    if (arg && !state[arg]) fail(`"${arg}" is neither an installed mod nor a harness; \`openmods status\` lists both`)
     return null
   }
   const id = parseId(reg, arg)
@@ -1116,9 +1116,9 @@ async function cmdOn() {
   for (const id of ids) {
     const e = state[id] ?? fail(`no mods installed for ${id}`)
     const h = loadHarness(reg, id)
-    if (e.mods.every((m) => e.off.includes(m))) fail(`every ${h.name} mod is off; \`open-mods on ${e.off[0]} --${id}\` builds one back in`)
+    if (e.mods.every((m) => e.off.includes(m))) fail(`every ${h.name} mod is off; \`openmods on ${e.off[0]} --${id}\` builds one back in`)
     e.artifact ||= artifactPath(h, path.join(HOME, "harnesses", id, "src"))
-    if (!existsSync(e.artifact)) fail(`the modded ${h.name} build is missing; run: open-mods update ${id}`)
+    if (!existsSync(e.artifact)) fail(`the modded ${h.name} build is missing; run: openmods update ${id}`)
     switchOn(h, e.artifact)
     e.enabled = true
     saveState(state)
@@ -1136,7 +1136,7 @@ async function cmdOff() {
       log(`${target.name} is already off for ${target.id}.`)
       return
     }
-    log(`Building ${target.name} out of ${target.id} (it stays installed; \`open-mods on ${target.name} --${target.id}\` restores it)`)
+    log(`Building ${target.name} out of ${target.id} (it stays installed; \`openmods on ${target.name} --${target.id}\` restores it)`)
     await rebuild(reg, target.id, e.mods.map((n) => resolveMod(reg, n, target.id)), [...e.off, target.name])
     return
   }
@@ -1180,7 +1180,7 @@ async function cmdUpdate() {
 async function cmdPack() {
   const reg = await ensureRegistry()
   const checkout = path.resolve(positional[1] ?? ".")
-  const name = flag("name") ?? fail("usage: open-mods pack <harness-checkout> --name <mod> [--owner <you>] [--local] [--harness <id>] [--base <tag>] [--out <dir>] [--force]")
+  const name = flag("name") ?? fail("usage: openmods pack <harness-checkout> --name <mod> [--owner <you>] [--local] [--harness <id>] [--base <tag>] [--out <dir>] [--force]")
   if (!ID.test(name)) fail("mod name must be lowercase letters, digits and hyphens")
   if (!existsSync(path.join(checkout, ".git"))) fail(`${checkout} is not a git checkout`)
 
@@ -1265,7 +1265,7 @@ async function cmdPack() {
   if (!existsSync(path.join(root, "README.md"))) {
     writeFileSync(
       path.join(root, "README.md"),
-      `# ${name}\n\nTODO: what this mod changes, and why.\n\n## Install\n\n\`\`\`sh\nopen-mods install ${owner}/${name}\n\`\`\`\n`,
+      `# ${name}\n\nTODO: what this mod changes, and why.\n\n## Install\n\n\`\`\`sh\nopenmods install ${owner}/${name}\n\`\`\`\n`,
     )
   }
   log(`Packed ${count} commit${count === 1 ? "" : "s"} on top of ${harness.name} ${rel(base)} as ${owner}/${name}, in ${pretty(out)}`)
@@ -1279,7 +1279,7 @@ async function cmdPack() {
   if (lockfiles.length) {
     log(`warning: the patches change ${lockfiles.join(", ")}. That is usually a build side effect, not part of the mod, and mods that both touch a lockfile cannot be installed together. Reset the file to the release and commit again unless the mod really needs it.`)
   }
-  if (has("local")) log(`It is a local mod: \`open-mods install ${owner}/${name} --${harness.id}\` works now, and nothing is published until you pack it into the registry and open a PR.`)
+  if (has("local")) log(`It is a local mod: \`openmods install ${owner}/${name} --${harness.id}\` works now, and nothing is published until you pack it into the registry and open a PR.`)
   else log(`Edit mod.json (description, tags, license) and README.md, then open a PR to the registry.`)
 }
 
@@ -1291,7 +1291,7 @@ async function cmdCheck() {
   // A mod is its harness folder (mods/<owner>/<name>/<harness>), or owner/name
   // with --<harness>.
   const bare = harnessFlags(reg)
-  const spec = positional[1] ?? (bare.length ? undefined : fail("usage: open-mods check <mod-folder | owner/mod --<harness>> [--ref <tag>] [--typecheck | --build] [--json]\n       open-mods check --harness <id> --ref <tag> [--typecheck | --build] [--json]"))
+  const spec = positional[1] ?? (bare.length ? undefined : fail("usage: openmods check <mod-folder | owner/mod --<harness>> [--ref <tag>] [--typecheck | --build] [--json]\n       openmods check --harness <id> --ref <tag> [--typecheck | --build] [--json]"))
   const found = spec ? (existsSync(path.join(spec, "support.json")) ? loadMod(spec) : (await chooseHarnesses(reg, spec, "Check"))[0]!) : undefined
   // The newest version, or the one for the release --at names.
   const mod: Mod = found
@@ -1315,7 +1315,7 @@ async function cmdCheck() {
       }
   const h = loadHarness(reg, mod.harness)
   const ref = flag("ref") ?? mod.upstream.ref
-  const root = flag("workspace") ? path.resolve(flag("workspace")!) : path.join(tmpdir(), `open-mods-check-${mod.harness}`)
+  const root = flag("workspace") ? path.resolve(flag("workspace")!) : path.join(tmpdir(), `openmods-check-${mod.harness}`)
   // A stock check (--harness, no mod) says so, so the release watch can tell
   // a harness build from a mod check.
   const result: Record<string, unknown> = spec
@@ -1337,7 +1337,7 @@ async function cmdCheck() {
     // them when it bumps the mod, so a mod's patches always match the release
     // it claims, and the next release is compared against this one.
     if (result.applies && files.length) {
-      const dir = path.join(tmpdir(), `open-mods-rebase-${process.pid}`)
+      const dir = path.join(tmpdir(), `openmods-rebase-${process.pid}`)
       rmSync(dir, { recursive: true, force: true })
       await $`git -C ${root} format-patch --no-signature --no-stat --zero-commit --full-index -N -o ${dir} ${result.commit as string}..HEAD`.quiet()
       result.patches = readdirSync(dir)
@@ -1352,7 +1352,7 @@ async function cmdCheck() {
     } else if (has("build") || has("typecheck")) {
       await checkRequirements(h)
       // The stamp must be valid semver build metadata: mod names are, "(stock)" is not.
-      buildEnv = { OPEN_MODS_HARNESS: h.id, OPEN_MODS_REF: ref, OPEN_MODS_VERSION: rel(ref), OPEN_MODS_MODS: mod.patches.length ? mod.name : "stock" }
+      buildEnv = { OPENMODS_HARNESS: h.id, OPENMODS_REF: ref, OPENMODS_VERSION: rel(ref), OPENMODS_MODS: mod.patches.length ? mod.name : "stock" }
       if (has("typecheck")) {
         try {
           await typecheck(h, root)
@@ -1404,7 +1404,7 @@ async function cmdCheckUpdates() {
       continue
     }
     const h = loadHarness(reg, id)
-    // A launcher written by an older open-mods is brought up to date, so a
+    // A launcher written by an older openmods is brought up to date, so a
     // change to how it asks reaches everyone without a rebuild.
     const launcher = path.join(BIN, h.binary)
     if (e.enabled && existsSync(launcher) && e.artifact && readFileSync(launcher, "utf8") !== launcherOf(h, e.artifact)) switchOn(h, e.artifact)
@@ -1431,7 +1431,7 @@ async function cmdCheckUpdates() {
           message: offer.message,
         }),
       )
-    else log(offer.message ? `${id}: ${offer.message}${offer.ask ? ` \`open-mods update ${id}\` does it.` : ""}` : `${id}: up to date (${rel(e.ref)})`)
+    else log(offer.message ? `${id}: ${offer.message}${offer.ask ? ` \`openmods update ${id}\` does it.` : ""}` : `${id}: up to date (${rel(e.ref)})`)
   }
 }
 
@@ -1521,7 +1521,7 @@ function helpText(): string {
   const section = (title: string, list: typeof COMMANDS) => `${title}\n${columns(list.map((c) => [line(c), c.summary]))}`
   const flags = (list: typeof GLOBAL_FLAGS) => columns(list.map((f) => [f.flag, f.description]))
   return [
-    wrap(`open-mods: ${INTRO}`),
+    wrap(`openmods: ${INTRO}`),
     "",
     section("usage", COMMANDS.filter((c) => c.audience === "users")),
     "",

@@ -8,7 +8,7 @@ Treat installing a mod the way you treat building any program from source: read 
 
 ## Reading a mod before you install it
 
-- `open-mods info <owner>/<mod>` lists every file the mod touches, per harness.
+- `openmods info <owner>/<mod>` lists every file the mod touches, per harness.
 - The mod's page on the site shows the full diff. So does `mods/<owner>/<mod>/<harness>/<release>/` in the registry, one folder per version.
 - A mod that adds network calls, reads files outside the project, or changes the agent's instructions should say so in its README. If the diff does something the README does not mention, do not install it, and open an issue.
 
@@ -25,7 +25,7 @@ These are checks on the process, not a guarantee about intent. A malicious patch
 
 ## The launcher and updates
 
-`open-mods` never rebuilds or installs anything without a yes. The launcher checks for updates in the background but only asks at an interactive terminal, and `OPEN_MODS_NO_PROMPT=1` or `OPEN_MODS_NO_CHECK=1` turn that off. Updates only ever move a mod to a release that CI has verified it builds on.
+`openmods` never rebuilds or installs anything without a yes. The launcher checks for updates in the background but only asks at an interactive terminal, and `OPENMODS_NO_PROMPT=1` or `OPENMODS_NO_CHECK=1` turn that off. Updates only ever move a mod to a release that CI has verified it builds on.
 
 ## Reporting a problem
 

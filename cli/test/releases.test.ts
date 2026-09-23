@@ -133,7 +133,7 @@ describe("the user's side", () => {
   })
   test("the launcher never prompts when not at a terminal", async () => {
     writeFileSync(path.join(sb.om, "updates", "fake"), "CURRENT='1.1.0'\nKEY='update v9.9.9 '\nASK=1\nMESSAGE='Fake 9.9.9 is out, and all your mods support it.'\nCHECKED=1\n")
-    const out = await Bun.$`sh ${path.join(sb.om, "bin", "greet")}`.env({ OPEN_MODS_NO_CHECK: "1" }).text()
+    const out = await Bun.$`sh ${path.join(sb.om, "bin", "greet")}`.env({ OPENMODS_NO_CHECK: "1" }).text()
     expect(out.trim()).toBe("hello from friendly")
   })
 })
