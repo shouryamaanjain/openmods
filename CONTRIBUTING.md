@@ -85,7 +85,7 @@ Changes to the harness's dependencies or build files are allowed, but the check 
 ### The reviews
 
 1. **Build.** CI applies your patches to the release they name and typechecks the result.
-2. **Code review.** Greptile reviews the code your patches add, reading the harness's own repository for context, and comments on correctness and fit with the harness.
+2. **Code review.** Greptile reviews the code your patches add and comments on correctness and fit with the harness.
 3. **Security review.** A bot reads the patches and the README and decides whether the mod is malicious or does something the README does not disclose. For an update, it is shown the update it replaces, so what is new is plain. Its verdict is the **security review** check.
 4. **A maintainer** reads the diff, the reviews and the README, and merges. Every change needs this approval; the bots help the maintainer, they do not replace them.
 
