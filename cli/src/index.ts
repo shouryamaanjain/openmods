@@ -1265,7 +1265,27 @@ async function cmdPack() {
   if (!existsSync(path.join(root, "README.md"))) {
     writeFileSync(
       path.join(root, "README.md"),
-      `# ${name}\n\nTODO: what this mod changes, and why.\n\n## Install\n\n\`\`\`sh\nopenmods install ${owner}/${name}\n\`\`\`\n`,
+      [
+        `# ${name}`,
+        "",
+        "TODO: what this mod changes, and why.",
+        "",
+        "## Permissions",
+        "",
+        "What the mod does beyond the harness itself. Write none where it does nothing.",
+        "",
+        "- Network: TODO (none, or what it connects to and why)",
+        "- Files: TODO (none outside what the harness already reads and writes, or which)",
+        "- Commands: TODO (none, or which it runs)",
+        "- Agent instructions: TODO (unchanged, or what it adds to what the agent is told)",
+        "",
+        "## Install",
+        "",
+        "```sh",
+        `openmods install ${owner}/${name}`,
+        "```",
+        "",
+      ].join("\n"),
     )
   }
   log(`Packed ${count} commit${count === 1 ? "" : "s"} on top of ${harness.name} ${rel(base)} as ${owner}/${name}, in ${pretty(out)}`)

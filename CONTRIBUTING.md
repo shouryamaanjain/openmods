@@ -58,16 +58,32 @@ This clones the harness into a temp directory, applies your patches at the pinne
 
 ## 4. Open a pull request
 
-One mod per PR. The PR description should say what the mod does and include a screenshot or recording if it changes the UI.
+Fork this repository, commit the mod's folder, and open an ordinary pull request. The template asks what the mod does; add a screenshot or recording if it changes what you see.
+
+### The standards
+
+A check called **mod standards** enforces these before anyone reviews the pull request:
+
+- It changes one mod, and nothing outside that mod's folder.
+- You own the mod. A new mod lives under your GitHub handle, `mods/<you>/<mod>/`. To change an existing mod you must be its owner or be listed in its `maintainers` before your pull request; a pull request cannot add its own author.
+- The README has a `## Permissions` section that says what the mod does with the network, files, commands and the agent's instructions. Write "none" or "unchanged" where it does nothing. `openmods pack` writes the section for you to fill in.
+- Every new update says what changed: `openmods pack --note "..."`.
+- The patches are readable source: no binary files, no minified or generated code, nothing over 1 MB.
+
+Changes to the harness's dependencies or build files are allowed, but the check lists them so reviewers read them first.
+
+### The reviews
+
+1. **Build.** CI applies your patches to the release they name and typechecks the result.
+2. **Code review.** Greptile reviews the code your patches add, reading the harness's own repository for context, and comments on correctness and fit with the harness.
+3. **Security review.** A bot reads the patches and the README and decides whether the mod is malicious or does something the README does not disclose. For an update, it is shown the update it replaces, so what is new is plain. Its verdict is the **security review** check.
+4. **A maintainer** reads the diff, the reviews and the README, and merges. Every change needs this approval; the bots help the maintainer, they do not replace them.
+
+An update to your mod goes through the same steps as a new mod.
 
 A mod changes the harness itself. That is the whole point: it reaches what plugins, skills and MCP servers cannot. A submission that only adds a skill, a plugin or an MCP server belongs in that system's own channel, such as npm, skills.sh or the harness's config, and will be pointed there. If your mod adds a new tool or behavior the agent needs to know about, describe it in the harness's own source, where its built-in tools are described, rather than shipping a skill beside it.
 
-Reviewers look for:
-
-- Patches that apply at the pinned commit and typecheck in CI, and that the author has built.
-- A clear description of every file touched. `openmods info` prints the list.
-- No network calls, telemetry, or credential access that the README does not mention.
-- A license compatible with the harness.
+Maintainers also look for a license compatible with the harness.
 
 ## Updating a mod for a new release
 

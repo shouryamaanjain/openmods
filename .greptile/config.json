@@ -1,0 +1,37 @@
+{
+  "strictness": 2,
+  "commentTypes": ["logic", "syntax"],
+  "autoReview": ["open", "push"],
+  "statusCheck": true,
+  "ignorePatterns": "site/**\nbun.lock\nnode_modules/**",
+  "context": {
+    "repos": ["anomalyco/opencode", "openai/codex"]
+  },
+  "instructions": "OpenMods is a registry of source-level mods for open-source coding agents. Most pull requests add or update one mod under mods/<owner>/<name>/: a shared mod.json and README.md, and for each harness it supports (opencode, codex) a support.json listing its versions and one folder per harness release tag holding git format-patch files. Each .patch file is a change to that harness's source code: OpenCode is anomalyco/opencode (TypeScript on Bun, SolidJS and opentui for the terminal UI) and Codex CLI is openai/codex (Rust, under codex-rs/). Review the code a patch adds as code in that harness, at the release its folder names, reading the harness repository for context: correctness, error handling, fit with the harness's own patterns and APIs, cost in the terminal UI's render and input paths, and whether it does what the README says. Do not comment on the patch format itself (From lines, index lines, hunk headers); openmods pack generates it. A separate security review gives the verdict on malice, but still point out anything that sends data, reads credentials, runs commands or changes the agent's instructions without the README's Permissions section saying so. Pull requests that change cli/, script/, schema/, harnesses/ or .github/ are ordinary TypeScript, JSON and GitHub Actions changes to OpenMods itself.",
+  "rules": [
+    {
+      "id": "readme-matches-patches",
+      "rule": "The mod's README, including its Permissions section, must match what the patches actually do. Flag behavior the README does not mention.",
+      "scope": ["mods/**"],
+      "severity": "high"
+    },
+    {
+      "id": "no-unrelated-changes",
+      "rule": "A mod's patches should contain only the changes needed for what its README describes. Flag unrelated edits to the harness.",
+      "scope": ["mods/**"],
+      "severity": "medium"
+    },
+    {
+      "id": "dependencies-and-build",
+      "rule": "Flag any new dependency, lockfile change, install script or build script change inside a patch, and say whether the mod needs it.",
+      "scope": ["mods/**"],
+      "severity": "high"
+    },
+    {
+      "id": "update-note",
+      "rule": "When a mod gets a new update, check that its note in support.json describes what changed compared with the previous update.",
+      "scope": ["mods/**"],
+      "severity": "low"
+    }
+  ]
+}
