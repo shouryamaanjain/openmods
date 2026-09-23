@@ -158,8 +158,8 @@ async function closeFixed() {
     const fixed = support?.versions?.find((v: Version) => rel(v.ref) === release || newer(v.ref, release))
     if (support && !fixed) continue
     const why = support ? `${id} now supports ${name} ${rel(fixed.ref)}.` : `${id} is no longer in the registry.`
-    await $`gh issue close ${String(issue.number)} --repo ${repo} --comment ${why}`.nothrow()
-    console.error(`closed #${issue.number}: ${why}`)
+    const closed = await $`gh issue close ${String(issue.number)} --repo ${repo} --comment ${why}`.nothrow().quiet()
+    console.error(closed.exitCode === 0 ? `closed #${issue.number}: ${why}` : `could not close #${issue.number}: ${closed.stderr.toString().trim()}`)
   }
 }
 
@@ -218,7 +218,7 @@ async function issueFor(id: string, harnessId: string, meta: any, support: any, 
     `git checkout -b ${id.split("/")[1]} ${newestOf(support).ref}`,
     `git am ../openmods/mods/${id}/${harnessId}/${newestOf(support).ref}/*.patch   # the mod as it last worked`,
     `git rebase --onto ${ref} ${newestOf(support).ref} ${id.split("/")[1]}   # resolve conflicts, then git rebase --continue`,
-    `openmods install .   # try it on ${harness.name} ${rel(ref)}`,
+    `openmods install . --owner ${id.split("/")[0]}   # try it on ${harness.name} ${rel(ref)}`,
     `openmods pack . --name ${id.split("/")[1]} --owner ${id.split("/")[0]} --registry ../openmods --note "works on ${harness.name} ${rel(ref)}"`,
     "```",
     "",

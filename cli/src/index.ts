@@ -305,10 +305,23 @@ function revocations(reg: string): Revocation[] {
 const revocationOf = (reg: string, id: string, update: number | undefined) =>
   revocations(reg).find((r) => r.id === id && (!r.updates || update === undefined || r.updates.includes(update)))
 
-/** The mods built into a harness's current build that are revoked. */
-function revokedIn(reg: string, e: State[string]) {
+/**
+ * The mods built into a harness's current build that are revoked. Installs
+ * from before update numbers were recorded have theirs worked out from the
+ * patches, when the registry still has the version they were built from; if
+ * it cannot be known, an update-specific revocation counts, to be safe.
+ */
+function revokedIn(reg: string, harness: string, e: State[string]) {
   return e.mods.filter((id) => !e.off.includes(id)).flatMap((id) => {
-    const r = revocationOf(reg, id, e.updates[id])
+    let update = e.updates[id]
+    if (update === undefined) {
+      const v = (() => {
+        const m = findMod(reg, id, harness)
+        return m && at(m, e.ref)
+      })()
+      if (v && patchHash(v) === e.hashes[id]) update = v.update
+    }
+    const r = revocationOf(reg, id, update)
     return r ? [{ id, reason: r.reason }] : []
   })
 }
@@ -1154,7 +1167,15 @@ async function cmdUninstall() {
     for (const h of targets) byHarness.set(h, [...(byHarness.get(h) ?? []), id])
   }
   for (const [id, names] of byHarness) {
-    const remaining = state[id]!.mods.filter((n) => !names.includes(n)).map((n) => resolveMod(reg, n, id))
+    // The build is remade from the remaining mods' patches, so one the
+    // registry no longer has has to go too; say so rather than fail on it.
+    const left = state[id]!.mods.filter((n) => !names.includes(n))
+    const gone = left.filter((n) => !findMod(reg, n, id))
+    if (gone.length)
+      fail(
+        `${gone.join(", ")} ${gone.length === 1 ? "is" : "are"} no longer in the registry either, so your ${id} build cannot be remade with ${gone.length === 1 ? "it" : "them"}. Uninstall ${gone.length === 1 ? "it" : "them"} too: openmods uninstall ${[...names, ...gone].join(" ")}`,
+      )
+    const remaining = left.map((n) => resolveMod(reg, n, id))
     await rebuild(reg, id, remaining, state[id]?.off ?? [])
   }
 }
@@ -1181,7 +1202,7 @@ async function cmdStatus() {
     log(`  modded  ${h.name} ${rel(e.ref)} + ${active.join(" + ") || "(nothing)"}  ${e.enabled ? "on" : "off (openmods on)"}${built || !active.length ? "" : "  [not built; run openmods update]"}`)
     for (const m of e.off) log(`          ${m} is off (openmods on ${m} --${id})`)
     log(`  stock   ${stock ? `${(await versionOf(stock)) ?? "?"}  ${pretty(stock)}` : "not found on PATH"}`)
-    for (const b of revokedIn(reg, e)) log(`  removed ${b.id} was removed from OpenMods: ${b.reason} \`openmods uninstall ${b.id}\``)
+    for (const b of revokedIn(reg, id, e)) log(`  removed ${b.id} was removed from OpenMods: ${b.reason} \`openmods uninstall ${b.id}\``)
     const pending = readNote(id)
     if (pending?.ASK === "1" && pending.MESSAGE) log(`  update  ${pending.MESSAGE} \`openmods update ${id}\` does it.`)
     if (e.enabled && !onPath) log(`  note    ${pretty(BIN)} is not on PATH in this shell; open a new terminal or run: export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"`)
@@ -1224,7 +1245,7 @@ async function cmdOn() {
     if (e.mods.every((m) => e.off.includes(m))) fail(`every ${h.name} mod is off; \`openmods on ${e.off[0]} --${id}\` builds one back in`)
     e.artifact ||= artifactPath(h, path.join(HOME, "harnesses", id, "src"))
     if (!existsSync(e.artifact)) fail(`the modded ${h.name} build is missing; run: openmods update ${id}`)
-    const bad = revokedIn(reg, e)
+    const bad = revokedIn(reg, id, e)
     if (bad.length) fail(`this ${h.name} build has ${bad.map((b) => `${b.id}, which was removed from OpenMods: ${b.reason}`).join("; ")} \`openmods uninstall ${bad.map((b) => b.id).join(" ")}\` removes it.`)
     switchOn(h, e.artifact)
     e.enabled = true
@@ -1548,7 +1569,7 @@ async function cmdCheckUpdates() {
     const launcher = path.join(BIN, h.binary)
     // A revoked mod stops running: the launcher warns on every launch and
     // starts the stock harness instead, until the mod is uninstalled.
-    const bad = revokedIn(reg, e)
+    const bad = revokedIn(reg, id, e)
     if (bad.length) {
       if (e.enabled && existsSync(launcher)) writeFileSync(launcher, revokedLauncherOf(h, bad, stockBinary(h)), { mode: 0o755 })
       const message = `${bad.map((b) => `${b.id} was removed from OpenMods: ${b.reason}`).join(" ")} \`openmods uninstall ${bad.map((b) => b.id).join(" ")}\` removes it.`

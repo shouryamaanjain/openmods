@@ -105,8 +105,8 @@ cd opencode && git fetch --tags
 git checkout -b my-mod v1.18.31                                    # the last release the mod supports
 git am ../openmods/mods/<you>/my-mod/opencode/v1.18.31/*.patch    # the mod as it last worked
 git rebase --onto v1.19.0 v1.18.31 my-mod                         # resolve conflicts, then git rebase --continue
-openmods install .                                                 # try it on 1.19.0
-openmods pack . --name my-mod --registry ../openmods --note "works on OpenCode 1.19.0"
+openmods install . --owner <you>                                   # try it on 1.19.0
+openmods pack . --name my-mod --owner <you> --registry ../openmods --note "works on OpenCode 1.19.0"
 ```
 
 `pack` adds a version for 1.19.0 and keeps the older ones. The issue closes itself once that version is merged. If the code is the same and only rebased, it stays the same update; if you changed the code, it becomes the next update. Open a PR. Mods have no version number of their own: a mod is "for OpenCode 1.19.0", and CI adds that version automatically when the newest one still applies and typechecks on a new release. You only need to do this by hand when CI opens an issue saying the mod no longer supports a release.
