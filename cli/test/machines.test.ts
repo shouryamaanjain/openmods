@@ -52,24 +52,26 @@ describe("a harness checkout", () => {
 describe("a kept build", () => {
   const builds = () => path.join(sb.om, "harnesses", "fake", "builds")
   const setBuild = (fields: Record<string, unknown>) => writeFileSync(definition, JSON.stringify({ ...JSON.parse(readFileSync(definition, "utf8")), ...fields }))
-  const build = "mkdir -p out/bin && cp greet.sh out/bin/greet && chmod +x out/bin/greet && printf helper > out/bin/helper && printf junk > out/bin/junk"
-  test("holds the binary and its companions, and nothing else from the output folder", async () => {
-    setBuild({ build, companions: ["out/bin/helper"] })
+  // A package: the binary in bin/, a helper beside it in res/, and compiler
+  // output next to the package that a build should not keep.
+  const build = "mkdir -p out/pkg/bin out/pkg/res out/cache && cp greet.sh out/pkg/bin/greet && chmod +x out/pkg/bin/greet && printf helper > out/pkg/res/helper && printf junk > out/cache/junk"
+  test("holds the harness's keep folder whole, and nothing else from the build's output", async () => {
+    setBuild({ build, artifact: "out/pkg/bin/greet", keep: "out/pkg" })
     await cli(sb, "uninstall", "t/friendly")
     const r = await cli(sb, "install", "t/friendly")
     expect(r.code, r.all).toBe(0)
     const [kept] = readdirSync(builds())
-    expect(readdirSync(path.join(builds(), kept!)).sort()).toEqual(["greet", "helper"])
+    const dir = path.join(builds(), kept!)
+    expect([readdirSync(dir).sort(), readdirSync(path.join(dir, "res"))]).toEqual([["bin", "res"], ["helper"]])
     expect(await greeting(sb)).toBe("hello from friendly")
   })
-  test("fails when a companion was not built, and keeps the build that runs", async () => {
-    setBuild({ build, companions: ["out/bin/missing-helper"] })
+  test("without a keep folder, holds the binary's own folder", async () => {
+    setBuild({ build, artifact: "out/pkg/bin/greet", keep: undefined })
     const r = await cli(sb, "update", "fake", "--force")
-    expect(r.code).toBe(1)
-    expect(r.err).toContain("the build finished without")
-    expect(r.err).toContain("out/bin/missing-helper")
+    expect(r.code, r.all).toBe(0)
+    const [kept] = readdirSync(builds())
+    expect(readdirSync(path.join(builds(), kept!))).toEqual(["greet"])
     expect(await greeting(sb)).toBe("hello from friendly")
-    setBuild({ companions: [] })
   })
 })
 

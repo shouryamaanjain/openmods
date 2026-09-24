@@ -28,8 +28,8 @@ for (const id of harnesses) {
     if (h.installer?.paths !== undefined && (!Array.isArray(h.installer.paths) || h.installer.paths.some((p: unknown) => typeof p !== "string")))
       errors.push(`harnesses/${id}.json: installer.paths must be a list of folders`)
   }
-  if (h.companions !== undefined && (!Array.isArray(h.companions) || h.companions.some((c: unknown) => typeof c !== "string" || !c)))
-    errors.push(`harnesses/${id}.json: companions must be a list of files the build produces`)
+  if (h.keep !== undefined && (typeof h.keep !== "string" || !String(h.artifact).startsWith(`${h.keep.replace(/\/+$/, "")}/`)))
+    errors.push(`harnesses/${id}.json: keep must be a folder that contains the artifact`)
   // Set for the modded build when it starts.
   if (h.env !== undefined) {
     if (typeof h.env !== "object" || h.env === null || Array.isArray(h.env)) errors.push(`harnesses/${id}.json: env must be an object of variable names to strings`)

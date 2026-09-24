@@ -27,9 +27,10 @@ type Harness = {
   typecheck?: string
   build: string
   artifact: string
-  // Other files the build produces that the binary needs beside it, such as
-  // a helper executable it starts; see schema/harness.schema.json.
-  companions?: string[]
+  // The folder that holds the binary and everything it needs, kept whole
+  // for each build; the binary's own folder when unset. See
+  // schema/harness.schema.json.
+  keep?: string
   // Runs a clone from source, for `openmods dev`; see schema/harness.schema.json.
   dev?: string
   // Set for the modded build (and a dev clone) when it starts, such as turning
@@ -772,21 +773,20 @@ async function build(h: Harness, root: string) {
 // A harness's build script may wipe its output folder before compiling, so
 // a build that fails would leave nothing to run. Each successful build is
 // copied to its own folder and the launcher points there; the previous copy
-// stays until the new one exists, then the rest are cleared out. Only the
-// binary and its companions are copied, not the rest of the build's output
-// folder (for a Rust harness, gigabytes of compiler output).
+// stays until the new one exists, then the rest are cleared out. What is
+// copied is the harness's `keep` folder, the binary with what it needs beside
+// it (Codex's package: its helpers and resources), or else the binary's own
+// folder.
 function keepBuild(h: Harness, harnessId: string, root: string, stamp: string) {
   const builds = path.join(HOME, "harnesses", harnessId, "builds")
   const name = stamp.replace(/[^A-Za-z0-9._+-]/g, "_")
   const dest = path.join(builds, name)
+  const artifact = artifactPath(h, root)
+  const folder = h.keep ? artifactPath(h, root, h.keep) : path.dirname(artifact)
   rmSync(dest, { recursive: true, force: true })
-  mkdirSync(dest, { recursive: true })
-  for (const file of [h.artifact, ...(h.companions ?? [])]) {
-    const from = artifactPath(h, root, file)
-    if (!existsSync(from)) fail(`the build finished without ${pretty(from)}`)
-    cpSync(from, path.join(dest, path.basename(from)))
-  }
-  const kept = path.join(dest, path.basename(artifactPath(h, root)))
+  mkdirSync(builds, { recursive: true })
+  cpSync(folder, dest, { recursive: true, verbatimSymlinks: true })
+  const kept = path.join(dest, path.relative(folder, artifact))
   if (!existsSync(kept)) fail(`could not copy the build to ${dest}`)
   for (const d of readdirSync(builds)) if (d !== name) rmSync(path.join(builds, d), { recursive: true, force: true })
   return kept

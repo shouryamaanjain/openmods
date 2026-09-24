@@ -93,12 +93,9 @@
       "type": "string",
       "description": "Path of the built executable relative to the checkout root. {os} and {arch} are substituted with Node's process.platform and process.arch."
     },
-    "companions": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      },
-      "description": "Other files the build produces that the binary needs beside it, such as a helper executable it starts, relative to the harness checkout like artifact. They are copied next to the binary in the build folder; nothing else from the build's output folder is kept."
+    "keep": {
+      "type": "string",
+      "description": "The folder, relative to the harness checkout, that holds the binary and everything it needs beside it, such as helper executables and resources. It is copied whole for each build, and artifact must be inside it. When unset, the binary's own folder is kept."
     },
     "dev": {
       "type": "string",

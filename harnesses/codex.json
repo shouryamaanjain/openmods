@@ -25,16 +25,18 @@
     {
       "command": "git",
       "hint": "Install git"
+    },
+    {
+      "command": "python3",
+      "hint": "Install Python 3.11 or newer; Codex builds with its own package builder, scripts/build_codex_package.py"
     }
   ],
   "install": "true",
   "typecheck": "cd codex-rs && cargo check -p codex-cli --bin codex",
-  "build": "cd codex-rs && sed -i.openmods.bak '1,/^version = \"/s/^version = \"[^\"]*\"/version = \"'\"${OPENMODS_VERSION}+${OPENMODS_MODS}\"'\"/' Cargo.toml && rm -f Cargo.toml.openmods.bak && CARGO_PROFILE_RELEASE_LTO=off CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 cargo build --release -p codex-cli --bin codex -p codex-code-mode-host --bin codex-code-mode-host",
-  "artifact": "codex-rs/target/release/codex",
-  "companions": [
-    "codex-rs/target/release/codex-code-mode-host"
-  ],
-  "dev": "(cd {root}/codex-rs && cargo build -p codex-cli --bin codex -p codex-code-mode-host --bin codex-code-mode-host) && exec {root}/codex-rs/target/debug/codex",
+  "build": "cd codex-rs && sed -i.openmods.bak '1,/^version = \"/s/^version = \"[^\"]*\"/version = \"'\"${OPENMODS_VERSION}+${OPENMODS_MODS}\"'\"/' Cargo.toml && rm -f Cargo.toml.openmods.bak && cd .. && rm -rf codex-rs/target/openmods-package && CODEX_REPO_ROOT=\"$PWD\" CARGO_PROFILE_RELEASE_LTO=off CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 python3 scripts/build_codex_package.py --cargo-profile release --target \"$(rustc -vV | sed -n 's/^host: //p')\" --package-dir codex-rs/target/openmods-package",
+  "artifact": "codex-rs/target/openmods-package/bin/codex",
+  "keep": "codex-rs/target/openmods-package",
+  "dev": "(cd {root} && rm -rf codex-rs/target/openmods-dev-package && CODEX_REPO_ROOT={root} python3 scripts/build_codex_package.py --target \"$(rustc -vV | sed -n 's/^host: //p')\" --package-dir codex-rs/target/openmods-dev-package) && exec {root}/codex-rs/target/openmods-dev-package/bin/codex",
   "recipe": [
     {
       "file": "codex-rs/rust-toolchain.toml"
@@ -46,6 +48,15 @@
     {
       "file": "codex-rs/Cargo.toml",
       "lines": "^\\s*members\\s*=|^\\s*\"cli\","
+    },
+    {
+      "file": "scripts/build_codex_package.py"
+    },
+    {
+      "file": "scripts/codex_package/cli.py"
+    },
+    {
+      "file": "scripts/codex_package/cargo.py"
     }
   ],
   "releaseTagPattern": "rust-v[0-9]*"
