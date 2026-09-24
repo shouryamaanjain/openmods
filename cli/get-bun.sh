@@ -14,7 +14,8 @@ DIR="$2"
 
 # The build for this machine, named as Bun names its packages: the OS and
 # CPU, then -musl on musl-based Linux (Alpine), then -baseline on x86-64
-# CPUs without AVX2.
+# CPUs without AVX2. (GET_BUN_ROOT stands in for / in the tests.)
+ROOT="${GET_BUN_ROOT-}"
 case "$(uname -s) $(uname -m)" in
   "Darwin arm64") T=darwin-aarch64 ;;
   "Darwin x86_64")
@@ -30,8 +31,8 @@ case "$(uname -s) $(uname -m)" in
 esac
 case "$T" in
   linux-*)
-    if [ -f /etc/alpine-release ] || ldd --version 2>&1 | grep -qi musl; then T="$T-musl"; fi
-    if [ "${T#linux-x64}" != "$T" ] && ! grep -q avx2 /proc/cpuinfo 2>/dev/null; then T="$T-baseline"; fi ;;
+    if [ -f "$ROOT/etc/alpine-release" ] || ldd --version 2>&1 | grep -qi musl; then T="$T-musl"; fi
+    if [ "${T#linux-x64}" != "$T" ] && ! grep -q avx2 "$ROOT/proc/cpuinfo" 2>/dev/null; then T="$T-baseline"; fi ;;
 esac
 
 URL="https://registry.npmjs.org/@oven/bun-$T/-/bun-$T-$VERSION.tgz"
