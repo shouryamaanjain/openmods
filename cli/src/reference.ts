@@ -146,6 +146,25 @@ export const COMMANDS: Command[] = [
     audience: "users",
   },
   {
+    name: "dev",
+    usage: "openmods dev [harness-clone] [--name <mod>]\nopenmods dev --stop [--<harness>]",
+    short: "openmods dev [clone] | --stop",
+    summary: "Make the harness command run your clone from source, to try a mod as you write it.",
+    description: [
+      "Run it in your clone of a harness (or pass its path). From then on the harness command, e.g. opencode, runs that clone straight from source in whatever project you start it: edit, then start it again to see the change, with nothing to commit, pack or build. It installs the clone's dependencies once, with the toolchain its release pins, and reports a version like 1.18.32+my-mod-dev.",
+      "--stop switches back to your modded build, or to the stock harness when you have none. Installing, updating, or switching mods on or off also ends it, and says so.",
+    ],
+    flags: [
+      { flag: "--name <mod>", description: "The name in the version it reports; defaults to the branch name." },
+      { flag: "--stop", description: "Stop running the clone." },
+    ],
+    examples: [
+      { command: "cd ~/code/opencode && openmods dev", note: "then just run opencode" },
+      { command: "openmods dev --stop" },
+    ],
+    audience: "authors",
+  },
+  {
     name: "pack",
     usage: "openmods pack <harness-checkout> --name <mod> --registry <your registry fork> [--owner <you>] [--note <what changed>] [--harness <id>] [--base <tag>] [--force]\nopenmods pack <harness-checkout> --name <mod> --local",
     short: "openmods pack <checkout> --name <mod> --registry <fork>",

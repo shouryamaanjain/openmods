@@ -27,6 +27,8 @@ type Harness = {
   typecheck?: string
   build: string
   artifact: string
+  // Runs a clone from source, for `openmods dev`; see schema/harness.schema.json.
+  dev?: string
   releaseTagPattern?: string
 }
 
@@ -106,7 +108,7 @@ const positional: string[] = []
 // harness flags (--opencode, --codex, ...), so `install --opencode owner/mod`
 // never swallows the mod as the flag's value.
 const VALUE_FLAGS = new Set(["registry", "name", "owner", "harness", "base", "out", "ref", "workspace", "at", "note"])
-const SWITCHES = new Set(["build", "force", "help", "json", "local", "no-path", "typecheck"])
+const SWITCHES = new Set(["build", "force", "help", "json", "local", "no-path", "typecheck", "stop"])
 for (let i = 0; i < args.length; i++) {
   const a = args[i]!
   if (a.startsWith("--")) {
@@ -815,6 +817,37 @@ exec "$REAL" "$@"
 `
 }
 
+// `openmods dev`: the harness command runs a clone of the harness straight
+// from source, so each edit shows up the next time it starts; no packing,
+// committing or building. Which clone, per harness, lives in dev.json.
+type Dev = Record<string, { path: string; version: string }>
+const devFile = path.join(HOME, "dev.json")
+const loadDev = (): Dev => (existsSync(devFile) ? readJsonFile(devFile) : {})
+const saveDev = (d: Dev) => {
+  if (Object.keys(d).length) writeFileSync(devFile, JSON.stringify(d, null, 2) + "\n")
+  else rmSync(devFile, { force: true })
+}
+const devOf = (harnessId: string) => loadDev()[harnessId]
+
+function devLauncherOf(h: Harness, clone: string, version: string, toolchain: string | null) {
+  const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
+  const run = h.dev!.replaceAll("{root}", q(clone)).replaceAll("{version}", version)
+  return `#!/bin/sh
+# openmods dev: \`${h.binary}\` runs your clone at ${clone} from source.
+# \`openmods dev --stop\` switches back.
+${toolchain ? `PATH=${q(toolchain)}:"$PATH"; export PATH\n` : ""}${run} "$@"
+`
+}
+
+// Anything else that writes or removes the launcher ends dev mode, and says so.
+function endDev(h: Harness) {
+  const d = loadDev()
+  if (!d[h.id]) return
+  delete d[h.id]
+  saveDev(d)
+  log(`\`${h.binary}\` no longer runs your clone; \`openmods dev\` in it switches back.`)
+}
+
 // The launcher for a build that contains a revoked mod: it never runs the
 // build again. It says why on every launch and starts the stock harness.
 function revokedLauncherOf(h: Harness, bad: { id: string; reason: string }[], stock: string | null) {
@@ -834,6 +867,7 @@ ${stock ? `exec ${JSON.stringify(stock)} "$@"` : "exit 1"}
 }
 
 function switchOn(h: Harness, artifact: string) {
+  endDev(h)
   mkdirSync(BIN, { recursive: true })
   const target = path.join(BIN, h.binary)
   if (existsSync(target)) unlinkSync(target)
@@ -842,6 +876,7 @@ function switchOn(h: Harness, artifact: string) {
 }
 
 function switchOff(h: Harness) {
+  endDev(h)
   const target = path.join(BIN, h.binary)
   if (existsSync(target)) unlinkSync(target)
 }
@@ -1102,6 +1137,18 @@ async function cmdInfo() {
   }
 }
 
+/** Which harness a clone is: from --<harness> or --harness, else its origin remote. */
+async function harnessOfClone(reg: string, checkout: string): Promise<Harness> {
+  const remote = (await $`git -C ${checkout} remote get-url origin`.nothrow().text()).trim()
+  const harnesses = allHarnesses(reg)
+  return (
+    (flag("harness") ? harnesses.find((h) => h.id === flag("harness")) : undefined) ??
+    harnesses.find((h) => flags.get(h.id) === true) ??
+    harnesses.find((h) => remote.replace(/\.git$/, "").endsWith(h.repo.replace(/^https?:\/\/(www\.)?github\.com\//, "").replace(/\.git$/, ""))) ??
+    fail(`cannot tell which harness ${checkout} is; pass --harness <id>`)
+  )
+}
+
 const isPathSpec = (s: string) => s === "." || s === ".." || /^(\.{1,2}\/|\/|~)/.test(s)
 
 async function cmdInstall() {
@@ -1185,11 +1232,17 @@ async function cmdStatus() {
   const state = loadState()
   if (has("json")) return console.log(JSON.stringify(state, null, 2))
   const ids = Object.keys(state)
+  const dev = loadDev()
+  for (const [id, d] of Object.entries(dev)) {
+    const h = loadHarness(reg, id)
+    log(`${h.binary} → your clone, from source`)
+    log(`  dev     ${h.name} ${d.version}  ${pretty(d.path)}  (openmods dev --stop switches back)`)
+  }
   if (ids.length === 0) {
-    log("No mods installed. `openmods list` shows what is available.")
+    if (!Object.keys(dev).length) log("No mods installed. `openmods list` shows what is available.")
     return
   }
-  for (const id of ids) {
+  for (const id of ids.filter((i) => !dev[i])) {
     const h = loadHarness(reg, id)
     const e = state[id]!
     const stock = stockBinary(h)
@@ -1310,6 +1363,62 @@ async function cmdUpdate() {
   }
 }
 
+// Author command: the harness command runs a clone of the harness straight
+// from source, so an edit shows up the next time it starts.
+async function cmdDev() {
+  const reg = await ensureRegistry()
+  const state = loadState()
+  if (has("stop")) {
+    const d = loadDev()
+    const picked = harnessFlags(reg)
+    const ids = (picked.length ? picked : Object.keys(d)).filter((id) => d[id])
+    if (ids.length === 0) fail("no harness is running a clone; run `openmods dev` inside a harness clone to start")
+    for (const id of ids) {
+      const h = loadHarness(reg, id)
+      const e = state[id]
+      delete d[id]
+      saveDev(d)
+      if (e?.enabled && e.artifact && existsSync(e.artifact)) {
+        switchOn(h, e.artifact)
+        log(`\`${h.binary}\` runs your modded ${h.name} again: ${rel(e.ref)} + ${e.mods.filter((m) => !e.off.includes(m)).join(" + ")}.`)
+      } else {
+        switchOff(h)
+        log(`\`${h.binary}\` runs your stock ${h.name} again.`)
+      }
+    }
+    return
+  }
+
+  const clone = path.resolve(positional[1] ?? ".")
+  if (!existsSync(path.join(clone, ".git"))) fail(`${pretty(clone)} is not a clone of a harness. Run \`openmods dev\` inside your clone, or pass its path.`)
+  const h = await harnessOfClone(reg, clone)
+  if (!h.dev) fail(`${h.name} cannot run from source yet; \`openmods install .\` builds your clone instead`)
+  const release = (await $`git -C ${clone} describe --tags --abbrev=0 --match ${h.releaseTagPattern ?? "*"} HEAD`.nothrow().text()).trim()
+  const branch = (await $`git -C ${clone} rev-parse --abbrev-ref HEAD`.nothrow().text()).trim()
+  const fromBranch = branch === "HEAD" ? "" : branch.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "")
+  const name = flag("name") ?? (fromBranch || "dev")
+  const version = `${release ? rel(release) : "0.0.0"}+${name}-dev`
+
+  // Its dependencies, with the toolchain its release pins.
+  const toolchain = await ensureToolchain(clone)
+  if (toolchain) buildEnv = { ...buildEnv, PATH: `${toolchain}${path.delimiter}${process.env.PATH ?? ""}` }
+  log(`Installing ${h.name}'s dependencies in ${pretty(clone)}: ${h.install}`)
+  await shell(h.install, clone).catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)))
+
+  const d = loadDev()
+  d[h.id] = { path: clone, version }
+  saveDev(d)
+  mkdirSync(BIN, { recursive: true })
+  writeFileSync(path.join(BIN, h.binary), devLauncherOf(h, clone, version, toolchain), { mode: 0o755 })
+  const back = state[h.id]?.enabled ? "your modded build" : `your stock ${h.name}`
+  log("")
+  log(`\`${h.binary}\` now runs your clone at ${pretty(clone)} from source, as ${h.name} ${version}.`)
+  log(`Edit, then start \`${h.binary}\` again to see the change: nothing to commit, pack or build. \`openmods dev --stop\` switches back to ${back}.`)
+  const edited = setupPath()
+  if (edited) log(`Added ${pretty(BIN)} to the front of PATH in ${pretty(edited.rc)}; open a new terminal to use it.`)
+  else if (!pathHasBin()) log(`Note: ${pretty(BIN)} is not on PATH in this shell. Open a new terminal, or run: export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"`)
+}
+
 // Author command: turn commits on top of a harness release into a mod folder.
 async function cmdPack(opts: { quiet?: boolean } = {}): Promise<{ owner: string; name: string; harness: string }> {
   const reg = await ensureRegistry()
@@ -1324,13 +1433,7 @@ async function cmdPack(opts: { quiet?: boolean } = {}): Promise<{ owner: string;
   if (!ID.test(name)) fail("mod name must be lowercase letters, digits and hyphens")
   if (!existsSync(path.join(checkout, ".git"))) fail(`${checkout} is not a git checkout`)
 
-  const remote = (await $`git -C ${checkout} remote get-url origin`.nothrow().text()).trim()
-  const harnesses = allHarnesses(reg)
-  const harness =
-    (flag("harness") ? harnesses.find((h) => h.id === flag("harness")) : undefined) ??
-    harnesses.find((h) => flags.get(h.id) === true) ??
-    harnesses.find((h) => remote.replace(/\.git$/, "").endsWith(h.repo.replace(/^https?:\/\/(www\.)?github\.com\//, "").replace(/\.git$/, ""))) ??
-    fail(`cannot tell which harness ${checkout} is; pass --harness <id>`)
+  const harness = await harnessOfClone(reg, checkout)
 
   // The owner is the author's GitHub handle: --owner, else git's github.user,
   // else the GitHub CLI's login.
@@ -1567,6 +1670,11 @@ async function cmdCheckUpdates() {
     }
     const h = loadHarness(reg, id)
     const launcher = path.join(BIN, h.binary)
+    // In dev mode the launcher runs the author's clone; leave it alone.
+    if (devOf(id)) {
+      log(`${id}: runs your clone (openmods dev); no updates while it does.`)
+      continue
+    }
     // A revoked mod stops running: the launcher warns on every launch and
     // starts the stock harness instead, until the mod is uninstalled.
     const bad = revokedIn(reg, id, e)
@@ -1740,6 +1848,7 @@ const commands: Record<string, () => Promise<void>> = {
   off: cmdOff,
   update: cmdUpdate,
   pack: async () => void (await cmdPack()),
+  dev: cmdDev,
   check: cmdCheck,
   registry: cmdRegistry,
   "check-updates": cmdCheckUpdates,

@@ -31,6 +31,7 @@
   "typecheck": "cd codex-rs && cargo check -p codex-cli --bin codex",
   "build": "cd codex-rs && sed -i.openmods.bak '1,/^version = \"/s/^version = \"[^\"]*\"/version = \"'\"${OPENMODS_VERSION}+${OPENMODS_MODS}\"'\"/' Cargo.toml && rm -f Cargo.toml.openmods.bak && CARGO_PROFILE_RELEASE_LTO=off CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 cargo build --release -p codex-cli --bin codex",
   "artifact": "codex-rs/target/release/codex",
+  "dev": "(cd {root}/codex-rs && cargo build -p codex-cli --bin codex) && exec {root}/codex-rs/target/debug/codex",
   "recipe": [
     {
       "file": "codex-rs/rust-toolchain.toml"

@@ -104,7 +104,8 @@ A mod's updates are numbered: every time its author packs changed code, it becom
 git clone https://github.com/anomalyco/opencode && cd opencode
 git checkout v1.18.31            # the release you want to mod
 # ... change anything, then commit as many times as you like ...
-openmods install .                       # try it: builds OpenCode with your commits as a local mod
+openmods dev                             # try it: `opencode` now runs this clone from source; edit and rerun
+openmods install .                       # then build it as users will get it, as a local mod
 openmods pack . --name my-mod --registry ../openmods   # into your fork of the registry, for a pull request
 openmods check ../openmods/mods/<you>/my-mod/opencode --build   # build it once more; CI only typechecks
 ```
