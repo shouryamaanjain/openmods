@@ -635,7 +635,7 @@ async function ensureCheckout(h: Harness, root: string, commit: string, ref: str
   const have = await $`git -C ${root} cat-file -t ${commit}`.nothrow().quiet()
   if (have.exitCode !== 0) {
     log(`Fetching ${ref}`)
-    await $`git -C ${root} fetch --no-tags origin tag ${ref}`.quiet()
+    await $`git -C ${root} fetch --no-tags --depth 1 origin tag ${ref}`.quiet()
   }
   await clearApplyState(root)
   await $`git -C ${root} checkout -q --force --detach ${commit}`
@@ -650,7 +650,7 @@ async function ensureCheckout(h: Harness, root: string, commit: string, ref: str
 async function fetchBases(root: string, mod: Mod) {
   if (!mod.upstream.commit) return
   const have = await $`git -C ${root} cat-file -e ${mod.upstream.commit}^{commit}`.nothrow().quiet()
-  if (have.exitCode !== 0) await $`git -C ${root} fetch --no-tags --filter=blob:none origin ${mod.upstream.commit}`.nothrow().quiet()
+  if (have.exitCode !== 0) await $`git -C ${root} fetch --no-tags --depth 1 --filter=blob:none origin ${mod.upstream.commit}`.nothrow().quiet()
   for (const file of touchedFiles(mod)) await $`git -C ${root} cat-file -p ${mod.upstream.commit + ":" + file}`.nothrow().quiet()
 }
 
@@ -705,9 +705,8 @@ async function ensureToolchain(root: string): Promise<string | null> {
   const bin = path.join(dir, "bin")
   if (!existsSync(path.join(bin, "bun"))) {
     if (process.platform === "win32") fail(`this release needs bun ${want} (you have ${have || "none"}); install it from https://bun.sh`)
-    log(`This release builds with bun ${want} (you have ${have || "none"}); installing it under ${pretty(dir)}`)
-    mkdirSync(dir, { recursive: true })
-    const r = await $`curl -fsSL https://bun.sh/install | BUN_INSTALL=${dir} bash -s ${"bun-v" + want}`.nothrow().quiet()
+    log(`Getting Bun ${want}, the version this release builds with (once, into ${pretty(dir)})`)
+    const r = await $`sh ${path.resolve(import.meta.dir, "..", "get-bun.sh")} ${want} ${dir}`.nothrow().quiet()
     if (r.exitCode !== 0 || !existsSync(path.join(bin, "bun"))) fail(`could not install bun ${want}: ${r.stderr.toString().trim().split("\n").at(-1)}`)
   }
   return bin
@@ -1600,7 +1599,7 @@ async function cmdCheck() {
     : { harness: mod.harness, stock: true, ref }
   try {
     await initCheckout(h.repo, root)
-    await $`git -C ${root} fetch --no-tags --filter=blob:none origin tag ${ref}`.quiet()
+    await $`git -C ${root} fetch --no-tags --depth 1 --filter=blob:none origin tag ${ref}`.quiet()
     await clearApplyState(root)
     await $`git -C ${root} checkout -q --force --detach ${ref}`
     result.commit = (await $`git -C ${root} rev-parse HEAD`.text()).trim()
