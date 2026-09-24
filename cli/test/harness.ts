@@ -202,7 +202,7 @@ export const setLine = (n: number, text: string) => (dir: string) => {
 export const setGreeting = (text: string) => (dir: string) => writeFileSync(path.join(dir, "greet.sh"), `#!/bin/sh\necho ${text}\n`)
 export const addFile = (name: string, text: string) => (dir: string) => writeFileSync(path.join(dir, name), text)
 
-/** What `greet` prints right now through the launcher, or null when off. */
+/** What `greet` prints right now through the launcher, or null before the first install. */
 export async function greeting(sb: Sandbox) {
   const launcher = path.join(sb.om, "bin", "greet")
   if (!existsSync(launcher)) return null

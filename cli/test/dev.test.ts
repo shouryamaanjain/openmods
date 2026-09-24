@@ -36,7 +36,7 @@ describe("openmods dev", () => {
     const r = await cli(sb, "dev", "--stop")
     expect(r.code, r.all).toBe(0)
     expect(r.out).toContain("runs your stock Fake again")
-    expect(await greeting(sb)).toBeNull()
+    expect(await greeting(sb)).toBe("stock greet")
     expect((await cli(sb, "dev", "--stop")).code).toBe(1)
   })
   test("installing a mod ends dev mode and says so; --stop then returns to that build", async () => {

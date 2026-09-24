@@ -41,7 +41,7 @@ describe("install", () => {
 describe("on and off", () => {
   test("off makes greet stock again without rebuilding; on restores it", async () => {
     expect((await cli(sb, "off")).out).toContain("stock Fake again")
-    expect(await greeting(sb)).toBeNull()
+    expect(await greeting(sb)).toBe("stock greet")
     expect((await cli(sb, "on")).out).toContain("now runs Fake 1.0.0 + t/friendly")
     expect(await greeting(sb)).toBe("hello from friendly")
   })
@@ -61,10 +61,10 @@ describe("uninstall", () => {
   test("needs a target", async () => {
     expect((await cli(sb, "uninstall")).code).toBe(1)
   })
-  test("removes the launcher, the build and the patched commits", async () => {
+  test("removes the build and the patched commits; greet runs stock", async () => {
     const r = await cli(sb, "uninstall", "t/friendly")
     expect(r.out).toContain("Removed the modded Fake build")
-    expect(await greeting(sb)).toBeNull()
+    expect(await greeting(sb)).toBe("stock greet")
     expect(existsSync(path.join(sb.om, "harnesses", "fake", "builds"))).toBe(false)
     const head = (await $`git -C ${path.join(sb.om, "harnesses", "fake", "src")} log -1 --format=%s`.text()).trim()
     expect(head).toBe("initial")

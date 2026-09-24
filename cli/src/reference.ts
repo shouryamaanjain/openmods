@@ -240,7 +240,7 @@ export const ENVIRONMENT: Flag[] = [
 ]
 
 export const FILES: Flag[] = [
-  { flag: "~/.openmods/bin/<binary>", description: "The launcher for a harness; present only while on." },
+  { flag: "~/.openmods/bin/<binary>", description: "The launcher for a harness: the modded build while on, your stock one while off. It stays put so a shell that remembers commands (bash) keeps finding it." },
   { flag: "~/.openmods/harnesses/<id>/src", description: "The harness checkout, patched, kept as a cache." },
   { flag: "~/.openmods/harnesses/<id>/builds", description: "The current modded build, kept until a newer one succeeds." },
   { flag: "~/.openmods/toolchains/", description: "The Bun the CLI runs on, and the exact toolchain each harness release pins." },
