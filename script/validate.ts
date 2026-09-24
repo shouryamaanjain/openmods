@@ -34,6 +34,7 @@ for (const id of harnesses) {
     else
       for (const [k, v] of Object.entries(h.env))
         if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) || typeof v !== "string") errors.push(`harnesses/${id}.json: env.${k} must be a variable name set to a string`)
+        else if (k === "PATH") errors.push(`harnesses/${id}.json: env cannot set PATH; the launcher sets it up`)
   }
 }
 
