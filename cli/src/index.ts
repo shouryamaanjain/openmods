@@ -790,7 +790,10 @@ function keepBuild(h: Harness, harnessId: string, root: string, stamp: string) {
   mkdirSync(builds, { recursive: true })
   try {
     if (h.keep) cpSync(artifactPath(h, root, h.keep), staging, { recursive: true, verbatimSymlinks: true })
-    else cpSync(artifact, path.join(staging, inside))
+    else {
+      mkdirSync(staging)
+      cpSync(artifact, path.join(staging, inside))
+    }
   } catch (e) {
     rmSync(staging, { recursive: true, force: true })
     fail(`could not copy the build to ${dest}: ${e instanceof Error ? e.message : String(e)}`)
