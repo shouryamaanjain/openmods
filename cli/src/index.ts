@@ -1230,9 +1230,13 @@ async function cmdUninstall() {
 async function cmdStatus() {
   const reg = await ensureRegistry()
   const state = loadState()
-  if (has("json")) return console.log(JSON.stringify(state, null, 2))
-  const ids = Object.keys(state)
   const dev = loadDev()
+  if (has("json")) {
+    const out: Record<string, unknown> = { ...state }
+    for (const [id, d] of Object.entries(dev)) out[id] = { ...(state[id] ?? {}), dev: d }
+    return console.log(JSON.stringify(out, null, 2))
+  }
+  const ids = Object.keys(state)
   for (const [id, d] of Object.entries(dev)) {
     const h = loadHarness(reg, id)
     log(`${h.binary} → your clone, from source`)
@@ -1378,7 +1382,13 @@ async function cmdDev() {
       const e = state[id]
       delete d[id]
       saveDev(d)
-      if (e?.enabled && e.artifact && existsSync(e.artifact)) {
+      // A mod revoked while the clone ran never comes back: the build's
+      // launcher is the one that warns and starts the stock harness.
+      const bad = e ? revokedIn(reg, id, e) : []
+      if (e?.enabled && bad.length) {
+        writeFileSync(path.join(BIN, h.binary), revokedLauncherOf(h, bad, stockBinary(h)), { mode: 0o755 })
+        log(`${bad.map((b) => `${b.id} was removed from OpenMods: ${b.reason}`).join(" ")} \`${h.binary}\` runs your stock ${h.name}; \`openmods uninstall ${bad.map((b) => b.id).join(" ")}\` removes it.`)
+      } else if (e?.enabled && e.artifact && existsSync(e.artifact)) {
         switchOn(h, e.artifact)
         log(`\`${h.binary}\` runs your modded ${h.name} again: ${rel(e.ref)} + ${e.mods.filter((m) => !e.off.includes(m)).join(" + ")}.`)
       } else {
@@ -1397,7 +1407,9 @@ async function cmdDev() {
   const branch = (await $`git -C ${clone} rev-parse --abbrev-ref HEAD`.nothrow().text()).trim()
   const fromBranch = branch === "HEAD" ? "" : branch.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "")
   const name = flag("name") ?? (fromBranch || "dev")
-  const version = `${release ? rel(release) : "0.0.0"}+${name}-dev`
+  if (!ID.test(name)) fail("--name must be lowercase letters, digits and hyphens")
+  // Only characters a version can hold: it goes into the launcher script.
+  const version = `${release ? rel(release) : "0.0.0"}+${name}-dev`.replace(/[^0-9A-Za-z.+-]/g, "")
 
   // Its dependencies, with the toolchain its release pins.
   const toolchain = await ensureToolchain(clone)

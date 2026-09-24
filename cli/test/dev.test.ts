@@ -50,6 +50,25 @@ describe("openmods dev", () => {
     expect(stop.out).toContain("runs your modded Fake again")
     expect(await greeting(sb)).toBe("hello from friendly")
   })
+  test("names are letters, digits and hyphens, since they go into the launcher", async () => {
+    const r = await cli(sb, "dev", clone, "--fake", "--name", "x'; rm -rf ~; '")
+    expect(r.code).toBe(1)
+    expect(r.err).toContain("--name must be lowercase letters, digits and hyphens")
+  })
+  test("status --json reports the clone", async () => {
+    expect((await cli(sb, "dev", clone, "--fake")).code).toBe(0)
+    const j = JSON.parse((await cli(sb, "status", "--json")).out)
+    expect(j.fake.dev.version).toBe("1.0.0+my-mod-dev")
+    expect(j.fake.mods).toEqual(["t/friendly"])
+  })
+  test("--stop never brings back a build whose mod was revoked meanwhile", async () => {
+    writeFileSync(path.join(sb.reg, "revoked.json"), JSON.stringify({ revoked: [{ id: "t/friendly", reason: "It sends your files away." }] }))
+    const r = await cli(sb, "dev", "--stop")
+    expect(r.out).toContain("t/friendly was removed from OpenMods")
+    const run = await $`sh ${path.join(sb.om, "bin", "greet")}`.nothrow().quiet()
+    expect(run.stdout.toString().trim()).toBe("stock greet")
+    expect(run.stderr.toString()).toContain("removed from OpenMods")
+  })
   test("needs a clone", async () => {
     const r = await cli(sb, "dev", sb.T)
     expect(r.code).toBe(1)

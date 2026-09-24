@@ -165,9 +165,15 @@ async function harnessStandards() {
   ok = "Meets the harness standards."
   labels.add("harness")
   const ids = [...new Set(harnessFiles.map((f) => path.basename(f).replace(/\.json$/, "")))]
-  if (ids.length > 1) problems.push(`A pull request proposes or changes one harness. This one changes ${ids.join(", ")}.`)
   const outside = changed.filter((f) => !f.startsWith("harnesses/") && f !== "README.md")
-  if (outside.length) problems.push(`A harness's pull request changes only its definition in harnesses/, and at most the README's list of harnesses. This one also changes ${outside.join(", ")}.`)
+  // Maintainers change harness definitions along with OpenMods itself; a
+  // proposal from anyone else is one definition on its own.
+  if (admins.includes(author)) {
+    if (outside.some((f) => !f.endsWith(".md"))) labels.add("product")
+  } else {
+    if (ids.length > 1) problems.push(`A pull request proposes or changes one harness. This one changes ${ids.join(", ")}.`)
+    if (outside.length) problems.push(`A harness's pull request changes only its definition in harnesses/, and at most the README's list of harnesses. This one also changes ${outside.join(", ")}.`)
+  }
   for (const id of ids) {
     const file = `harnesses/${id}.json`
     const before = await atBase(file)
