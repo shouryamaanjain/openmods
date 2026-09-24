@@ -4,7 +4,7 @@
 // once more before the build gives up.
 import { beforeAll, describe, expect, test } from "bun:test"
 import { $ } from "bun"
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { addFile, cli, createHarness, createMod, git, greeting, release, sandbox, setGreeting } from "./harness"
 
@@ -63,6 +63,19 @@ describe("a kept build", () => {
     const [kept] = readdirSync(builds())
     const dir = path.join(builds(), kept!)
     expect([readdirSync(dir).sort(), readdirSync(path.join(dir, "res"))]).toEqual([["bin", "res"], ["helper"]])
+    expect(await greeting(sb)).toBe("hello from friendly")
+  })
+  // (Root reads any file, so there the copy cannot be made to fail this way.)
+  test.skipIf(process.getuid?.() === 0)("a rebuild whose copy fails leaves the build that runs whole", async () => {
+    const unreadable = "&& printf secret > out/pkg/res/locked && chmod 000 out/pkg/res/locked"
+    setBuild({ build: `${build} ${unreadable}`, artifact: "out/pkg/bin/greet", keep: "out/pkg" })
+    const r = await cli(sb, "update", "fake", "--force")
+    chmodSync(path.join(sb.om, "harnesses", "fake", "src", "out", "pkg", "res", "locked"), 0o644)
+    expect(r.code).toBe(1)
+    expect(r.err).toContain("could not copy the build")
+    const kept = readdirSync(builds())
+    expect(kept.length).toBe(1)
+    expect(readdirSync(path.join(builds(), kept[0]!, "res"))).toEqual(["helper"])
     expect(await greeting(sb)).toBe("hello from friendly")
   })
   test("without a keep folder, holds the binary's own folder", async () => {

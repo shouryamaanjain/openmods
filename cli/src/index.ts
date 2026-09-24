@@ -7,7 +7,7 @@
 // The stock install of the harness is never touched.
 
 import { $ } from "bun"
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import path from "node:path"
 import { footprint, incompatibility as whyNot, type Footprint } from "./overlap"
@@ -783,11 +783,25 @@ function keepBuild(h: Harness, harnessId: string, root: string, stamp: string) {
   const dest = path.join(builds, name)
   const artifact = artifactPath(h, root)
   const folder = h.keep ? artifactPath(h, root, h.keep) : path.dirname(artifact)
-  rmSync(dest, { recursive: true, force: true })
+  // Copied beside the builds first, then swapped in: a rebuild of the same
+  // release and mods replaces the folder the launcher runs, which must stay
+  // whole if the copy fails.
+  const staging = path.join(builds, `.${name}.${process.pid}`)
+  rmSync(staging, { recursive: true, force: true })
   mkdirSync(builds, { recursive: true })
-  cpSync(folder, dest, { recursive: true, verbatimSymlinks: true })
+  try {
+    cpSync(folder, staging, { recursive: true, verbatimSymlinks: true })
+  } catch (e) {
+    rmSync(staging, { recursive: true, force: true })
+    fail(`could not copy the build to ${dest}: ${e instanceof Error ? e.message : String(e)}`)
+  }
+  if (!existsSync(path.join(staging, path.relative(folder, artifact)))) {
+    rmSync(staging, { recursive: true, force: true })
+    fail(`could not copy the build to ${dest}`)
+  }
+  rmSync(dest, { recursive: true, force: true })
+  renameSync(staging, dest)
   const kept = path.join(dest, path.relative(folder, artifact))
-  if (!existsSync(kept)) fail(`could not copy the build to ${dest}`)
   for (const d of readdirSync(builds)) if (d !== name) rmSync(path.join(builds, d), { recursive: true, force: true })
   return kept
 }
