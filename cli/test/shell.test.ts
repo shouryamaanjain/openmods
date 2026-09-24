@@ -14,16 +14,21 @@ const bin = () => path.join(sb.om, "bin")
 const stockDir = () => path.join(sb.home, ".greet", "bin")
 
 // One bash session: `lines` run in order, sharing bash's memory of commands.
-async function bash(lines: string[]) {
-  const openmods = `bun ${CLI} --registry ${sb.reg} --no-path`
-  const script = lines.map((l) => l.replace(/^openmods /, `${openmods} `)).join("\n")
+// The lines are fixed text; paths reach them as quoted variables ($BIN,
+// $LINK, and the CLI and registry in the `openmods` function).
+async function bash(lines: string[], vars: Record<string, string> = {}) {
+  const script = ['openmods() { bun "$OM_CLI" --registry "$OM_REG" --no-path "$@"; }', ...lines].join("\n")
   const p = Bun.spawn(["bash", "--norc", "--noprofile", "-c", script], {
     env: {
       HOME: sb.home,
       OPENMODS_HOME: sb.om,
       OPENMODS_NO_CHECK: "1",
       OPENMODS_NO_PROMPT: "1",
-      PATH: `${bin()}:${stockDir()}:${path.dirname(process.execPath)}:/usr/bin:/bin`,
+      OM_CLI: CLI,
+      OM_REG: sb.reg,
+      BIN: bin(),
+      PATH: [bin(), stockDir(), path.dirname(process.execPath), "/usr/bin", "/bin"].join(":"),
+      ...vars,
     },
     stdout: "pipe",
     stderr: "pipe",
@@ -75,7 +80,7 @@ describe("with the mods off", () => {
   test("never starts itself, however PATH reaches it", async () => {
     const link = path.join(sb.T, "link-to-bin")
     symlinkSync(bin(), link)
-    const r = await bash([`PATH=${link}:.:$PATH`, `cd ${bin()}`, "greet"])
+    const r = await bash(['PATH="$LINK:.:$PATH"', 'cd "$BIN"', "greet"], { LINK: link })
     expect(r.code, r.all).toBe(0)
     expect(r.out.trim()).toBe("stock greet")
   })
