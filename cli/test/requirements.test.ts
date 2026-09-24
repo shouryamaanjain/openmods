@@ -25,6 +25,10 @@ describe("the install line", () => {
       "building Codex CLI needs a C compiler, pkg-config and libcap's development files. Install them with:\n\n  dnf install -y gcc make pkgconf libcap-devel\n",
     )
   })
+  test("a python3 older than 3.11 has no apt package to fix it, so its hint is given", () => {
+    const missing = on("linux", "Python 3.11 or newer", "pkg-config")
+    expect(missingMessage("Codex CLI", missing, "apt", false)).toBe(`building Codex CLI needs:\n${missing.map((r) => `  - ${r.hint}`).join("\n")}`)
+  })
   test("on a Mac, uses Homebrew and Xcode's installer", () => {
     const missing = on("darwin", "Python 3.11 or newer", "a C compiler")
     expect(missingMessage("Codex CLI", missing, "brew", false)).toBe(

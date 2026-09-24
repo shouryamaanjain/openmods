@@ -37,14 +37,22 @@
       "hint": "git"
     },
     {
-      "check": "python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))'",
-      "name": "Python 3.11 or newer",
+      "command": "python3",
+      "name": "Python 3",
       "packages": {
         "apt": "python3",
         "dnf": "python3",
         "brew": "python"
       },
-      "hint": "Python 3.11 or newer, for Codex's package builder (macOS's own python3 is older: brew install python)"
+      "hint": "Python 3.11 or newer, for Codex's package builder"
+    },
+    {
+      "check": "! command -v python3 >/dev/null || python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))'",
+      "name": "Python 3.11 or newer",
+      "packages": {
+        "brew": "python"
+      },
+      "hint": "Python 3.11 or newer as python3, for Codex's package builder: this python3 is older (Ubuntu 22.04's is 3.10; Ubuntu 24.04 and later have a newer one; on macOS, brew install python)"
     },
     {
       "command": "cc",
