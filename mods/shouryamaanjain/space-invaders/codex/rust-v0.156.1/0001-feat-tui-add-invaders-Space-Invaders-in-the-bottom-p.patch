@@ -42,10 +42,10 @@ index 42937b1945d7e06c3d6d48575d86df6f43e2a687..4d2da1b3e5b883b410b3a6213fdcccc6
                  | SlashCommand::MemoryDrop
 diff --git a/codex-rs/tui/src/bottom_pane/invaders_game.rs b/codex-rs/tui/src/bottom_pane/invaders_game.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b54613456a89492e53a90c6795cb5da2afd963aa
+index 0000000000000000000000000000000000000000..578fe4fff90ecbc0a52bdc997364c9862367cafe
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/invaders_game.rs
-@@ -0,0 +1,456 @@
+@@ -0,0 +1,460 @@
 +//! Space Invaders, the game itself: a field of `w` by `h` cells that steps
 +//! once per tick. `InvadersView` draws it in the bottom pane and feeds it keys.
 +//!
@@ -72,6 +72,8 @@ index 0000000000000000000000000000000000000000..b54613456a89492e53a90c6795cb5da2
 +const COOLDOWN: u32 = 3; // ticks between shots
 +const EXTRA_LIFE: u32 = 1500;
 +const MAX_LIVES: u32 = 5;
++/// Rows from a new wave's lowest row down to the ship's, however low waves start.
++const START_ROOM: i32 = 4;
 +pub(crate) const MIN_W: i32 = 24;
 +pub(crate) const MIN_H: i32 = 10;
 +
@@ -209,7 +211,9 @@ index 0000000000000000000000000000000000000000..b54613456a89492e53a90c6795cb5da2
 +        let cols = ((w - 4) / ALIEN_STEP).clamp(4, 11);
 +        let row_gap = if h >= 24 { 2 } else { 1 };
 +        let left = (w - (cols * ALIEN_STEP - 2)) / 2;
-+        let top = 2 + (wave as i32 - 1).min(4);
++        // Later waves start lower, but always with room above the ship.
++        let lowest_top = h - 1 - START_ROOM - (ROWS - 1) * row_gap;
++        let top = (2 + (wave as i32 - 1).min(4)).min(lowest_top).max(1);
 +        self.aliens = (0..ROWS)
 +            .flat_map(|r| {
 +                (0..cols).map(move |c| Alien {
@@ -504,10 +508,10 @@ index 0000000000000000000000000000000000000000..b54613456a89492e53a90c6795cb5da2
 +}
 diff --git a/codex-rs/tui/src/bottom_pane/invaders_tests.rs b/codex-rs/tui/src/bottom_pane/invaders_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7569895cd2b4179dcc92c7b16ab4e908c21446cd
+index 0000000000000000000000000000000000000000..ba78ff26e9fc12c205fe9240a2765edb52259da0
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/invaders_tests.rs
-@@ -0,0 +1,167 @@
+@@ -0,0 +1,183 @@
 +use super::*;
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
@@ -620,6 +624,22 @@ index 0000000000000000000000000000000000000000..7569895cd2b4179dcc92c7b16ab4e908
 +}
 +
 +#[test]
++fn later_waves_start_with_room_to_play_on_the_smallest_field() {
++    let mut g = game(MIN_W, MIN_H);
++    for _ in 0..5 {
++        for a in &mut g.aliens {
++            a.alive = false;
++        }
++        g.tick();
++    }
++    let lowest = g.aliens.iter().map(|a| a.y).max();
++    for _ in 0..40 {
++        g.tick();
++    }
++    assert_eq!((g.wave, lowest, g.over), (6, Some(MIN_H - 5), false));
++}
++
++#[test]
 +fn a_resize_keeps_the_score_lives_wave_and_a_game_over() {
 +    let mut g = game(40, 14);
 +    g.tick();
@@ -677,15 +697,15 @@ index 0000000000000000000000000000000000000000..7569895cd2b4179dcc92c7b16ab4e908
 +}
 diff --git a/codex-rs/tui/src/bottom_pane/invaders_view.rs b/codex-rs/tui/src/bottom_pane/invaders_view.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..934638f66d5946a71bfba90c4f91cd085089ffce
+index 0000000000000000000000000000000000000000..f7c6b7e8e8a3dcd453ca8cebe074b0ee1ee8d064
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/invaders_view.rs
-@@ -0,0 +1,265 @@
+@@ -0,0 +1,266 @@
 +//! `/invaders`: Space Invaders in the bottom pane, in place of the composer,
 +//! while Codex keeps working above it with its status line still in view.
 +//! The arrow keys, space and p belong to the game; Esc or Ctrl-C closes it.
-+//! The game is kept for the rest of the session, so `/invaders` reopens it
-+//! where it left off, paused.
++//! The game is kept for as long as Codex runs, so `/invaders` reopens it
++//! where it left off, paused, in this conversation or a new one.
 +
 +use std::cell::RefCell;
 +use std::sync::Mutex;
@@ -724,7 +744,8 @@ index 0000000000000000000000000000000000000000..934638f66d5946a71bfba90c4f91cd08
 +/// Border, header, a field of 14 rows, help line, border.
 +const HEIGHT: u16 = 18;
 +
-+/// The game between `/invaders` openings, for the rest of the session.
++/// The game between `/invaders` openings: kept for as long as Codex runs,
++/// across conversations, like a game left paused on the side.
 +static SAVED: Mutex<Option<Game>> = Mutex::new(None);
 +
 +pub(crate) struct InvadersView {
