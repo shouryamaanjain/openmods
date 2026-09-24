@@ -4,7 +4,7 @@
 // once more before the build gives up.
 import { beforeAll, describe, expect, test } from "bun:test"
 import { $ } from "bun"
-import { existsSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { addFile, cli, createHarness, createMod, git, greeting, release, sandbox, setGreeting } from "./harness"
 
@@ -46,6 +46,30 @@ describe("a harness checkout", () => {
     expect((await $`git -C ${checkout()} rev-parse HEAD~1`.text()).trim()).toBe(pinned)
     expect(existsSync(path.join(checkout(), "RETAG.md"))).toBe(true)
     expect(Number((await $`git -C ${checkout()} rev-list --count HEAD`.text()).trim())).toBe(2) // still no history
+  })
+})
+
+describe("a kept build", () => {
+  const builds = () => path.join(sb.om, "harnesses", "fake", "builds")
+  const setBuild = (fields: Record<string, unknown>) => writeFileSync(definition, JSON.stringify({ ...JSON.parse(readFileSync(definition, "utf8")), ...fields }))
+  const build = "mkdir -p out/bin && cp greet.sh out/bin/greet && chmod +x out/bin/greet && printf helper > out/bin/helper && printf junk > out/bin/junk"
+  test("holds the binary and its companions, and nothing else from the output folder", async () => {
+    setBuild({ build, companions: ["out/bin/helper"] })
+    await cli(sb, "uninstall", "t/friendly")
+    const r = await cli(sb, "install", "t/friendly")
+    expect(r.code, r.all).toBe(0)
+    const [kept] = readdirSync(builds())
+    expect(readdirSync(path.join(builds(), kept!)).sort()).toEqual(["greet", "helper"])
+    expect(await greeting(sb)).toBe("hello from friendly")
+  })
+  test("fails when a companion was not built, and keeps the build that runs", async () => {
+    setBuild({ build, companions: ["out/bin/missing-helper"] })
+    const r = await cli(sb, "update", "fake", "--force")
+    expect(r.code).toBe(1)
+    expect(r.err).toContain("the build finished without")
+    expect(r.err).toContain("out/bin/missing-helper")
+    expect(await greeting(sb)).toBe("hello from friendly")
+    setBuild({ companions: [] })
   })
 })
 

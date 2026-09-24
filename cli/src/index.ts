@@ -27,6 +27,9 @@ type Harness = {
   typecheck?: string
   build: string
   artifact: string
+  // Other files the build produces that the binary needs beside it, such as
+  // a helper executable it starts; see schema/harness.schema.json.
+  companions?: string[]
   // Runs a clone from source, for `openmods dev`; see schema/harness.schema.json.
   dev?: string
   // Set for the modded build (and a dev clone) when it starts, such as turning
@@ -596,8 +599,8 @@ const saveState = (s: State) => {
 
 // ------------------------------------------------------------------- build
 
-function artifactPath(h: Harness, root: string) {
-  return path.join(root, h.artifact.replaceAll("{os}", process.platform).replaceAll("{arch}", process.arch))
+function artifactPath(h: Harness, root: string, file = h.artifact) {
+  return path.join(root, file.replaceAll("{os}", process.platform).replaceAll("{arch}", process.arch))
 }
 
 async function checkRequirements(h: Harness) {
@@ -769,15 +772,21 @@ async function build(h: Harness, root: string) {
 // A harness's build script may wipe its output folder before compiling, so
 // a build that fails would leave nothing to run. Each successful build is
 // copied to its own folder and the launcher points there; the previous copy
-// stays until the new one exists, then the rest are cleared out.
-function keepBuild(h: Harness, harnessId: string, artifact: string, stamp: string) {
+// stays until the new one exists, then the rest are cleared out. Only the
+// binary and its companions are copied, not the rest of the build's output
+// folder (for a Rust harness, gigabytes of compiler output).
+function keepBuild(h: Harness, harnessId: string, root: string, stamp: string) {
   const builds = path.join(HOME, "harnesses", harnessId, "builds")
   const name = stamp.replace(/[^A-Za-z0-9._+-]/g, "_")
   const dest = path.join(builds, name)
   rmSync(dest, { recursive: true, force: true })
   mkdirSync(dest, { recursive: true })
-  cpSync(path.dirname(artifact), dest, { recursive: true })
-  const kept = path.join(dest, path.basename(artifact))
+  for (const file of [h.artifact, ...(h.companions ?? [])]) {
+    const from = artifactPath(h, root, file)
+    if (!existsSync(from)) fail(`the build finished without ${pretty(from)}`)
+    cpSync(from, path.join(dest, path.basename(from)))
+  }
+  const kept = path.join(dest, path.basename(artifactPath(h, root)))
   if (!existsSync(kept)) fail(`could not copy the build to ${dest}`)
   for (const d of readdirSync(builds)) if (d !== name) rmSync(path.join(builds, d), { recursive: true, force: true })
   return kept
@@ -1154,8 +1163,8 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     OPENMODS_VERSION: base.ref.replace(/^[^0-9]*/, ""),
     OPENMODS_MODS: stampOf(mods.filter((m) => m.id !== BASE_ID)),
   }
-  const built = await build(h, root).catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)))
-  const artifact = keepBuild(h, harnessId, built, `${rel(base.ref)}+${stampOf(mods.filter((m) => m.id !== BASE_ID))}`)
+  await build(h, root).catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)))
+  const artifact = keepBuild(h, harnessId, root, `${rel(base.ref)}+${stampOf(mods.filter((m) => m.id !== BASE_ID))}`)
   switchOn(h, artifact)
   state[harnessId] = {
     ref: base.ref,
