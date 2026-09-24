@@ -51,6 +51,10 @@
   "artifact": "codex-rs/target/openmods-package/bin/codex",
   "keep": "codex-rs/target/openmods-package",
   "dev": "(cd {root} && rm -rf codex-rs/target/openmods-dev-package && CODEX_REPO_ROOT={root} python3 scripts/build_codex_package.py --target \"$(rustc -vV | sed -n 's/^host: //p')\" --package-dir codex-rs/target/openmods-dev-package) && exec {root}/codex-rs/target/openmods-dev-package/bin/codex",
+  "args": [
+    "-c",
+    "check_for_update_on_startup=false"
+  ],
   "recipe": [
     {
       "file": "codex-rs/rust-toolchain.toml"
