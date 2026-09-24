@@ -32,8 +32,10 @@ if [ ! -x "$BUN" ]; then
   sh "$OM/registry/cli/get-bun.sh" "$BUN_VERSION" "$OM/toolchains/bun-$BUN_VERSION"
 fi
 
+# Bun caches the CLI's transpiled code; on Linux it would go in ~/.bun.
 cat > "$OM/bin/openmods" <<WRAP
 #!/bin/sh
+export BUN_RUNTIME_TRANSPILER_CACHE_PATH="\${BUN_RUNTIME_TRANSPILER_CACHE_PATH-$OM/cache/transpiler}"
 exec "$BUN" "$OM/registry/cli/src/index.ts" "\$@"
 WRAP
 chmod 755 "$OM/bin/openmods"
