@@ -188,6 +188,22 @@ describe("the harness standards", () => {
   })
 })
 
+describe("a maintainer's change", () => {
+  test("may change several harness definitions along with OpenMods itself", async () => {
+    for (const id of ["fake", "newh"]) {
+      const file = path.join(sb.reg, "harnesses", `${id}.json`)
+      const h = id === "fake" ? JSON.parse(readFileSync(file, "utf8")) : { ...JSON.parse(readFileSync(path.join(sb.reg, "harnesses", "fake.json"), "utf8")), id: "newh", name: "New", repo: "https://github.com/someone/newh", license: "MIT" }
+      writeFileSync(file, JSON.stringify({ ...h, dev: "exec sh {root}/greet.sh", license: "MIT", repo: h.repo.startsWith("file:") ? "https://github.com/someone/fake" : h.repo }))
+    }
+    writeFileSync(path.join(sb.reg, "schema", "harness.schema.json"), "{}\n")
+    await commit("maintainer: harness dev commands")
+    const r = await check("admin")
+    expect(r.code, r.out).toBe(0)
+    expect(r.out).toContain("Labels: harness, product")
+    expect((await check("someone")).code).toBe(1)
+  })
+})
+
 describe("labels for everything else", () => {
   test("a change to OpenMods itself is product, a docs-only change is docs", async () => {
     writeFileSync(path.join(sb.reg, "CONTRIBUTING.md"), "# Contributing\n\nMore steps.\n")

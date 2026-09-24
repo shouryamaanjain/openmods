@@ -121,6 +121,7 @@ export function registerHarness(sb: Sandbox, h: { id: string; name: string; bina
       typecheck: "echo typechecking && sh -n greet.sh",
       build: h.build ?? "echo building && mkdir -p out/bin && cp greet.sh out/bin/greet && chmod +x out/bin/greet",
       artifact: "out/bin/greet",
+      dev: "exec sh {root}/greet.sh",
       recipe: [{ file: "build.cfg" }, { file: "package.json", lines: '"packageManager"' }],
       releaseTagPattern: "v*",
     }),

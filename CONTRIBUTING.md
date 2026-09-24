@@ -15,16 +15,23 @@ Use the Bun version the release pins in its `package.json` `packageManager` fiel
 cd packages/tui && bun run typecheck
 ```
 
-## 2. Try it as a mod
+## 2. Try it
 
-From your OpenCode clone:
+From your OpenCode clone, once:
+
+```sh
+openmods dev
+```
+
+From then on `opencode` runs your clone straight from source, in whatever project you open it. Edit, then start `opencode` again to see the change: nothing to commit, pack or build. `openmods dev --stop` switches back to your modded build or your stock OpenCode.
+
+Before you publish, try it the way users will get it, built and alongside your other mods:
 
 ```sh
 openmods install .          # builds OpenCode with your commits, as the local mod <you>/<branch name>
-opencode
 ```
 
-It packs your commits on top of the release as a local mod and installs it the way users will run it, alongside your other mods and through the launcher. `--name` sets the mod's name when the branch name will not do. Local mods live in `~/.openmods/local` and are never published.
+It packs your commits (commit first) as a local mod in `~/.openmods/local`, which is never published. `--name` sets the mod's name when the branch name will not do.
 
 ## 3. Pack it into your fork of the registry
 
