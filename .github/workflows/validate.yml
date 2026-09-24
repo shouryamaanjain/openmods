@@ -55,12 +55,29 @@ jobs:
       fail-fast: false
       matrix:
         mod: ${{ fromJson(needs.changed-mods.outputs.mods) }}
+    # OpenCode mods are checked on a bare Ubuntu with only git, curl and tar,
+    # like many users' machines, so a step that needs a compiler or anything
+    # else OpenMods does not provide fails here before it fails for a user.
+    # Codex needs Rust and a C toolchain on any machine, so it keeps the
+    # runner's.
+    container: ${{ endsWith(matrix.mod, '/opencode') && 'ubuntu:24.04' || '' }}
     steps:
+      - name: Install git and curl
+        if: ${{ endsWith(matrix.mod, '/opencode') }}
+        run: apt-get update -qq && apt-get install -y -qq git curl ca-certificates >/dev/null
       - uses: actions/checkout@v4
+      - name: Bun, as install.sh sets it up
+        if: ${{ endsWith(matrix.mod, '/opencode') }}
+        run: |
+          v=$(sed -n 's/^BUN_VERSION=//p' install.sh)
+          sh cli/get-bun.sh "$v" "$HOME/.openmods/toolchains/bun-$v"
+          echo "$HOME/.openmods/toolchains/bun-$v/bin" >> "$GITHUB_PATH"
       - uses: oven-sh/setup-bun@v2
+        if: ${{ !endsWith(matrix.mod, '/opencode') }}
         with:
           bun-version: latest
       - name: Free disk space
+        if: ${{ !endsWith(matrix.mod, '/opencode') }}
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup || true
       - id: harness
         run: echo "id=$(echo '${{ matrix.mod }}' | cut -d/ -f4)" >> "$GITHUB_OUTPUT"
@@ -72,9 +89,10 @@ jobs:
             ~/.bun/install/cache
             work/${{ steps.harness.outputs.id }}/codex-rs/target
             work/${{ steps.harness.outputs.id }}/node_modules
-          key: typecheck-${{ steps.harness.outputs.id }}-pr-${{ github.sha }}
+          # The bare container starts from its own cache, not the runner's.
+          key: typecheck-${{ endsWith(matrix.mod, '/opencode') && 'bare-' || '' }}${{ steps.harness.outputs.id }}-pr-${{ github.sha }}
           restore-keys: |
-            typecheck-${{ steps.harness.outputs.id }}-
+            typecheck-${{ endsWith(matrix.mod, '/opencode') && 'bare-' || '' }}${{ steps.harness.outputs.id }}-
       # Apply and typecheck, as the release watch does. CI never builds a
       # harness; the author has built the mod with openmods check --build.
       - name: Apply and typecheck ${{ matrix.mod }}
