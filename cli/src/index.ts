@@ -723,14 +723,27 @@ async function ensureToolchain(root: string): Promise<string | null> {
   return bin
 }
 
+// A dependency install downloads thousands of packages, and on a slow or
+// flaky connection some fail. A second try usually finishes the job from
+// what the first one got.
+async function installDeps(h: Harness, root: string, what = "dependencies") {
+  log(`Installing ${what}: ${h.install}`)
+  try {
+    await shell(h.install, root)
+  } catch (e) {
+    if (!(e instanceof CommandFailed)) throw e
+    log("Some downloads failed. Trying once more.")
+    await shell(h.install, root)
+  }
+}
+
 // The compiler's front half: verifies every name, type and signature a mod
 // relies on without producing a binary. Minutes instead of the full build.
 async function typecheck(h: Harness, root: string) {
   const cmd = h.typecheck ?? fail(`${h.name} has no typecheck command in its harness definition`)
   const toolchain = await ensureToolchain(root)
   if (toolchain) buildEnv = { ...buildEnv, PATH: `${toolchain}${path.delimiter}${process.env.PATH ?? ""}` }
-  log(`Installing dependencies: ${h.install}`)
-  await shell(h.install, root)
+  await installDeps(h, root)
   log(`Typechecking: ${cmd}`)
   await shell(cmd, root)
 }
@@ -738,8 +751,7 @@ async function typecheck(h: Harness, root: string) {
 async function build(h: Harness, root: string) {
   const toolchain = await ensureToolchain(root)
   if (toolchain) buildEnv = { ...buildEnv, PATH: `${toolchain}${path.delimiter}${process.env.PATH ?? ""}` }
-  log(`Installing dependencies: ${h.install}`)
-  await shell(h.install, root)
+  await installDeps(h, root)
   log(`Building: ${h.build}`)
   await shell(h.build, root)
   const artifact = artifactPath(h, root)
@@ -1424,8 +1436,7 @@ async function cmdDev() {
   // Its dependencies, with the toolchain its release pins.
   const toolchain = await ensureToolchain(clone)
   if (toolchain) buildEnv = { ...buildEnv, PATH: `${toolchain}${path.delimiter}${process.env.PATH ?? ""}` }
-  log(`Installing ${h.name}'s dependencies in ${pretty(clone)}: ${h.install}`)
-  await shell(h.install, clone).catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)))
+  await installDeps(h, clone, `${h.name}'s dependencies in ${pretty(clone)}`).catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)))
 
   const d = loadDev()
   d[h.id] = { path: clone, version }

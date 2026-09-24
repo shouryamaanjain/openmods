@@ -1,0 +1,51 @@
+// What a build asks of the machine and the network: a harness checkout holds
+// only the release it builds, not the history behind it, and a dependency
+// install that fails partway, as downloads do on a slow connection, is tried
+// once more before the build gives up.
+import { beforeAll, describe, expect, test } from "bun:test"
+import { $ } from "bun"
+import { existsSync, readFileSync, writeFileSync } from "node:fs"
+import path from "node:path"
+import { addFile, cli, createHarness, createMod, greeting, release, sandbox, setGreeting } from "./harness"
+
+const sb = sandbox("machines")
+const checkout = () => path.join(sb.om, "harnesses", "fake", "src")
+const definition = path.join(sb.reg, "harnesses", "fake.json")
+const setInstall = (install: string) => writeFileSync(definition, JSON.stringify({ ...JSON.parse(readFileSync(definition, "utf8")), install }))
+
+beforeAll(async () => {
+  await createHarness(sb)
+  await release(sb, "v1.0.1", addFile("NOTES.md", "a commit the build does not need\n"))
+  await release(sb, "v1.0.2", addFile("NOTES.md", "and another\n"))
+})
+
+describe("a harness checkout", () => {
+  test("holds only the release it builds", async () => {
+    await createMod(sb, "friendly", setGreeting("hello from friendly"))
+    const r = await cli(sb, "install", "t/friendly")
+    expect(r.code, r.all).toBe(0)
+    expect(await greeting(sb)).toBe("hello from friendly")
+    expect(existsSync(path.join(checkout(), ".git", "shallow"))).toBe(true)
+    const commits = Number((await $`git -C ${checkout()} rev-list --count HEAD`.text()).trim())
+    expect(commits).toBe(2) // the release and the mod's one patch
+  })
+})
+
+describe("a dependency install", () => {
+  test("that fails once is tried again", async () => {
+    const marker = path.join(sb.T, "tried")
+    setInstall(`[ -f ${marker} ] || { touch ${marker}; echo "download failed" >&2; exit 1; }`)
+    await cli(sb, "uninstall", "t/friendly")
+    const r = await cli(sb, "install", "t/friendly")
+    expect(r.code, r.all).toBe(0)
+    expect(r.all).toContain("Some downloads failed. Trying once more.")
+    expect(await greeting(sb)).toBe("hello from friendly")
+  })
+  test("that fails twice stops the build", async () => {
+    setInstall("echo 'download failed' >&2; exit 1")
+    await cli(sb, "uninstall", "t/friendly")
+    const r = await cli(sb, "install", "t/friendly")
+    expect(r.code).toBe(1)
+    expect(r.all).toContain("Trying once more.")
+  })
+})
