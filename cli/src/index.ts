@@ -1147,7 +1147,6 @@ function explainSwitch(h: Harness, entry: State[string]) {
 // Nothing else moves the user to another release.
 async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[] = [], adding: string[] = [], target?: string) {
   const h = loadHarness(reg, harnessId)
-  await checkRequirements(h)
   const root = path.join(HOME, "harnesses", harnessId, "src")
   const state = loadState()
   if (all.length === 0) {
@@ -1225,6 +1224,9 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
       )
     }
   }
+  // Only now that there is something to build: turning mods off or removing
+  // them needs none of it.
+  await checkRequirements(h)
   const base = mods[0]!.upstream
   const builds = path.join(HOME, "harnesses", harnessId, "builds")
   const first = !existsSync(builds) || readdirSync(builds).length === 0

@@ -79,6 +79,10 @@ jobs:
       - name: Free disk space
         if: ${{ !endsWith(matrix.mod, '/opencode') }}
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup || true
+      # What a Codex build needs on Linux, as Codex's own release installs.
+      - name: pkg-config and libcap for Codex
+        if: ${{ endsWith(matrix.mod, '/codex') }}
+        run: sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends pkg-config libcap-dev >/dev/null
       - id: harness
         run: echo "id=$(echo '${{ matrix.mod }}' | cut -d/ -f4)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v4

@@ -125,6 +125,15 @@ describe("what a build needs", () => {
     expect(r.all).not.toContain("Fetching")
     expect(existsSync(checkout) ? readdirSync(checkout).length : 0).toBe(before)
   })
+  test("are not needed to turn mods off or remove them", async () => {
+    const saved = readFileSync(definition, "utf8")
+    writeFileSync(definition, JSON.stringify({ ...JSON.parse(saved), requirements: [{ check: "exit 1", hint: "something missing" }] }))
+    const off = await cli(sb, "off", "t/friendly")
+    const removed = await cli(sb, "uninstall", "t/friendly")
+    writeFileSync(definition, saved)
+    expect([off.code, removed.code], off.all + removed.all).toEqual([0, 0])
+    expect(await cli(sb, "install", "t/friendly")).toMatchObject({ code: 0 })
+  })
 })
 
 describe("a dependency install", () => {
