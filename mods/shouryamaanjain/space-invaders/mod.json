@@ -2,7 +2,7 @@
   "$schema": "../../../schema/mod.schema.json",
   "owner": "shouryamaanjain",
   "name": "space-invaders",
-  "description": "Adds /invaders: Space Invaders in the right half of the session screen while the agent keeps working in the left.",
+  "description": "Adds /invaders: Space Invaders while the agent keeps working, in the right half of OpenCode's session screen or in Codex's bottom pane.",
   "author": {
     "name": "Shouryamaan Jain",
     "github": "shouryamaanjain"
