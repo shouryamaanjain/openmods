@@ -23,7 +23,9 @@ type Harness = {
   // harness the user does not have; `paths` are the folders it installs the
   // binary into, so it is found before the shell's PATH picks them up.
   installer?: { command: string; paths?: string[] }
-  requirements?: { command: string; hint: string }[]
+  // What a build needs on the machine: a command on PATH, or a `check` that
+  // must succeed (a library, say), on every OS or only on `os`.
+  requirements?: { command?: string; check?: string; os?: string; hint: string }[]
   install: string
   typecheck?: string
   build: string
@@ -612,11 +614,19 @@ function artifactPath(h: Harness, root: string, file = h.artifact) {
   return path.join(root, file.replaceAll("{os}", process.platform).replaceAll("{arch}", process.arch))
 }
 
+// Before anything is fetched or built, so a missing tool or library is
+// found in a second, not at the end of a long build. All of them at once.
 async function checkRequirements(h: Harness) {
+  const missing: string[] = []
   for (const r of h.requirements ?? []) {
+    if (r.os && r.os !== process.platform) continue
     if (r.command === "bun") continue // provisioned per release by ensureToolchain
-    if (!Bun.which(r.command)) fail(`${h.name} needs "${r.command}". ${r.hint}`)
+    const ok = r.check
+      ? (await $`sh -c ${r.check}`.nothrow().quiet()).exitCode === 0
+      : !r.command || !!Bun.which(r.command)
+    if (!ok) missing.push(r.hint)
   }
+  if (missing.length) fail(`building ${h.name} needs:\n${missing.map((m) => `  - ${m}`).join("\n")}`)
 }
 
 // Leaves no `git am` in progress. `git am --abort` is enough on most git

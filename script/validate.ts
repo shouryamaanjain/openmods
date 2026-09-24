@@ -30,6 +30,11 @@ for (const id of harnesses) {
   }
   if (h.keep !== undefined && (typeof h.keep !== "string" || !String(h.artifact).startsWith(`${h.keep.replace(/\/+$/, "")}/`)))
     errors.push(`harnesses/${id}.json: keep must be a folder that contains the artifact`)
+  for (const r of h.requirements ?? []) {
+    if (typeof r?.hint !== "string" || !r.hint || (typeof r.command !== "string" && typeof r.check !== "string"))
+      errors.push(`harnesses/${id}.json: each requirement needs a hint and a command or a check`)
+    else if (r.os !== undefined && !["darwin", "linux", "win32"].includes(r.os)) errors.push(`harnesses/${id}.json: requirement os must be darwin, linux or win32`)
+  }
   // Set for the modded build when it starts.
   if (h.env !== undefined) {
     if (typeof h.env !== "object" || h.env === null || Array.isArray(h.env)) errors.push(`harnesses/${id}.json: env must be an object of variable names to strings`)

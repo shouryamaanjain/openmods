@@ -65,20 +65,46 @@
     },
     "requirements": {
       "type": "array",
+      "description": "What a build needs on the machine, checked before anything is fetched or built. Each is a command that must be on PATH, or a check, a shell command that must succeed (for a library, say), on every OS or only on os.",
       "items": {
         "type": "object",
         "required": [
-          "command",
           "hint"
         ],
+        "additionalProperties": false,
         "properties": {
           "command": {
             "type": "string"
           },
-          "hint": {
+          "check": {
             "type": "string"
+          },
+          "os": {
+            "type": "string",
+            "enum": [
+              "darwin",
+              "linux",
+              "win32"
+            ],
+            "description": "Only on this OS, as Node names it."
+          },
+          "hint": {
+            "type": "string",
+            "description": "What to install, shown when it is missing."
           }
-        }
+        },
+        "anyOf": [
+          {
+            "required": [
+              "command"
+            ]
+          },
+          {
+            "required": [
+              "check"
+            ]
+          }
+        ]
       }
     },
     "install": {

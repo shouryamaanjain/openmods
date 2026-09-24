@@ -16,19 +16,33 @@
   "requirements": [
     {
       "command": "rustup",
-      "hint": "Install Rust with rustup from https://rustup.rs; rustup picks up the toolchain each release pins"
+      "hint": "Rust, installed with rustup: https://rustup.rs (it picks up the toolchain each Codex release pins)"
     },
     {
       "command": "cargo",
-      "hint": "Install Rust with rustup from https://rustup.rs"
+      "hint": "Rust's cargo, installed with rustup: https://rustup.rs"
     },
     {
       "command": "git",
-      "hint": "Install git"
+      "hint": "git"
     },
     {
-      "command": "python3",
-      "hint": "Install Python 3.11 or newer; Codex builds with its own package builder, scripts/build_codex_package.py"
+      "check": "python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))'",
+      "hint": "Python 3.11 or newer, for Codex's package builder (macOS's own python3 is older: brew install python)"
+    },
+    {
+      "command": "cc",
+      "hint": "a C compiler: build-essential on Debian or Ubuntu, Xcode's command line tools on macOS (xcode-select --install)"
+    },
+    {
+      "command": "pkg-config",
+      "os": "linux",
+      "hint": "pkg-config: sudo apt install pkg-config (Debian, Ubuntu) or sudo dnf install pkgconf (Fedora)"
+    },
+    {
+      "check": "pkg-config --exists libcap",
+      "os": "linux",
+      "hint": "libcap's development files, for Codex's sandbox: sudo apt install libcap-dev (Debian, Ubuntu) or sudo dnf install libcap-devel (Fedora)"
     }
   ],
   "install": "true",

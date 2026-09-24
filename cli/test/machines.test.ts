@@ -98,6 +98,35 @@ describe("a kept build", () => {
   })
 })
 
+describe("what a build needs", () => {
+  test("is checked before anything is fetched, and all that is missing is listed at once", async () => {
+    const saved = readFileSync(definition, "utf8")
+    const other = process.platform === "linux" ? "darwin" : "linux"
+    writeFileSync(
+      definition,
+      JSON.stringify({
+        ...JSON.parse(saved),
+        requirements: [
+          { command: "surely-not-an-installed-command", hint: "the first thing" },
+          { check: "exit 1", hint: "the second thing" },
+          { check: "exit 1", os: other, hint: "a thing for another OS" },
+          { check: "exit 0", hint: "a thing that is there" },
+        ],
+      }),
+    )
+    const checkout = path.join(sb.om, "harnesses", "fake", "src")
+    const before = existsSync(checkout) ? readdirSync(checkout).length : 0
+    const r = await cli(sb, "update", "fake", "--force")
+    writeFileSync(definition, saved)
+    expect(r.code).toBe(1)
+    expect(r.err).toContain("building Fake needs:\n  - the first thing\n  - the second thing")
+    expect(r.err).not.toContain("another OS")
+    expect(r.err).not.toContain("that is there")
+    expect(r.all).not.toContain("Fetching")
+    expect(existsSync(checkout) ? readdirSync(checkout).length : 0).toBe(before)
+  })
+})
+
 describe("a dependency install", () => {
   test("that fails once is tried again", async () => {
     const marker = path.join(sb.T, "tried")
