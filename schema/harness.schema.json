@@ -97,6 +97,19 @@
       "type": "string",
       "description": "Shell command that runs a clone of the harness from source, for `openmods dev`. {root} is the clone's path and {version} a version like 1.18.32+my-mod-dev; the user's arguments are appended. It runs in the user's project folder with the release's pinned toolchain on PATH, and should end in exec."
     },
+    "env": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+        "not": {
+          "const": "PATH"
+        }
+      },
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Environment variables the modded build runs with, and a clone under `openmods dev`. For settings a modded build needs, such as turning off the harness's own self-update, since OpenMods offers the updates."
+    },
     "releaseTagPattern": {
       "type": "string",
       "description": "Glob for release tags, used by the compatibility checker."

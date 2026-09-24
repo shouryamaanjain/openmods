@@ -29,6 +29,9 @@ type Harness = {
   artifact: string
   // Runs a clone from source, for `openmods dev`; see schema/harness.schema.json.
   dev?: string
+  // Set for the modded build (and a dev clone) when it starts, such as turning
+  // off the harness's own self-update: OpenMods offers updates for it.
+  env?: Record<string, string>
   releaseTagPattern?: string
 }
 
@@ -795,6 +798,17 @@ const pretty = (p: string) => p.replace(homedir(), "~")
 // or a new update of one of them) the next launch asks, once. A no is final
 // for that offer: it asks again only when there is something new. It never
 // rebuilds without a yes.
+// `export` lines for a harness's env, quoted like the rest of the launcher.
+// Names that are not shell variable names are left out, and so is PATH,
+// which the launcher sets up itself (the dev clone's pinned toolchain).
+function envOf(h: Harness) {
+  const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
+  return Object.entries(h.env ?? {})
+    .filter(([k]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k) && k !== "PATH")
+    .map(([k, v]) => `export ${k}=${q(v)}\n`)
+    .join("")
+}
+
 function launcherOf(h: Harness, artifact: string) {
   const cli = Bun.which("openmods") ?? `${process.execPath} ${path.resolve(import.meta.path)}`
   return `#!/bin/sh
@@ -824,7 +838,7 @@ if { { [ -t 0 ] && [ -t 1 ]; } || [ -n "$OPENMODS_ASSUME_TTY" ]; } && [ -z "$OPE
     printf '%s\n' "$KEY" > "$NOTE.seen"
     printf '%s\n' "$MESSAGE"
     if [ "$ASK" = 1 ]; then
-      printf '%s' "Update now? It rebuilds ${h.name}, which takes a few minutes. [y/N] "
+      printf '%s' "Update now? It rebuilds ${h.name}, which usually takes a minute or two. [y/N] "
       read -r ANSWER
       case "$ANSWER" in
         y|Y|yes|YES)
@@ -839,14 +853,16 @@ if { { [ -t 0 ] && [ -t 1 ]; } || [ -n "$OPENMODS_ASSUME_TTY" ]; } && [ -z "$OPE
   fi
 fi
 
-exec "$REAL" "$@"
+${envOf(h)}exec "$REAL" "$@"
 `
 }
 
 // `openmods dev`: the harness command runs a clone of the harness straight
 // from source, so each edit shows up the next time it starts; no packing,
 // committing or building. Which clone, per harness, lives in dev.json.
-type Dev = Record<string, { path: string; version: string }>
+// `toolchain` is kept so the launcher can be written again later (older
+// entries lack it and keep their launcher until the next `openmods dev`).
+type Dev = Record<string, { path: string; version: string; toolchain?: string | null }>
 const devFile = path.join(HOME, "dev.json")
 const loadDev = (): Dev => (existsSync(devFile) ? readJsonFile(devFile) : {})
 const saveDev = (d: Dev) => {
@@ -861,8 +877,25 @@ function devLauncherOf(h: Harness, clone: string, version: string, toolchain: st
   return `#!/bin/sh
 # openmods dev: \`${h.binary}\` runs your clone at ${clone} from source.
 # \`openmods dev --stop\` switches back.
-${toolchain ? `PATH=${q(toolchain)}:"$PATH"; export PATH\n` : ""}${run} "$@"
+${toolchain ? `PATH=${q(toolchain)}:"$PATH"; export PATH\n` : ""}${envOf(h)}${run} "$@"
 `
+}
+
+// A launcher written by an older openmods, or before the harness's env
+// changed, is brought up to date without a rebuild: the dev clone's while it
+// runs one. Never a revoked build's, which must keep refusing to run it.
+function refreshLauncher(reg: string, h: Harness, e: State[string] | undefined) {
+  const launcher = path.join(BIN, h.binary)
+  if (!existsSync(launcher)) return
+  const dev = loadDev()[h.id]
+  if (dev) {
+    if (dev.toolchain === undefined || !h.dev) return
+    const want = devLauncherOf(h, dev.path, dev.version, dev.toolchain)
+    if (readFileSync(launcher, "utf8") !== want) writeFileSync(launcher, want, { mode: 0o755 })
+    return
+  }
+  if (!e?.enabled || !e.artifact || revokedIn(reg, h.id, e).length) return
+  if (readFileSync(launcher, "utf8") !== launcherOf(h, e.artifact)) switchOn(h, e.artifact)
 }
 
 // Anything else that writes or removes the launcher ends dev mode, and says so.
@@ -1386,6 +1419,8 @@ async function cmdUpdate() {
         return v ? e.hashes[m.id] === patchHash(v) : e.hashes[m.id] === undefined
       })
     if (same && !has("force")) {
+      // For anyone who turned the daily check off, this is where it happens.
+      refreshLauncher(reg, loadHarness(reg, id), e)
       log(`${loadHarness(reg, id).name} ${rel(e.ref)} + ${active.map((m) => m.id).join(" + ")} is already up to date.`)
       continue
     }
@@ -1443,7 +1478,7 @@ async function cmdDev() {
   await installDeps(h, clone, `${h.name}'s dependencies in ${pretty(clone)}`).catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)))
 
   const d = loadDev()
-  d[h.id] = { path: clone, version }
+  d[h.id] = { path: clone, version, toolchain }
   saveDev(d)
   mkdirSync(BIN, { recursive: true })
   writeFileSync(path.join(BIN, h.binary), devLauncherOf(h, clone, version, toolchain), { mode: 0o755 })
@@ -1709,6 +1744,7 @@ async function cmdCheckUpdates() {
     const launcher = path.join(BIN, h.binary)
     // In dev mode the launcher runs the author's clone; leave it alone.
     if (devOf(id)) {
+      refreshLauncher(reg, h, e)
       log(`${id}: runs your clone (openmods dev); no updates while it does.`)
       continue
     }
@@ -1722,9 +1758,9 @@ async function cmdCheckUpdates() {
       if (has("json")) console.log(JSON.stringify({ current: rel(e.ref), revoked: bad }))
       continue
     }
-    // A launcher written by an older openmods is brought up to date, so a
-    // change to how it asks reaches everyone without a rebuild.
-    if (e.enabled && existsSync(launcher) && e.artifact && readFileSync(launcher, "utf8") !== launcherOf(h, e.artifact)) switchOn(h, e.artifact)
+    // A change to how the launcher asks, or to the harness's env, reaches
+    // everyone without a rebuild.
+    refreshLauncher(reg, h, e)
     // A mod the registry no longer has keeps running as built; it just has no updates.
     const active = e.mods.filter((n) => !e.off.includes(n)).flatMap((n) => findMod(reg, n, id) ?? [])
     const offer = updateOffer(h, e, active, baseFor(reg, id))
