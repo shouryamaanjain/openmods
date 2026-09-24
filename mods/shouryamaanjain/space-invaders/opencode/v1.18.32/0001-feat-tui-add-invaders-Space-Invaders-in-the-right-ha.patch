@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Shouryamaan Jain <jainshouryamaan@gmail.com>
-Date: Thu, 24 Sep 2026 06:33:09 +0530
+From: shouryamaanjain <jainshouryamaan@gmail.com>
+Date: Thu, 24 Sep 2026 06:41:00 +0530
 Subject: [PATCH] feat(tui): add /invaders, Space Invaders in the right half of
  the session
 
@@ -48,10 +48,10 @@ index 6852311f9e845639027804d8d18c7b3c23475b6e..fff5c16ef4b257de8a2a8ed216917abe
          title: "Exit the app",
 diff --git a/packages/tui/src/component/invaders.tsx b/packages/tui/src/component/invaders.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..9f577f060459d9ccb1021d9d0d2a70ad8a767cf3
+index 0000000000000000000000000000000000000000..e79890dbf9f045a091cfc0ce3fc9241d06821e78
 --- /dev/null
 +++ b/packages/tui/src/component/invaders.tsx
-@@ -0,0 +1,445 @@
+@@ -0,0 +1,453 @@
 +import { TextAttributes, type BoxRenderable, type RGBA } from "@opentui/core"
 +import { createEffect, createMemo, createRoot, createSignal, For, onCleanup, Show } from "solid-js"
 +import { usePromptRef } from "../context/prompt"
@@ -314,14 +314,22 @@ index 0000000000000000000000000000000000000000..9f577f060459d9ccb1021d9d0d2a70ad
 +    },
 +    pause: () => setPaused(!paused()),
 +    // The field is the measured size of its box. When the terminal is
-+    // resized mid-game, the current wave starts again at the new size,
-+    // keeping the score, lives and wave.
++    // resized, the current wave starts again at the new size, keeping the
++    // score, lives, wave and a game over; only a game with nothing to lose
++    // starts fresh.
 +    resize: (w: number, h: number) => {
 +      w = Math.max(24, Math.floor(w))
 +      h = Math.max(12, Math.floor(h))
 +      size = { w, h }
 +      if (m && m.w === w && m.h === h) return
-+      m = !m || m.over || m.ticks === 0 ? build(w, h, 1) : build(w, h, m.wave, m)
++      const played = m && (m.ticks > 0 || m.score > 0 || m.wave > 1 || m.over)
++      if (!m || !played) m = build(w, h, 1)
++      else {
++        const { over, ticks } = m
++        m = build(w, h, m.wave, m)
++        m.over = over
++        m.ticks = ticks
++      }
 +      redraw()
 +    },
 +    left: () => move(-1),
