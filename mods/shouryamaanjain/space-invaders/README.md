@@ -14,7 +14,7 @@ Adds a `/invaders` slash command (also `/space-invaders`) that opens Space Invad
 | `p` | pause and resume |
 | `esc` | close the game (`ctrl-c` too, in Codex); it pauses, and `/invaders` brings it back where it left off |
 
-Five rows of invaders march across and down, faster as they thin out, and drop bombs. You can have three shots in the air at once. A mystery ship crosses the top now and then for bonus points. You start with three lives and earn another every 1500 points, up to five; clear a wave and the next starts lower. The field fits the space it gets, and starts the current wave again if you resize the terminal.
+Five rows of invaders march across and down, faster as they thin out, and drop bombs. You can have three shots in the air at once. A mystery ship crosses the top now and then for bonus points. You start with three lives and earn another every 1500 points, up to five; clear a wave and the next starts lower, as far as the field has room above your ship. The field fits the space it gets, and starts the current wave again if you resize the terminal.
 
 While the game is open it has the keyboard, so playing never types into your prompt. In OpenCode the prompt stays in view; in Codex the input box comes back when you close the game.
 
