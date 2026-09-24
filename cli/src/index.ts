@@ -682,7 +682,10 @@ class CommandFailed extends Error {}
 async function shell(cmd: string, cwd: string) {
   // With --json, stdout carries only the JSON result: a harness's install,
   // build and typecheck output goes to stderr instead.
-  const proc = Bun.spawn(["sh", "-c", cmd], { cwd, stdio: ["inherit", has("json") ? 2 : "inherit", "inherit"], env: { ...process.env, ...buildEnv } })
+  // Bun's package cache goes in ~/.openmods too, unless you chose a place for
+  // it, so builds leave nothing behind outside it.
+  const cache = { BUN_INSTALL_CACHE_DIR: process.env.BUN_INSTALL_CACHE_DIR ?? path.join(HOME, "cache", "bun") }
+  const proc = Bun.spawn(["sh", "-c", cmd], { cwd, stdio: ["inherit", has("json") ? 2 : "inherit", "inherit"], env: { ...process.env, ...cache, ...buildEnv } })
   const code = await proc.exited
   if (code !== 0) throw new CommandFailed(`command failed (${code}): ${cmd}`)
 }

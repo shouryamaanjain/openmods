@@ -86,7 +86,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ~/.bun/install/cache
+            ~/.openmods/cache/bun
             work/${{ steps.harness.outputs.id }}/codex-rs/target
             work/${{ steps.harness.outputs.id }}/node_modules
           # The bare container starts from its own cache, not the runner's.
