@@ -1,0 +1,13 @@
+{
+  "$schema": "../../../../schema/support.schema.json",
+  "versions": [
+    {
+      "ref": "v1.18.32",
+      "commit": "545f51d26cc39a907d2867492d498d9607ea5fa4",
+      "patches": [
+        "v1.18.32/0001-feat-tui-add-invaders-Space-Invaders-in-the-right-ha.patch"
+      ],
+      "update": 1
+    }
+  ]
+}

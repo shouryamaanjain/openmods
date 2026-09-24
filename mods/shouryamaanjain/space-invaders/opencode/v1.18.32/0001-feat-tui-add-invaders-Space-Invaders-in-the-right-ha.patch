@@ -1,0 +1,542 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: shouryamaanjain <jainshouryamaan@gmail.com>
+Date: Thu, 24 Sep 2026 06:41:00 +0530
+Subject: [PATCH] feat(tui): add /invaders, Space Invaders in the right half of
+ the session
+
+/invaders (or /space-invaders) opens the game in the right half of the
+session screen, in place of the sidebar, while the conversation keeps
+the left half and the agent keeps working. The arrow keys, space and p
+belong to the game while it is open and the prompt does not take keys;
+escape closes and pauses it, and /invaders reopens it where it left
+off. Up to three shots in the air, an extra life every 1500 points, a
+mystery ship, and a field that fits the panel.
+
+diff --git a/packages/tui/src/app.tsx b/packages/tui/src/app.tsx
+index 6852311f9e845639027804d8d18c7b3c23475b6e..fff5c16ef4b257de8a2a8ed216917abe1bb666ac 100644
+--- a/packages/tui/src/app.tsx
++++ b/packages/tui/src/app.tsx
+@@ -86,6 +86,7 @@ import * as TuiAudio from "./audio"
+ import { win32DisableProcessedInput, win32FlushInputBuffer } from "./terminal-win32"
+ import { destroyRenderer } from "./util/renderer"
+ import { cliErrorMessage, errorFormat } from "./util/error"
++import { toggleInvaders } from "./component/invaders"
+ 
+ registerOpencodeSpinner()
+ 
+@@ -826,6 +827,21 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
+         },
+         category: "System",
+       },
++      {
++        name: "opencode.invaders",
++        title: "Play Space Invaders",
++        slashName: "invaders",
++        slashAliases: ["space-invaders"],
++        run: () => {
++          dialog.clear()
++          if (route.data.type !== "session") {
++            toast.show({ message: "Space Invaders plays beside a session: start one first", variant: "info" })
++            return
++          }
++          toggleInvaders()
++        },
++        category: "System",
++      },
+       {
+         name: "app.exit",
+         title: "Exit the app",
+diff --git a/packages/tui/src/component/invaders.tsx b/packages/tui/src/component/invaders.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..e79890dbf9f045a091cfc0ce3fc9241d06821e78
+--- /dev/null
++++ b/packages/tui/src/component/invaders.tsx
+@@ -0,0 +1,453 @@
++import { TextAttributes, type BoxRenderable, type RGBA } from "@opentui/core"
++import { createEffect, createMemo, createRoot, createSignal, For, onCleanup, Show } from "solid-js"
++import { usePromptRef } from "../context/prompt"
++import { useTheme } from "../context/theme"
++import { useBindings, useOpencodeModeStack } from "../keymap"
++
++// Space Invaders in the right half of the session screen. `/invaders` opens
++// and closes it: while it is open the conversation takes the left half and the
++// game the right, in place of the sidebar, and the agent keeps working. The
++// arrow keys, space and p belong to the game while it is open; escape closes
++// it. Game state lives at module level, so reopening resumes the same game,
++// paused.
++
++const TICK_MS = 50
++const SPRITES = [
++  ["/o\\", "\\o/"],
++  ["{@}", "}@{"],
++  ["<=>", ">=<"],
++] as const
++const POINTS = [30, 20, 10]
++const ALIEN_W = 3
++const ALIEN_STEP = 5 // an alien and the gap after it
++const ROWS = 5
++const SHIP = "▟█▙"
++const UFO = "<o=o>"
++const MAX_SHOTS = 3 // in the air at once
++const SHOT_SPEED = 2 // rows per tick
++const COOLDOWN = 3 // ticks between shots
++const EXTRA_LIFE = 1500 // points per extra life
++const MAX_LIVES = 5
++
++type Color = "a0" | "a1" | "a2" | "ufo" | "ship" | "shot" | "bomb" | "boom" | "banner" | "none"
++type Alien = { x: number; y: number; kind: number; alive: boolean }
++type Point = { x: number; y: number }
++type Model = {
++  w: number
++  h: number
++  ship: number
++  shots: Point[]
++  cool: number
++  bombs: Point[]
++  aliens: Alien[]
++  total: number
++  dir: 1 | -1
++  wait: number
++  frame: 0 | 1
++  ufo: { x: number; dir: 1 | -1 } | null
++  booms: (Point & { ttl: number; text: string })[]
++  banner: { text: string; ttl: number } | null
++  score: number
++  nextLife: number
++  lives: number
++  wave: number
++  hit: number
++  over: boolean
++  ticks: number
++}
++
++function build(w: number, h: number, wave: number, carry?: Pick<Model, "score" | "lives" | "nextLife">): Model {
++  const cols = Math.max(4, Math.min(11, Math.floor((w - 6 + 2) / ALIEN_STEP)))
++  const rowGap = h >= 24 ? 2 : 1
++  const left = Math.floor((w - (cols * ALIEN_STEP - 2)) / 2)
++  const top = 2 + Math.min(wave - 1, 4)
++  const aliens: Alien[] = []
++  for (let r = 0; r < ROWS; r++)
++    for (let c = 0; c < cols; c++) aliens.push({ x: left + c * ALIEN_STEP, y: top + r * rowGap, kind: r === 0 ? 0 : r < 3 ? 1 : 2, alive: true })
++  return {
++    w,
++    h,
++    ship: Math.floor(w / 2) - 1,
++    shots: [],
++    cool: 0,
++    bombs: [],
++    aliens,
++    total: aliens.length,
++    dir: 1,
++    wait: 0,
++    frame: 0,
++    ufo: null,
++    booms: [],
++    banner: wave > 1 ? { text: `WAVE ${wave}`, ttl: 30 } : null,
++    score: carry?.score ?? 0,
++    nextLife: carry?.nextLife ?? EXTRA_LIFE,
++    lives: carry?.lives ?? 3,
++    wave,
++    hit: 0,
++    over: false,
++    ticks: 0,
++  }
++}
++
++const game = createRoot(() => {
++  const [open, setOpen] = createSignal(false)
++  const [paused, setPaused] = createSignal(false)
++  const [frame, setFrame] = createSignal(0)
++  const [best, setBest] = createSignal(0)
++  let size = { w: 48, h: 24 }
++  let m: Model | undefined
++
++  const model = () => (m ??= build(size.w, size.h, 1))
++  const redraw = () => setFrame(frame() + 1)
++  const boom = (x: number, y: number, text: string) => m!.booms.push({ x, y, text, ttl: 6 })
++
++  const award = (g: Model, points: number) => {
++    g.score += points
++    if (g.score >= g.nextLife) {
++      g.nextLife += EXTRA_LIFE
++      if (g.lives < MAX_LIVES) {
++        g.lives++
++        g.banner = { text: "EXTRA LIFE", ttl: 25 }
++      }
++    }
++  }
++
++  // Moves one shot a row; true when it hit something and is spent.
++  const advance = (g: Model, s: Point) => {
++    s.y--
++    if (s.y < 0) return true
++    const alien = g.aliens.find((a) => a.alive && a.y === s.y && s.x >= a.x && s.x < a.x + ALIEN_W)
++    if (alien) {
++      alien.alive = false
++      award(g, POINTS[alien.kind]!)
++      boom(alien.x, alien.y, "*#*")
++      return true
++    }
++    if (g.ufo && s.y === 0 && s.x >= g.ufo.x && s.x < g.ufo.x + UFO.length) {
++      const bonus = [50, 100, 150, 300][Math.floor(Math.random() * 4)]!
++      award(g, bonus)
++      boom(g.ufo.x, 0, String(bonus))
++      g.ufo = null
++      return true
++    }
++    const bomb = g.bombs.findIndex((b) => b.x === s.x && (b.y === s.y || b.y === s.y + 1))
++    if (bomb !== -1) {
++      g.bombs.splice(bomb, 1)
++      return true
++    }
++    return false
++  }
++
++  const tick = () => {
++    const g = model()
++    if (g.over) return
++    g.ticks++
++    g.cool = Math.max(0, g.cool - 1)
++    g.booms = g.booms.filter((b) => --b.ttl > 0)
++    if (g.banner && --g.banner.ttl <= 0) g.banner = null
++    if (g.hit > 0) {
++      g.hit--
++      redraw()
++      return
++    }
++
++    // Shots climb fast, checked a row at a time so nothing is skipped.
++    g.shots = g.shots.filter((s) => {
++      for (let i = 0; i < SHOT_SPEED; i++) if (advance(g, s)) return false
++      return true
++    })
++
++    // The formation steps sideways, faster as it thins out, and drops a row
++    // at each edge.
++    const alive = g.aliens.filter((a) => a.alive)
++    if (alive.length === 0) {
++      setBest(Math.max(best(), g.score))
++      m = build(size.w, size.h, g.wave + 1, g)
++      redraw()
++      return
++    }
++    if (--g.wait <= 0) {
++      g.wait = Math.max(1, Math.round(2 + (14 * alive.length) / g.total) - Math.min(g.wave - 1, 3))
++      g.frame = g.frame === 0 ? 1 : 0
++      const minX = Math.min(...alive.map((a) => a.x))
++      const maxX = Math.max(...alive.map((a) => a.x + ALIEN_W))
++      if ((g.dir === 1 && maxX + 1 > g.w) || (g.dir === -1 && minX - 1 < 0)) {
++        g.dir = g.dir === 1 ? -1 : 1
++        for (const a of alive) a.y++
++      } else for (const a of alive) a.x += g.dir
++      if (alive.some((a) => a.y >= g.h - 1)) g.over = true
++    }
++
++    // Bombs: the lowest alien of a random column drops one now and then.
++    if (g.bombs.length < Math.min(5, 1 + g.wave) && Math.random() < Math.min(0.08, 0.02 + 0.008 * g.wave)) {
++      const columns = new Map<number, Alien>()
++      for (const a of alive) if ((columns.get(a.x)?.y ?? -1) < a.y) columns.set(a.x, a)
++      const shooters = [...columns.values()]
++      const s = shooters[Math.floor(Math.random() * shooters.length)]
++      if (s) g.bombs.push({ x: s.x + 1, y: s.y + 1 })
++    }
++    if (g.ticks % 2 === 0) {
++      for (const b of g.bombs) b.y++
++      g.bombs = g.bombs.filter((b) => {
++        if (b.y >= g.h) return false
++        if (b.y === g.h - 1 && b.x >= g.ship && b.x < g.ship + SHIP.length) {
++          g.lives--
++          g.hit = 30
++          boom(g.ship, g.h - 1, "*▒*")
++          if (g.lives <= 0) g.over = true
++          return false
++        }
++        return true
++      })
++      if (g.hit > 0) {
++        g.bombs = []
++        g.shots = []
++      }
++    }
++
++    // Now and then a mystery ship crosses the top.
++    if (!g.ufo && Math.random() < 0.003 && Math.min(...alive.map((a) => a.y)) > 1) {
++      const dir = Math.random() < 0.5 ? 1 : -1
++      g.ufo = { x: dir === 1 ? -UFO.length : g.w, dir }
++    }
++    if (g.ufo && g.ticks % 2 === 0) {
++      g.ufo.x += g.ufo.dir
++      if (g.ufo.x < -UFO.length || g.ufo.x > g.w) g.ufo = null
++    }
++
++    if (g.over) setBest(Math.max(best(), g.score))
++    redraw()
++  }
++
++  let timer: ReturnType<typeof setInterval> | undefined
++  createEffect(() => {
++    const running = open() && !paused()
++    if (running && !timer) timer = setInterval(tick, TICK_MS)
++    if (!running && timer) {
++      clearInterval(timer)
++      timer = undefined
++    }
++  })
++
++  const restart = () => {
++    m = build(size.w, size.h, 1)
++    setPaused(false)
++    redraw()
++  }
++
++  const move = (dx: number) => {
++    const g = model()
++    if (paused() || g.over || g.hit) return
++    const step = Math.max(2, Math.round(g.w / 30))
++    g.ship = Math.max(0, Math.min(g.w - SHIP.length, g.ship + dx * step))
++    redraw()
++  }
++
++  return {
++    open,
++    paused,
++    frame,
++    best,
++    model,
++    // Closing pauses; reopening shows the game paused until p or space.
++    toggle: () => {
++      if (open()) setPaused(true)
++      setOpen(!open())
++    },
++    close: () => {
++      setPaused(true)
++      setOpen(false)
++    },
++    pause: () => setPaused(!paused()),
++    // The field is the measured size of its box. When the terminal is
++    // resized, the current wave starts again at the new size, keeping the
++    // score, lives, wave and a game over; only a game with nothing to lose
++    // starts fresh.
++    resize: (w: number, h: number) => {
++      w = Math.max(24, Math.floor(w))
++      h = Math.max(12, Math.floor(h))
++      size = { w, h }
++      if (m && m.w === w && m.h === h) return
++      const played = m && (m.ticks > 0 || m.score > 0 || m.wave > 1 || m.over)
++      if (!m || !played) m = build(w, h, 1)
++      else {
++        const { over, ticks } = m
++        m = build(w, h, m.wave, m)
++        m.over = over
++        m.ticks = ticks
++      }
++      redraw()
++    },
++    left: () => move(-1),
++    right: () => move(1),
++    fire: () => {
++      const g = model()
++      if (g.over) return restart()
++      if (paused()) return setPaused(false)
++      if (g.hit || g.cool > 0 || g.shots.length >= MAX_SHOTS) return
++      g.shots.push({ x: g.ship + 1, y: g.h - 1 })
++      g.cool = COOLDOWN
++      redraw()
++    },
++  }
++})
++
++export const toggleInvaders = game.toggle
++export const isInvadersOpen = game.open
++
++/** The game, `width` columns wide beside the conversation; shown only while open. */
++export function InvadersPanel(props: { width: number }) {
++  const { theme } = useTheme()
++  const modeStack = useOpencodeModeStack()
++  const prompt = usePromptRef()
++
++  // While the game is open it has the keyboard: the prompt stays in view but
++  // loses focus, so p and space do not type into it, and gets it back on close.
++  createEffect(() => {
++    if (!game.open()) return
++    const pop = modeStack.push("invaders")
++    prompt.current?.blur()
++    onCleanup(() => {
++      pop()
++      prompt.current?.focus()
++    })
++  })
++
++  useBindings(() => ({
++    enabled: game.open(),
++    bindings: [
++      { key: "left", desc: "Move left", group: "Space Invaders", cmd: game.left },
++      { key: "right", desc: "Move right", group: "Space Invaders", cmd: game.right },
++      { key: "space", desc: "Fire", group: "Space Invaders", cmd: game.fire },
++      { key: "p", desc: "Pause", group: "Space Invaders", cmd: game.pause },
++      { key: "escape", desc: "Close Space Invaders", group: "Space Invaders", cmd: game.close },
++    ],
++  }))
++
++  const colors = (): Record<Color, RGBA> => ({
++    a0: theme.error,
++    a1: theme.warning,
++    a2: theme.accent,
++    ufo: theme.secondary,
++    ship: theme.primary,
++    shot: theme.text,
++    bomb: theme.warning,
++    boom: theme.text,
++    banner: theme.primary,
++    none: theme.text,
++  })
++
++  // One text line per field row, cut into runs of one colour.
++  const rows = createMemo(() => {
++    game.frame()
++    const g = game.model()
++    const chars = Array.from({ length: g.h }, () => Array<string>(g.w).fill(" "))
++    const paint = Array.from({ length: g.h }, () => Array<Color>(g.w).fill("none"))
++    const put = (x: number, y: number, text: string, color: Color) => {
++      if (y < 0 || y >= g.h) return
++      ;[...text].forEach((ch, i) => {
++        if (x + i < 0 || x + i >= g.w) return
++        chars[y]![x + i] = ch
++        paint[y]![x + i] = color
++      })
++    }
++    for (const a of g.aliens) if (a.alive) put(a.x, a.y, SPRITES[a.kind]![g.frame]!, `a${a.kind}` as Color)
++    if (g.ufo) put(g.ufo.x, 0, UFO, "ufo")
++    for (const b of g.bombs) put(b.x, b.y, "¦", "bomb")
++    for (const s of g.shots) put(s.x, s.y, "│", "shot")
++    if (!g.hit || Math.floor(g.hit / 3) % 2 === 0) put(g.ship, g.h - 1, g.hit ? "*▒*" : SHIP, g.hit ? "boom" : "ship")
++    for (const b of g.booms) put(b.x, b.y, b.text, "boom")
++    if (g.banner) put(Math.floor((g.w - g.banner.text.length) / 2), Math.floor(g.h / 2), g.banner.text, "banner")
++    return chars.map((line, y) => {
++      const runs: { text: string; color: Color }[] = []
++      line.forEach((ch, x) => {
++        const color = paint[y]![x]!
++        const last = runs.at(-1)
++        if (last && last.color === color) last.text += ch
++        else runs.push({ text: ch, color })
++      })
++      return runs
++    })
++  })
++
++  const status = createMemo(() => {
++    game.frame()
++    const g = game.model()
++    return { score: g.score, lives: g.lives, wave: g.wave, over: g.over }
++  })
++  const pad = (n: number) => String(n).padStart(5, "0")
++  const narrow = () => props.width < 70
++  const tiny = () => props.width < 50
++
++  return (
++    <Show when={game.open()}>
++      <box width={props.width} flexShrink={0} paddingLeft={1} paddingRight={2} paddingBottom={1}>
++        <box
++          flexGrow={1}
++          border
++          borderStyle="rounded"
++          borderColor={theme.border}
++          paddingLeft={1}
++          paddingRight={1}
++          flexDirection="column"
++        >
++          <box flexDirection="row" justifyContent="space-between" gap={1} flexShrink={0}>
++            <text fg={theme.text} attributes={TextAttributes.BOLD} wrapMode="none">
++              {narrow() ? "Invaders" : "Space Invaders"}
++            </text>
++            <text fg={theme.textMuted} wrapMode="none">
++              {narrow() ? "" : "score "}
++              <span style={{ fg: theme.text }}>{pad(status().score)}</span> ·{" "}
++              <Show when={!tiny()}>
++                best <span style={{ fg: theme.text }}>{pad(Math.max(game.best(), status().score))}</span> ·{" "}
++              </Show>
++              {narrow() ? "w" : "wave "}
++              <span style={{ fg: theme.text }}>{String(status().wave)}</span> ·{" "}
++              <span style={{ fg: theme.error }}>{"♥".repeat(Math.max(0, status().lives))}</span>
++            </text>
++          </box>
++          {/* The field takes exactly the room left between the header and the
++              help line; its measured size is the game's size. */}
++          <box
++            flexGrow={1}
++            minHeight={0}
++            overflow="hidden"
++            onSizeChange={function (this: BoxRenderable) {
++              game.resize(this.width, this.height)
++            }}
++          >
++            <box position="absolute" top={0} left={0}>
++              <For each={rows()}>
++                {(runs) => (
++                  <text selectable={false} wrapMode="none">
++                    <For each={runs}>{(run) => <span style={{ fg: colors()[run.color] }}>{run.text}</span>}</For>
++                  </text>
++                )}
++              </For>
++            </box>
++          </box>
++          <box flexShrink={0}>
++            <Show
++              when={status().over}
++              fallback={
++                <text fg={theme.textMuted} wrapMode="none">
++                  {game.paused()
++                    ? narrow()
++                      ? "paused · p resumes · esc"
++                      : "paused · p or space resumes · esc closes"
++                    : narrow()
++                      ? "←→ · space fire · p · esc"
++                      : "←→ move · space fire (hold to keep firing) · p pause · esc closes"}
++                </text>
++              }
++            >
++              <text fg={theme.error} wrapMode="none">
++                {narrow() ? "game over · space again" : "game over · space plays again · esc closes"}
++              </text>
++            </Show>
++          </box>
++        </box>
++      </box>
++    </Show>
++  )
++}
+diff --git a/packages/tui/src/routes/session/index.tsx b/packages/tui/src/routes/session/index.tsx
+index 2b54f21671b3889e6752175b1c2b0f36d189d3b9..9fc86a2712c6a7ff6cce42a4361bacc7273eda17 100644
+--- a/packages/tui/src/routes/session/index.tsx
++++ b/packages/tui/src/routes/session/index.tsx
+@@ -53,6 +53,7 @@ import { DialogTimeline } from "./dialog-timeline"
+ import { DialogForkFromTimeline } from "./dialog-fork-from-timeline"
+ import { DialogSessionRename } from "../../component/dialog-session-rename"
+ import { Sidebar } from "./sidebar"
++import { InvadersPanel, isInvadersOpen } from "../../component/invaders"
+ import { SubagentFooter } from "./subagent-footer.tsx"
+ import { filetype } from "../../util/filetype"
+ import parsers from "../../parsers-config"
+@@ -275,7 +276,11 @@ export function Session() {
+     return false
+   })
+   const showTimestamps = createMemo(() => timestamps() === "show")
+-  const contentWidth = createMemo(() => dimensions().width - (sidebarVisible() ? 42 : 0) - 4)
++  // Space Invaders takes the right half in place of the sidebar.
++  const invadersWidth = createMemo(() => dimensions().width - Math.floor(dimensions().width / 2))
++  const contentWidth = createMemo(
++    () => dimensions().width - (isInvadersOpen() ? invadersWidth() : sidebarVisible() ? 42 : 0) - 4,
++  )
+   const providers = createMemo(() => Model.index(sync.data.provider))
+ 
+   const scrollAcceleration = createMemo(() => getScrollAcceleration(tuiConfig))
+@@ -1335,7 +1340,8 @@ export function Session() {
+             </Show>
+             <Toast />
+           </box>
+-          <Show when={sidebarVisible()}>
++          <InvadersPanel width={invadersWidth()} />
++          <Show when={sidebarVisible() && !isInvadersOpen()}>
+             <Switch>
+               <Match when={wide()}>
+                 <Sidebar sessionID={route.sessionID} />

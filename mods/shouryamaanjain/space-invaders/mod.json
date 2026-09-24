@@ -1,0 +1,19 @@
+{
+  "$schema": "../../../schema/mod.schema.json",
+  "owner": "shouryamaanjain",
+  "name": "space-invaders",
+  "description": "Adds /invaders: Space Invaders in the right half of the session screen while the agent keeps working in the left.",
+  "author": {
+    "name": "Shouryamaan Jain",
+    "github": "shouryamaanjain"
+  },
+  "maintainers": [
+    "shouryamaanjain"
+  ],
+  "license": "MIT",
+  "tags": [
+    "tui",
+    "game",
+    "command"
+  ]
+}
