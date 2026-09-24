@@ -4,7 +4,7 @@
 // once more before the build gives up.
 import { beforeAll, describe, expect, test } from "bun:test"
 import { $ } from "bun"
-import { chmodSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { addFile, cli, createHarness, createMod, git, greeting, release, sandbox, setGreeting } from "./harness"
 
@@ -78,13 +78,23 @@ describe("a kept build", () => {
     expect(readdirSync(path.join(builds(), kept[0]!, "res"))).toEqual(["helper"])
     expect(await greeting(sb)).toBe("hello from friendly")
   })
-  test("without a keep folder, holds the binary's own folder", async () => {
-    setBuild({ build, artifact: "out/pkg/bin/greet", keep: undefined })
+  test("without a keep folder, holds the binary alone", async () => {
+    setBuild({ build: `${build} && printf extra > out/pkg/bin/extra`, artifact: "out/pkg/bin/greet", keep: undefined })
     const r = await cli(sb, "update", "fake", "--force")
     expect(r.code, r.all).toBe(0)
     const [kept] = readdirSync(builds())
     expect(readdirSync(path.join(builds(), kept!))).toEqual(["greet"])
     expect(await greeting(sb)).toBe("hello from friendly")
+  })
+  test("clears out a crashed build's staging folder, not a running one's", async () => {
+    const running = path.join(builds(), `.other-build.${process.pid}`)
+    const crashed = path.join(builds(), ".other-build.999999")
+    mkdirSync(running)
+    mkdirSync(crashed)
+    const r = await cli(sb, "update", "fake", "--force")
+    expect(r.code, r.all).toBe(0)
+    expect([existsSync(running), existsSync(crashed)]).toEqual([true, false])
+    rmSync(running, { recursive: true })
   })
 })
 

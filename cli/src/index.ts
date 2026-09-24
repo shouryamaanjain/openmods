@@ -775,14 +775,13 @@ async function build(h: Harness, root: string) {
 // copied to its own folder and the launcher points there; the previous copy
 // stays until the new one exists, then the rest are cleared out. What is
 // copied is the harness's `keep` folder, the binary with what it needs beside
-// it (Codex's package: its helpers and resources), or else the binary's own
-// folder.
+// it (Codex's package: its helpers and resources), or else the binary alone.
 function keepBuild(h: Harness, harnessId: string, root: string, stamp: string) {
   const builds = path.join(HOME, "harnesses", harnessId, "builds")
   const name = stamp.replace(/[^A-Za-z0-9._+-]/g, "_")
   const dest = path.join(builds, name)
   const artifact = artifactPath(h, root)
-  const folder = h.keep ? artifactPath(h, root, h.keep) : path.dirname(artifact)
+  const inside = h.keep ? path.relative(artifactPath(h, root, h.keep), artifact) : path.basename(artifact)
   // Copied beside the builds first, then swapped in: a rebuild of the same
   // release and mods replaces the folder the launcher runs, which must stay
   // whole if the copy fails.
@@ -790,20 +789,34 @@ function keepBuild(h: Harness, harnessId: string, root: string, stamp: string) {
   rmSync(staging, { recursive: true, force: true })
   mkdirSync(builds, { recursive: true })
   try {
-    cpSync(folder, staging, { recursive: true, verbatimSymlinks: true })
+    if (h.keep) cpSync(artifactPath(h, root, h.keep), staging, { recursive: true, verbatimSymlinks: true })
+    else cpSync(artifact, path.join(staging, inside))
   } catch (e) {
     rmSync(staging, { recursive: true, force: true })
     fail(`could not copy the build to ${dest}: ${e instanceof Error ? e.message : String(e)}`)
   }
-  if (!existsSync(path.join(staging, path.relative(folder, artifact)))) {
+  if (!existsSync(path.join(staging, inside))) {
     rmSync(staging, { recursive: true, force: true })
     fail(`could not copy the build to ${dest}`)
   }
   rmSync(dest, { recursive: true, force: true })
   renameSync(staging, dest)
-  const kept = path.join(dest, path.relative(folder, artifact))
-  for (const d of readdirSync(builds)) if (d !== name) rmSync(path.join(builds, d), { recursive: true, force: true })
-  return kept
+  // Older builds go; another build's staging folder stays while its process runs.
+  for (const d of readdirSync(builds)) {
+    const pid = /^\..+\.(\d+)$/.exec(d)?.[1]
+    if (d !== name && !(pid && isRunning(Number(pid)))) rmSync(path.join(builds, d), { recursive: true, force: true })
+  }
+  return path.join(dest, inside)
+}
+
+function isRunning(pid: number) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (e) {
+    // EPERM: it runs, as another user.
+    return (e as NodeJS.ErrnoException).code === "EPERM"
+  }
 }
 
 // ------------------------------------------------------------- switching

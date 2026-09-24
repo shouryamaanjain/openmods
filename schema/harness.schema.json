@@ -95,7 +95,7 @@
     },
     "keep": {
       "type": "string",
-      "description": "The folder, relative to the harness checkout, that holds the binary and everything it needs beside it, such as helper executables and resources. It is copied whole for each build, and artifact must be inside it. When unset, the binary's own folder is kept."
+      "description": "The folder, relative to the harness checkout, that holds the binary and everything it needs beside it, such as helper executables and resources. It is copied whole for each build, and artifact must be inside it. When unset, only the binary is kept."
     },
     "dev": {
       "type": "string",
