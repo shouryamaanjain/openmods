@@ -35,8 +35,28 @@ describe("a build in a terminal", () => {
   })
   test("keeps how long each step took, a first build apart from later ones", async () => {
     expect(Object.keys(timings()).sort()).toEqual(["Build:first", "Dependencies:first", "Patches:first", "Source:first"])
+    await cli(sb, "check-updates", "fake")
+    expect(readFileSync(path.join(sb.om, "updates", "fake"), "utf8")).toContain("ESTIMATE=''")
     await run(sb, live, "update", "fake", "--force")
     expect(Object.keys(timings())).toContain("Build")
+    // Now a rebuild was timed, the update question can say how long one takes.
+    await cli(sb, "check-updates", "fake")
+    expect(readFileSync(path.join(sb.om, "updates", "fake"), "utf8")).toContain("ESTIMATE='under a minute'")
+  })
+  test("a rebuild is not estimated from a first build, and never outlasts the bar", async () => {
+    const file = path.join(sb.om, "timings.json")
+    writeFileSync(file, JSON.stringify({ fake: { "Build:first": 600, Build: 600 } }))
+    setBuild(
+      "printf '    Building [==================> ] 99/100: codex\\r' && sleep 0.6 && mkdir -p out/bin && cp greet.sh out/bin/greet && chmod +x out/bin/greet",
+    )
+    const r = await run(sb, live, "update", "fake", "--force")
+    expect(r.code, r.all).toBe(0)
+    const withBar = r.out.split("\r").filter((frame) => frame.includes("99%"))
+    expect(withBar.length).toBeGreaterThan(0)
+    expect(withBar.some((frame) => frame.includes("min left"))).toBe(false)
+    writeFileSync(file, JSON.stringify({ fake: { "Build:first": 600 } }))
+    setBuild("sleep 0.6 && mkdir -p out/bin && cp greet.sh out/bin/greet && chmod +x out/bin/greet")
+    expect((await run(sb, live, "update", "fake", "--force")).out).not.toContain("min left")
   })
   test("turns a build's reported progress into a bar", async () => {
     setBuild(
@@ -105,12 +125,14 @@ describe("when things go wrong", () => {
 })
 
 describe("the rebuild estimate", () => {
-  test("needs every step timed, so a build that stopped partway says nothing", () => {
+  test("needs every step of a rebuild timed, not a first build's", () => {
     const file = path.join(sb.T, "partial.json")
     writeFileSync(file, JSON.stringify({ fake: { Source: 3, Patches: 1, Dependencies: 20 } }))
     expect(lastRebuild(file, "fake")).toBeUndefined()
     writeFileSync(file, JSON.stringify({ fake: { Source: 3, Patches: 1, Dependencies: 20, "Build:first": 500 } }))
-    expect(lastRebuild(file, "fake")).toBe(524)
+    expect(lastRebuild(file, "fake")).toBeUndefined()
+    writeFileSync(file, JSON.stringify({ fake: { Source: 3, Patches: 1, Dependencies: 20, Build: 90 } }))
+    expect(lastRebuild(file, "fake")).toBe(114)
   })
 })
 

@@ -34,10 +34,14 @@ export function loadTimings(file: string): Timings {
   }
 }
 
-/** How long a rebuild of `harness` took here last time, all steps, in seconds; nothing unless every step was timed. */
+/**
+ * How long a rebuild of `harness` took here last time, all steps, in seconds;
+ * nothing unless every step of a rebuild was timed. A first build, several
+ * times longer, says nothing about a rebuild.
+ */
 export function lastRebuild(file: string, harness: string): number | undefined {
   const t = loadTimings(file)[harness] ?? {}
-  const steps = ["Source", "Patches", "Dependencies", "Build"].map((s) => t[s] ?? t[`${s}:first`])
+  const steps = ["Source", "Patches", "Dependencies", "Build"].map((s) => t[s])
   return steps.some((s) => s === undefined) ? undefined : steps.reduce<number>((a, s) => a + s!, 0)
 }
 
@@ -89,11 +93,10 @@ export class Progress {
 
   /** Runs one step; in a terminal it gets its line, and its time is kept for next time. */
   async run<T>(name: string, fn: () => Promise<T>): Promise<T> {
+    // Compared only with the same kind of build: a first build can take
+    // several times as long as a rebuild.
     const key = this.first ? `${name}:first` : name
-    // Compared with the same kind of build, or else with the other kind.
-    const kept = loadTimings(this.timings)[this.harness] ?? {}
-    const expect = kept[key] ?? kept[this.first ? name : `${name}:first`]
-    this.step = { name, start: Date.now(), expect, output: false }
+    this.step = { name, start: Date.now(), expect: loadTimings(this.timings)[this.harness]?.[key], output: false }
     this.carry = ""
     this.recent = ""
     this.note(`== ${name}`)
@@ -172,9 +175,11 @@ export class Progress {
     const s = this.step
     if (!s) return
     const elapsed = Date.now() - s.start
-    let left: number | undefined
-    if (s.expect !== undefined && s.expect * 1000 > elapsed) left = s.expect - elapsed / 1000
-    else if (s.fraction && s.fraction >= 0.15 && s.fraction < 1) left = (elapsed / 1000) * ((1 - s.fraction) / s.fraction)
+    // From the last build of this kind, and from how far the build says it
+    // is; with both, the lower, so the estimate never outlasts the bar.
+    const byHistory = s.expect !== undefined && s.expect * 1000 > elapsed ? s.expect - elapsed / 1000 : undefined
+    const byBar = s.fraction && s.fraction >= 0.15 && s.fraction < 1 ? (elapsed / 1000) * ((1 - s.fraction) / s.fraction) : undefined
+    const left = byHistory === undefined ? byBar : byBar === undefined ? byHistory : Math.min(byHistory, byBar)
     const bar =
       s.fraction === undefined
         ? ""
