@@ -11,6 +11,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, r
 import { homedir, tmpdir } from "node:os"
 import path from "node:path"
 import { footprint, incompatibility as whyNot, type Footprint } from "./overlap"
+import { lastRebuild, Progress, roughly } from "./progress"
 
 type Harness = {
   id: string
@@ -132,9 +133,12 @@ const flag = (k: string) => {
 const has = (k: string) => flags.has(k)
 
 const log = (msg: string) => {
-  if (!has("json")) console.log(msg)
+  // While a build step is on screen, what it would print goes to its log.
+  if (progress?.live && progress.running) progress.note(msg)
+  else if (!has("json")) console.log(msg)
 }
 const fail = (msg: string): never => {
+  progress?.failed()
   console.error(`error: ${msg}`)
   process.exit(1)
 }
@@ -350,6 +354,10 @@ function harnessFlags(reg: string): string[] {
 }
 
 const interactive = () => !!process.stdin.isTTY && !!process.stdout.isTTY && !has("json")
+// A build draws its progress only in a terminal, and not in CI.
+// (OPENMODS_LIVE=1 lets tests see it without a terminal.)
+const live = () => process.env.OPENMODS_LIVE === "1" || (!!process.stdout.isTTY && !has("json") && !process.env.CI)
+let progress: Progress | undefined
 const color = !process.env.NO_COLOR && !!process.stdout.isTTY
 const paint = (code: string, text: string) => (color ? `\x1b[${code}m${text}\x1b[0m` : text)
 const dim = (t: string) => paint("2", t)
@@ -704,8 +712,26 @@ async function shell(cmd: string, cwd: string) {
     BUN_INSTALL_CACHE_DIR: process.env.BUN_INSTALL_CACHE_DIR ?? path.join(HOME, "cache", "bun"),
     BUN_RUNTIME_TRANSPILER_CACHE_PATH: process.env.BUN_RUNTIME_TRANSPILER_CACHE_PATH ?? path.join(HOME, "cache", "transpiler"),
   }
-  const proc = Bun.spawn(["sh", "-c", cmd], { cwd, stdio: ["inherit", has("json") ? 2 : "inherit", "inherit"], env: { ...process.env, ...cache, ...buildEnv } })
-  const code = await proc.exited
+  const env = { ...process.env, ...cache, ...buildEnv }
+  let code: number
+  if (progress?.live && progress.running) {
+    // On screen is the step's line; the output goes to its log, and Cargo is
+    // asked to report its progress there too.
+    const proc = Bun.spawn(["sh", "-c", cmd], {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...env, CARGO_TERM_PROGRESS_WHEN: "always", CARGO_TERM_PROGRESS_WIDTH: "100" },
+    })
+    const pump = async (stream: ReadableStream<Uint8Array>) => {
+      const decoder = new TextDecoder()
+      for await (const chunk of stream) progress?.output(decoder.decode(chunk, { stream: true }))
+    }
+    await Promise.all([pump(proc.stdout), pump(proc.stderr)])
+    code = await proc.exited
+  } else {
+    const proc = Bun.spawn(["sh", "-c", cmd], { cwd, stdio: ["inherit", has("json") ? 2 : "inherit", "inherit"], env })
+    code = await proc.exited
+  }
   if (code !== 0) throw new CommandFailed(`command failed (${code}): ${cmd}`)
 }
 
@@ -760,13 +786,18 @@ async function typecheck(h: Harness, root: string) {
 }
 
 async function build(h: Harness, root: string) {
-  const toolchain = await ensureToolchain(root)
-  if (toolchain) buildEnv = { ...buildEnv, PATH: `${toolchain}${path.delimiter}${process.env.PATH ?? ""}` }
-  await installDeps(h, root)
-  log(`Building: ${h.build}`)
-  await shell(h.build, root)
+  const step = <T>(name: string, fn: () => Promise<T>) => (progress ? progress.run(name, fn) : fn())
+  await step("Dependencies", async () => {
+    const toolchain = await ensureToolchain(root)
+    if (toolchain) buildEnv = { ...buildEnv, PATH: `${toolchain}${path.delimiter}${process.env.PATH ?? ""}` }
+    await installDeps(h, root)
+  })
   const artifact = artifactPath(h, root)
-  if (!existsSync(artifact)) fail(`build finished but ${artifact} does not exist`)
+  await step("Build", async () => {
+    log(`Building: ${h.build}`)
+    await shell(h.build, root)
+    if (!existsSync(artifact)) fail(`build finished but ${artifact} does not exist`)
+  })
   return artifact
 }
 
@@ -877,7 +908,7 @@ if { { [ -t 0 ] && [ -t 1 ]; } || [ -n "$OPENMODS_ASSUME_TTY" ]; } && [ -z "$OPE
     printf '%s\n' "$KEY" > "$NOTE.seen"
     printf '%s\n' "$MESSAGE"
     if [ "$ASK" = 1 ]; then
-      printf '%s' "Update now? It rebuilds ${h.name}, which usually takes a minute or two. [y/N] "
+      printf '%s' "Update now? It rebuilds ${h.name}\${ESTIMATE:+ (\$ESTIMATE)}. [y/N] "
       read -r ANSWER
       case "$ANSWER" in
         y|Y|yes|YES)
@@ -1185,8 +1216,13 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     }
   }
   const base = mods[0]!.upstream
-  await ensureCheckout(h, root, base.commit, base.ref)
-  await applyMods(root, mods)
+  const builds = path.join(HOME, "harnesses", harnessId, "builds")
+  const first = !existsSync(builds) || readdirSync(builds).length === 0
+  progress = new Progress(live(), harnessId, first, path.join(HOME, "timings.json"), path.join(HOME, "logs"), color)
+  const named = mods.filter((m) => m.id !== BASE_ID).map((m) => m.id)
+  progress.title(`${h.name} ${rel(base.ref)} + ${named.join(" + ")}`)
+  await progress.run("Source", () => ensureCheckout(h, root, base.commit, base.ref))
+  await progress.run("Patches", () => applyMods(root, mods))
   buildEnv = {
     OPENMODS_HARNESS: harnessId,
     OPENMODS_REF: base.ref,
@@ -1195,6 +1231,7 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
   }
   await build(h, root).catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)))
   const artifact = keepBuild(h, harnessId, root, `${rel(base.ref)}+${stampOf(mods.filter((m) => m.id !== BASE_ID))}`)
+  progress = undefined
   switchOn(h, artifact)
   state[harnessId] = {
     ref: base.ref,
@@ -1844,7 +1881,13 @@ async function cmdCheckUpdates() {
     // until the key changes (another release, another mod update).
     const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
     const now = Math.floor(Date.now() / 1000)
-    writeFileSync(file, [`CURRENT=${q(rel(e.ref))}`, `KEY=${q(offer.key)}`, `ASK=${offer.ask ? 1 : 0}`, `MESSAGE=${q(offer.message)}`, `CHECKED=${now}`].join("\n") + "\n")
+    // How long the rebuild took here last time, for the question.
+    const took = lastRebuild(path.join(HOME, "timings.json"), id)
+    const estimate = took === undefined ? "" : roughly(took)
+    writeFileSync(
+      file,
+      [`CURRENT=${q(rel(e.ref))}`, `KEY=${q(offer.key)}`, `ASK=${offer.ask ? 1 : 0}`, `MESSAGE=${q(offer.message)}`, `ESTIMATE=${q(estimate)}`, `CHECKED=${now}`].join("\n") + "\n",
+    )
     writeFileSync(`${file}.checked`, `${now}\n`)
     if (has("json"))
       console.log(
