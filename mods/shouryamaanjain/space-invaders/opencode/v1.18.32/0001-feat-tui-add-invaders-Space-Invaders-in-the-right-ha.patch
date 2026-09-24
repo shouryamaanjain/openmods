@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: shouryamaanjain <jainshouryamaan@gmail.com>
-Date: Thu, 24 Sep 2026 06:41:00 +0530
+From: Shouryamaan Jain <jainshouryamaan@gmail.com>
+Date: Thu, 24 Sep 2026 14:44:09 +0530
 Subject: [PATCH] feat(tui): add /invaders, Space Invaders in the right half of
  the session
 
@@ -48,10 +48,10 @@ index 6852311f9e845639027804d8d18c7b3c23475b6e..fff5c16ef4b257de8a2a8ed216917abe
          title: "Exit the app",
 diff --git a/packages/tui/src/component/invaders.tsx b/packages/tui/src/component/invaders.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..e79890dbf9f045a091cfc0ce3fc9241d06821e78
+index 0000000000000000000000000000000000000000..13f6942f6355e2b5ea08283d00827fd84e93d2fd
 --- /dev/null
 +++ b/packages/tui/src/component/invaders.tsx
-@@ -0,0 +1,453 @@
+@@ -0,0 +1,455 @@
 +import { TextAttributes, type BoxRenderable, type RGBA } from "@opentui/core"
 +import { createEffect, createMemo, createRoot, createSignal, For, onCleanup, Show } from "solid-js"
 +import { usePromptRef } from "../context/prompt"
@@ -82,6 +82,7 @@ index 0000000000000000000000000000000000000000..e79890dbf9f045a091cfc0ce3fc9241d
 +const COOLDOWN = 3 // ticks between shots
 +const EXTRA_LIFE = 1500 // points per extra life
 +const MAX_LIVES = 5
++const START_ROOM = 4 // rows from a new wave's lowest row down to the ship's
 +
 +type Color = "a0" | "a1" | "a2" | "ufo" | "ship" | "shot" | "bomb" | "boom" | "banner" | "none"
 +type Alien = { x: number; y: number; kind: number; alive: boolean }
@@ -114,7 +115,8 @@ index 0000000000000000000000000000000000000000..e79890dbf9f045a091cfc0ce3fc9241d
 +  const cols = Math.max(4, Math.min(11, Math.floor((w - 6 + 2) / ALIEN_STEP)))
 +  const rowGap = h >= 24 ? 2 : 1
 +  const left = Math.floor((w - (cols * ALIEN_STEP - 2)) / 2)
-+  const top = 2 + Math.min(wave - 1, 4)
++  // Later waves start lower, but always with room above the ship.
++  const top = Math.max(1, Math.min(2 + Math.min(wave - 1, 4), h - 1 - START_ROOM - (ROWS - 1) * rowGap))
 +  const aliens: Alien[] = []
 +  for (let r = 0; r < ROWS; r++)
 +    for (let c = 0; c < cols; c++) aliens.push({ x: left + c * ALIEN_STEP, y: top + r * rowGap, kind: r === 0 ? 0 : r < 3 ? 1 : 2, alive: true })
