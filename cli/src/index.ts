@@ -632,7 +632,9 @@ async function ensureCheckout(h: Harness, root: string, commit: string, ref: str
     log(`Setting up ${h.repo} (blobless, this is a one-time cost)`)
     await initCheckout(h.repo, root)
   }
-  const have = await $`git -C ${root} cat-file -t ${commit}`.nothrow().quiet()
+  // Checked by the tag, not the commit: asking a blobless checkout about an
+  // object it lacks makes git download it, with all the history behind it.
+  const have = await $`git -C ${root} rev-parse -q --verify ${"refs/tags/" + ref}`.nothrow().quiet()
   if (have.exitCode !== 0) {
     log(`Fetching ${ref}`)
     await $`git -C ${root} fetch --no-tags --depth 1 origin tag ${ref}`.quiet()
@@ -649,8 +651,11 @@ async function ensureCheckout(h: Harness, root: string, commit: string, ref: str
 // makes git fetch exactly those versions.
 async function fetchBases(root: string, mod: Mod) {
   if (!mod.upstream.commit) return
-  const have = await $`git -C ${root} cat-file -e ${mod.upstream.commit}^{commit}`.nothrow().quiet()
-  if (have.exitCode !== 0) await $`git -C ${root} fetch --no-tags --depth 1 --filter=blob:none origin ${mod.upstream.commit}`.nothrow().quiet()
+  // Usually the release being built, found by its tag. Otherwise it is
+  // fetched on its own: looking the commit up would download it with all
+  // its history (see ensureCheckout).
+  const tagged = await $`git -C ${root} rev-parse -q --verify ${`refs/tags/${mod.upstream.ref}^{commit}`}`.nothrow().quiet()
+  if (tagged.stdout.toString().trim() !== mod.upstream.commit) await $`git -C ${root} fetch --no-tags --depth 1 --filter=blob:none origin ${mod.upstream.commit}`.nothrow().quiet()
   for (const file of touchedFiles(mod)) await $`git -C ${root} cat-file -p ${mod.upstream.commit + ":" + file}`.nothrow().quiet()
 }
 
