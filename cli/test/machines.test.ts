@@ -4,7 +4,7 @@
 // once more before the build gives up.
 import { beforeAll, describe, expect, test } from "bun:test"
 import { $ } from "bun"
-import { existsSync, readFileSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { addFile, cli, createHarness, createMod, git, greeting, release, sandbox, setGreeting } from "./harness"
 
@@ -46,6 +46,55 @@ describe("a harness checkout", () => {
     expect((await $`git -C ${checkout()} rev-parse HEAD~1`.text()).trim()).toBe(pinned)
     expect(existsSync(path.join(checkout(), "RETAG.md"))).toBe(true)
     expect(Number((await $`git -C ${checkout()} rev-list --count HEAD`.text()).trim())).toBe(2) // still no history
+  })
+})
+
+describe("a kept build", () => {
+  const builds = () => path.join(sb.om, "harnesses", "fake", "builds")
+  const setBuild = (fields: Record<string, unknown>) => writeFileSync(definition, JSON.stringify({ ...JSON.parse(readFileSync(definition, "utf8")), ...fields }))
+  // A package: the binary in bin/, a helper beside it in res/, and compiler
+  // output next to the package that a build should not keep.
+  const build = "mkdir -p out/pkg/bin out/pkg/res out/cache && cp greet.sh out/pkg/bin/greet && chmod +x out/pkg/bin/greet && printf helper > out/pkg/res/helper && printf junk > out/cache/junk"
+  test("holds the harness's keep folder whole, and nothing else from the build's output", async () => {
+    setBuild({ build, artifact: "out/pkg/bin/greet", keep: "out/pkg" })
+    await cli(sb, "uninstall", "t/friendly")
+    const r = await cli(sb, "install", "t/friendly")
+    expect(r.code, r.all).toBe(0)
+    const [kept] = readdirSync(builds())
+    const dir = path.join(builds(), kept!)
+    expect([readdirSync(dir).sort(), readdirSync(path.join(dir, "res"))]).toEqual([["bin", "res"], ["helper"]])
+    expect(await greeting(sb)).toBe("hello from friendly")
+  })
+  // (Root reads any file, so there the copy cannot be made to fail this way.)
+  test.skipIf(process.getuid?.() === 0)("a rebuild whose copy fails leaves the build that runs whole", async () => {
+    const unreadable = "&& printf secret > out/pkg/res/locked && chmod 000 out/pkg/res/locked"
+    setBuild({ build: `${build} ${unreadable}`, artifact: "out/pkg/bin/greet", keep: "out/pkg" })
+    const r = await cli(sb, "update", "fake", "--force")
+    chmodSync(path.join(sb.om, "harnesses", "fake", "src", "out", "pkg", "res", "locked"), 0o644)
+    expect(r.code).toBe(1)
+    expect(r.err).toContain("could not copy the build")
+    const kept = readdirSync(builds())
+    expect(kept.length).toBe(1)
+    expect(readdirSync(path.join(builds(), kept[0]!, "res"))).toEqual(["helper"])
+    expect(await greeting(sb)).toBe("hello from friendly")
+  })
+  test("without a keep folder, holds the binary alone", async () => {
+    setBuild({ build: `${build} && printf extra > out/pkg/bin/extra`, artifact: "out/pkg/bin/greet", keep: undefined })
+    const r = await cli(sb, "update", "fake", "--force")
+    expect(r.code, r.all).toBe(0)
+    const [kept] = readdirSync(builds())
+    expect(readdirSync(path.join(builds(), kept!))).toEqual(["greet"])
+    expect(await greeting(sb)).toBe("hello from friendly")
+  })
+  test("clears out a crashed build's staging folder, not a running one's", async () => {
+    const running = path.join(builds(), `.other-build.${process.pid}`)
+    const crashed = path.join(builds(), ".other-build.999999")
+    mkdirSync(running)
+    mkdirSync(crashed)
+    const r = await cli(sb, "update", "fake", "--force")
+    expect(r.code, r.all).toBe(0)
+    expect([existsSync(running), existsSync(crashed)]).toEqual([true, false])
+    rmSync(running, { recursive: true })
   })
 })
 

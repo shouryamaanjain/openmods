@@ -7,7 +7,7 @@
 // The stock install of the harness is never touched.
 
 import { $ } from "bun"
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import path from "node:path"
 import { footprint, incompatibility as whyNot, type Footprint } from "./overlap"
@@ -27,6 +27,10 @@ type Harness = {
   typecheck?: string
   build: string
   artifact: string
+  // The folder that holds the binary and everything it needs, kept whole
+  // for each build; the binary's own folder when unset. See
+  // schema/harness.schema.json.
+  keep?: string
   // Runs a clone from source, for `openmods dev`; see schema/harness.schema.json.
   dev?: string
   // Set for the modded build (and a dev clone) when it starts, such as turning
@@ -596,8 +600,8 @@ const saveState = (s: State) => {
 
 // ------------------------------------------------------------------- build
 
-function artifactPath(h: Harness, root: string) {
-  return path.join(root, h.artifact.replaceAll("{os}", process.platform).replaceAll("{arch}", process.arch))
+function artifactPath(h: Harness, root: string, file = h.artifact) {
+  return path.join(root, file.replaceAll("{os}", process.platform).replaceAll("{arch}", process.arch))
 }
 
 async function checkRequirements(h: Harness) {
@@ -769,18 +773,53 @@ async function build(h: Harness, root: string) {
 // A harness's build script may wipe its output folder before compiling, so
 // a build that fails would leave nothing to run. Each successful build is
 // copied to its own folder and the launcher points there; the previous copy
-// stays until the new one exists, then the rest are cleared out.
-function keepBuild(h: Harness, harnessId: string, artifact: string, stamp: string) {
+// stays until the new one exists, then the rest are cleared out. What is
+// copied is the harness's `keep` folder, the binary with what it needs beside
+// it (Codex's package: its helpers and resources), or else the binary alone.
+function keepBuild(h: Harness, harnessId: string, root: string, stamp: string) {
   const builds = path.join(HOME, "harnesses", harnessId, "builds")
   const name = stamp.replace(/[^A-Za-z0-9._+-]/g, "_")
   const dest = path.join(builds, name)
+  const artifact = artifactPath(h, root)
+  const inside = h.keep ? path.relative(artifactPath(h, root, h.keep), artifact) : path.basename(artifact)
+  // Copied beside the builds first, then swapped in: a rebuild of the same
+  // release and mods replaces the folder the launcher runs, which must stay
+  // whole if the copy fails.
+  const staging = path.join(builds, `.${name}.${process.pid}`)
+  rmSync(staging, { recursive: true, force: true })
+  mkdirSync(builds, { recursive: true })
+  try {
+    if (h.keep) cpSync(artifactPath(h, root, h.keep), staging, { recursive: true, verbatimSymlinks: true })
+    else {
+      mkdirSync(staging)
+      cpSync(artifact, path.join(staging, inside))
+    }
+  } catch (e) {
+    rmSync(staging, { recursive: true, force: true })
+    fail(`could not copy the build to ${dest}: ${e instanceof Error ? e.message : String(e)}`)
+  }
+  if (!existsSync(path.join(staging, inside))) {
+    rmSync(staging, { recursive: true, force: true })
+    fail(`could not copy the build to ${dest}`)
+  }
   rmSync(dest, { recursive: true, force: true })
-  mkdirSync(dest, { recursive: true })
-  cpSync(path.dirname(artifact), dest, { recursive: true })
-  const kept = path.join(dest, path.basename(artifact))
-  if (!existsSync(kept)) fail(`could not copy the build to ${dest}`)
-  for (const d of readdirSync(builds)) if (d !== name) rmSync(path.join(builds, d), { recursive: true, force: true })
-  return kept
+  renameSync(staging, dest)
+  // Older builds go; another build's staging folder stays while its process runs.
+  for (const d of readdirSync(builds)) {
+    const pid = /^\..+\.(\d+)$/.exec(d)?.[1]
+    if (d !== name && !(pid && isRunning(Number(pid)))) rmSync(path.join(builds, d), { recursive: true, force: true })
+  }
+  return path.join(dest, inside)
+}
+
+function isRunning(pid: number) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (e) {
+    // EPERM: it runs, as another user.
+    return (e as NodeJS.ErrnoException).code === "EPERM"
+  }
 }
 
 // ------------------------------------------------------------- switching
@@ -1154,8 +1193,8 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     OPENMODS_VERSION: base.ref.replace(/^[^0-9]*/, ""),
     OPENMODS_MODS: stampOf(mods.filter((m) => m.id !== BASE_ID)),
   }
-  const built = await build(h, root).catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)))
-  const artifact = keepBuild(h, harnessId, built, `${rel(base.ref)}+${stampOf(mods.filter((m) => m.id !== BASE_ID))}`)
+  await build(h, root).catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)))
+  const artifact = keepBuild(h, harnessId, root, `${rel(base.ref)}+${stampOf(mods.filter((m) => m.id !== BASE_ID))}`)
   switchOn(h, artifact)
   state[harnessId] = {
     ref: base.ref,
