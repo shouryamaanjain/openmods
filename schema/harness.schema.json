@@ -74,10 +74,12 @@
         "additionalProperties": false,
         "properties": {
           "command": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "check": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "os": {
             "type": "string",
@@ -90,7 +92,8 @@
           },
           "hint": {
             "type": "string",
-            "description": "What to install, shown when it is missing."
+            "description": "What to install, shown when it is missing.",
+            "minLength": 1
           }
         },
         "anyOf": [

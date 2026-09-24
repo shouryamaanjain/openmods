@@ -1782,6 +1782,8 @@ async function cmdCheck() {
   const result: Record<string, unknown> = spec
     ? { mod: mod.id, harness: mod.harness, madeFor: mod.upstream.ref, ref, touches: touchedFiles(mod) }
     : { harness: mod.harness, stock: true, ref }
+  // A build or typecheck needs these; found before anything is fetched.
+  if (has("build") || has("typecheck")) await checkRequirements(h)
   try {
     await initCheckout(h.repo, root)
     await $`git -C ${root} fetch --no-tags --depth 1 --filter=blob:none origin tag ${ref}`.quiet()
@@ -1811,7 +1813,6 @@ async function cmdCheck() {
       result.error = (am.stderr.toString() + am.stdout.toString()).trim()
       await clearApplyState(root)
     } else if (has("build") || has("typecheck")) {
-      await checkRequirements(h)
       // The stamp must be valid semver build metadata: mod names are, "(stock)" is not.
       buildEnv = { OPENMODS_HARNESS: h.id, OPENMODS_REF: ref, OPENMODS_VERSION: rel(ref), OPENMODS_MODS: mod.patches.length ? mod.name : "stock" }
       if (has("typecheck")) {

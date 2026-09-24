@@ -116,8 +116,12 @@ describe("what a build needs", () => {
     )
     const checkout = path.join(sb.om, "harnesses", "fake", "src")
     const before = existsSync(checkout) ? readdirSync(checkout).length : 0
-    const r = await cli(sb, "update", "fake", "--force")
-    writeFileSync(definition, saved)
+    let r: Awaited<ReturnType<typeof cli>>
+    try {
+      r = await cli(sb, "update", "fake", "--force")
+    } finally {
+      writeFileSync(definition, saved)
+    }
     expect(r.code).toBe(1)
     expect(r.err).toContain("building Fake needs:\n  - the first thing\n  - the second thing")
     expect(r.err).not.toContain("another OS")
@@ -125,12 +129,29 @@ describe("what a build needs", () => {
     expect(r.all).not.toContain("Fetching")
     expect(existsSync(checkout) ? readdirSync(checkout).length : 0).toBe(before)
   })
+  test("are checked before openmods check fetches a release to build or typecheck", async () => {
+    const saved = readFileSync(definition, "utf8")
+    writeFileSync(definition, JSON.stringify({ ...JSON.parse(saved), requirements: [{ check: "exit 1", hint: "something missing" }] }))
+    let r: Awaited<ReturnType<typeof cli>>
+    try {
+      r = await cli(sb, "check", "t/friendly", "--fake", "--typecheck", "--workspace", path.join(sb.T, "check-ws"))
+    } finally {
+      writeFileSync(definition, saved)
+    }
+    expect(r.code).toBe(1)
+    expect(r.err).toContain("building Fake needs:\n  - something missing")
+    expect(existsSync(path.join(sb.T, "check-ws", ".git"))).toBe(false)
+  })
   test("are not needed to turn mods off or remove them", async () => {
     const saved = readFileSync(definition, "utf8")
     writeFileSync(definition, JSON.stringify({ ...JSON.parse(saved), requirements: [{ check: "exit 1", hint: "something missing" }] }))
-    const off = await cli(sb, "off", "t/friendly")
-    const removed = await cli(sb, "uninstall", "t/friendly")
-    writeFileSync(definition, saved)
+    let off: Awaited<ReturnType<typeof cli>>, removed: Awaited<ReturnType<typeof cli>>
+    try {
+      off = await cli(sb, "off", "t/friendly")
+      removed = await cli(sb, "uninstall", "t/friendly")
+    } finally {
+      writeFileSync(definition, saved)
+    }
     expect([off.code, removed.code], off.all + removed.all).toEqual([0, 0])
     expect(await cli(sb, "install", "t/friendly")).toMatchObject({ code: 0 })
   })
