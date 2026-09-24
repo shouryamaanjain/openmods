@@ -245,6 +245,8 @@ export const FILES: Flag[] = [
   { flag: "~/.openmods/harnesses/<id>/builds", description: "The current modded build, kept until a newer one succeeds." },
   { flag: "~/.openmods/toolchains/", description: "The Bun the CLI runs on, and the exact toolchain each harness release pins." },
   { flag: "~/.openmods/cache/", description: "Bun's package and transpiler caches. Safe to delete." },
+  { flag: "~/.openmods/logs/", description: "The output of recent builds, one file each, for when a build fails." },
+  { flag: "~/.openmods/timings.json", description: "How long each build step took here, for the time left and the update question." },
   { flag: "~/.openmods/local/<owner>/<mod>", description: "Your own unpublished mods, laid out like the registry." },
   { flag: "~/.openmods/updates/<id>", description: "The launcher's daily note." },
   { flag: "~/.openmods/state.json", description: "What is installed, and on, per harness." },
