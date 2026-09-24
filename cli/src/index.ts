@@ -634,10 +634,14 @@ async function ensureCheckout(h: Harness, root: string, commit: string, ref: str
   }
   // Checked by the tag, not the commit: asking a blobless checkout about an
   // object it lacks makes git download it, with all the history behind it.
-  const have = await $`git -C ${root} rev-parse -q --verify ${"refs/tags/" + ref}`.nothrow().quiet()
-  if (have.exitCode !== 0) {
+  const tagged = await $`git -C ${root} rev-parse -q --verify ${`refs/tags/${ref}^{commit}`}`.nothrow().quiet()
+  if (tagged.exitCode !== 0) {
     log(`Fetching ${ref}`)
     await $`git -C ${root} fetch --no-tags --depth 1 origin tag ${ref}`.quiet()
+  } else if (tagged.stdout.toString().trim() !== commit) {
+    // The registry pins a different commit than the tag we have.
+    log(`Fetching ${commit.slice(0, 12)}`)
+    await $`git -C ${root} fetch --no-tags --depth 1 origin ${commit}`.quiet()
   }
   await clearApplyState(root)
   await $`git -C ${root} checkout -q --force --detach ${commit}`

@@ -6,7 +6,7 @@ import { beforeAll, describe, expect, test } from "bun:test"
 import { $ } from "bun"
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { addFile, cli, createHarness, createMod, greeting, release, sandbox, setGreeting } from "./harness"
+import { addFile, cli, createHarness, createMod, git, greeting, release, sandbox, setGreeting } from "./harness"
 
 const sb = sandbox("machines")
 const checkout = () => path.join(sb.om, "harnesses", "fake", "src")
@@ -28,6 +28,24 @@ describe("a harness checkout", () => {
     expect(existsSync(path.join(checkout(), ".git", "shallow"))).toBe(true)
     const commits = Number((await $`git -C ${checkout()} rev-list --count HEAD`.text()).trim())
     expect(commits).toBe(2) // the release and the mod's one patch
+  })
+  test("gets the commit the registry pins when the tag it has points elsewhere", async () => {
+    await git(sb.harness, "checkout", "-q", "v1.0.0")
+    addFile("RETAG.md", "v1.0.0, tagged again\n")(sb.harness)
+    await git(sb.harness, "add", "-A")
+    await git(sb.harness, "commit", "-q", "-m", "v1.0.0 again")
+    await git(sb.harness, "tag", "-f", "v1.0.0")
+    const pinned = (await git(sb.harness, "rev-parse", "HEAD")).stdout.toString().trim()
+    await git(sb.harness, "checkout", "-q", "-")
+    const support = path.join(sb.reg, "mods", "t", "friendly", "fake", "support.json")
+    const s = JSON.parse(readFileSync(support, "utf8"))
+    writeFileSync(support, JSON.stringify({ ...s, versions: s.versions.map((v: object) => ({ ...v, commit: pinned })) }))
+    await cli(sb, "uninstall", "t/friendly")
+    const r = await cli(sb, "install", "t/friendly")
+    expect(r.code, r.all).toBe(0)
+    expect((await $`git -C ${checkout()} rev-parse HEAD~1`.text()).trim()).toBe(pinned)
+    expect(existsSync(path.join(checkout(), "RETAG.md"))).toBe(true)
+    expect(Number((await $`git -C ${checkout()} rev-list --count HEAD`.text()).trim())).toBe(2) // still no history
   })
 })
 

@@ -35,8 +35,9 @@ fi
 # Bun caches the CLI's transpiled code; on Linux it would go in ~/.bun.
 cat > "$OM/bin/openmods" <<WRAP
 #!/bin/sh
-export BUN_RUNTIME_TRANSPILER_CACHE_PATH="\${BUN_RUNTIME_TRANSPILER_CACHE_PATH-$OM/cache/transpiler}"
-exec "$BUN" "$OM/registry/cli/src/index.ts" "\$@"
+OM="\${OPENMODS_HOME:-\$HOME/.openmods}"
+export BUN_RUNTIME_TRANSPILER_CACHE_PATH="\${BUN_RUNTIME_TRANSPILER_CACHE_PATH-\$OM/cache/transpiler}"
+exec "\$OM/toolchains/bun-$BUN_VERSION/bin/bun" "\$OM/registry/cli/src/index.ts" "\$@"
 WRAP
 chmod 755 "$OM/bin/openmods"
 
