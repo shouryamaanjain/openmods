@@ -63,4 +63,11 @@ describe("a harness's env", () => {
     await cli(sb, "check-updates", "fake")
     expect(await greeting(sb)).toBe("dev self-update=changed")
   })
+  test("a harness that drops its dev command leaves a dev launcher as it is", async () => {
+    const { dev: _, ...rest } = JSON.parse(readFileSync(definition, "utf8"))
+    writeFileSync(definition, JSON.stringify({ ...rest, env: { GREET_SELF_UPDATE: "again" } }))
+    const r = await cli(sb, "check-updates", "fake")
+    expect(r.code, r.all).toBe(0)
+    expect(await greeting(sb)).toBe("dev self-update=changed")
+  })
 })

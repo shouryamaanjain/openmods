@@ -889,7 +889,7 @@ function refreshLauncher(reg: string, h: Harness, e: State[string] | undefined) 
   if (!existsSync(launcher)) return
   const dev = loadDev()[h.id]
   if (dev) {
-    if (dev.toolchain === undefined) return
+    if (dev.toolchain === undefined || !h.dev) return
     const want = devLauncherOf(h, dev.path, dev.version, dev.toolchain)
     if (readFileSync(launcher, "utf8") !== want) writeFileSync(launcher, want, { mode: 0o755 })
     return
