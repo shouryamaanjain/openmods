@@ -5,7 +5,7 @@
 // install can be missed by such a terminal, and a bash user is told how to
 // fix that.
 import { beforeAll, describe, expect, test } from "bun:test"
-import { rmSync, renameSync } from "node:fs"
+import { renameSync, symlinkSync } from "node:fs"
 import path from "node:path"
 import { CLI, createHarness, createMod, greeting, run, sandbox, setGreeting } from "./harness"
 
@@ -72,8 +72,14 @@ describe("with the mods off", () => {
       renameSync(`${stockDir()}.away`, stockDir())
     }
   })
+  test("never starts itself, however PATH reaches it", async () => {
+    const link = path.join(sb.T, "link-to-bin")
+    symlinkSync(bin(), link)
+    const r = await bash([`PATH=${link}:.:$PATH`, `cd ${bin()}`, "greet"])
+    expect(r.code, r.all).toBe(0)
+    expect(r.out.trim()).toBe("stock greet")
+  })
   test("arguments reach the stock harness", async () => {
-    rmSync(path.join(sb.T, "none"), { force: true })
     expect(await greeting(sb)).toBe("stock greet")
     expect((await bash(["greet --version"])).out.trim()).toBe("1.0.0")
   })

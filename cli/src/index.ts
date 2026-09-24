@@ -812,7 +812,7 @@ function envOf(h: Harness) {
 function launcherOf(h: Harness, artifact: string) {
   const cli = Bun.which("openmods") ?? `${process.execPath} ${path.resolve(import.meta.path)}`
   return `#!/bin/sh
-# openmods launcher for ${h.binary}. \`openmods off\` removes it; the stock ${h.name} is untouched.
+# openmods launcher for ${h.binary}. \`openmods off\` makes it start the stock ${h.name}, which is untouched.
 HARNESS=${h.id}
 SELF=${JSON.stringify(path.join(BIN, h.binary))}
 REAL=${JSON.stringify(artifact)}
@@ -960,11 +960,12 @@ function stockLauncherOf(h: Harness) {
   return `#!/bin/sh
 # openmods launcher for ${h.binary}, switched off: it starts your stock ${h.name}.
 # \`openmods on\` brings the mods back.
-SELF_DIR=${q(BIN)}
+# Anything that is this file (-ef), however PATH reaches it, is skipped.
+SELF=${q(path.join(BIN, h.binary))}
 OLD_IFS=$IFS; IFS=:
 for d in $PATH; do
   IFS=$OLD_IFS
-  [ -n "$d" ] && [ "\${d%/}" != "$SELF_DIR" ] && [ -f "$d/${h.binary}" ] && [ -x "$d/${h.binary}" ] && exec "$d/${h.binary}" "$@"
+  [ -n "$d" ] && [ -f "$d/${h.binary}" ] && [ -x "$d/${h.binary}" ] && ! [ "$d/${h.binary}" -ef "$SELF" ] && exec "$d/${h.binary}" "$@"
 done
 IFS=$OLD_IFS
 ${installed.length ? `for d in ${installed.join(" ")}; do
@@ -1084,7 +1085,7 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     rmSync(path.join(HOME, "harnesses", harnessId, "builds"), { recursive: true, force: true })
     delete state[harnessId]
     saveState(state)
-    log(`Removed the modded ${h.name} build${prev ? ` (${rel(prev.ref)} + ${prev.mods.join(" + ")})` : ""}: its link, its binary and its patched commits are gone.`)
+    log(`Removed the modded ${h.name} build${prev ? ` (${rel(prev.ref)} + ${prev.mods.join(" + ")})` : ""}: its binary and its patched commits are gone.`)
     log(`\`${h.binary}\` runs your stock ${h.name}. The ${h.name} source checkout stays at ${pretty(root)} as a cache; delete it if you want the space back.`)
     return
   }
