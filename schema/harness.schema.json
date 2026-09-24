@@ -143,6 +143,14 @@
       },
       "description": "Environment variables the modded build runs with, and a clone under `openmods dev`. For settings a modded build needs, such as turning off the harness's own self-update, since OpenMods offers the updates."
     },
+    "args": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Arguments the modded build, and a clone under `openmods dev`, always start with, before the user's. For a setting a modded build needs that has no environment variable, such as turning off Codex's update check, since OpenMods offers the updates."
+    },
     "releaseTagPattern": {
       "type": "string",
       "description": "Glob for release tags, used by the compatibility checker."

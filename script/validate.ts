@@ -36,6 +36,8 @@ for (const id of harnesses) {
       errors.push(`harnesses/${id}.json: each requirement needs a hint and a command or a check, none of them empty`)
     else if (r.os !== undefined && !["darwin", "linux", "win32"].includes(r.os)) errors.push(`harnesses/${id}.json: requirement os must be darwin, linux or win32`)
   }
+  if (h.args !== undefined && (!Array.isArray(h.args) || h.args.some((a: unknown) => typeof a !== "string" || !a)))
+    errors.push(`harnesses/${id}.json: args must be a list of arguments, none of them empty`)
   // Set for the modded build when it starts.
   if (h.env !== undefined) {
     if (typeof h.env !== "object" || h.env === null || Array.isArray(h.env)) errors.push(`harnesses/${id}.json: env must be an object of variable names to strings`)

@@ -39,6 +39,10 @@ type Harness = {
   // Set for the modded build (and a dev clone) when it starts, such as turning
   // off the harness's own self-update: OpenMods offers updates for it.
   env?: Record<string, string>
+  // Arguments the modded build (and a dev clone) always starts with, before
+  // the user's: for a setting with no environment variable, such as Codex's
+  // update check.
+  args?: string[]
   releaseTagPattern?: string
 }
 
@@ -889,6 +893,12 @@ function envOf(h: Harness) {
     .join("")
 }
 
+// The harness's own arguments, quoted for the launcher, with a space after.
+function argsOf(h: Harness) {
+  const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
+  return (h.args ?? []).map((a) => `${q(a)} `).join("")
+}
+
 function launcherOf(h: Harness, artifact: string) {
   const cli = Bun.which("openmods") ?? `${process.execPath} ${path.resolve(import.meta.path)}`
   return `#!/bin/sh
@@ -933,7 +943,7 @@ if { { [ -t 0 ] && [ -t 1 ]; } || [ -n "$OPENMODS_ASSUME_TTY" ]; } && [ -z "$OPE
   fi
 fi
 
-${envOf(h)}exec "$REAL" "$@"
+${envOf(h)}exec "$REAL" ${argsOf(h)}"$@"
 `
 }
 
@@ -957,7 +967,7 @@ function devLauncherOf(h: Harness, clone: string, version: string, toolchain: st
   return `#!/bin/sh
 # openmods dev: \`${h.binary}\` runs your clone at ${clone} from source.
 # \`openmods dev --stop\` switches back.
-${toolchain ? `PATH=${q(toolchain)}:"$PATH"; export PATH\n` : ""}${envOf(h)}${run} "$@"
+${toolchain ? `PATH=${q(toolchain)}:"$PATH"; export PATH\n` : ""}${envOf(h)}${run} ${argsOf(h)}"$@"
 `
 }
 
