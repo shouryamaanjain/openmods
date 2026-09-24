@@ -36,8 +36,8 @@ describe("the update prompt", () => {
   test("offers a release every mod supports, once", async () => {
     const r = await launch("n\n")
     expect(r.out).toContain("Fake 1.1.0 is out, and all your mods support it.")
-    // The install timed its steps, so the question says how long it takes.
-    expect(r.out).toContain("Update now? It rebuilds Fake (under a minute). [y/N]")
+    // Only a first build was timed, which says nothing about a rebuild.
+    expect(r.out).toContain("Update now? It rebuilds Fake. [y/N]")
     expect(r.out).toContain("You will not be asked about this again")
     expect(r.out).toContain("hello from friendly")
     expect(r.code).toBe(0)
