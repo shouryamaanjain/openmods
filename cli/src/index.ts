@@ -925,19 +925,54 @@ ${stock ? `exec ${JSON.stringify(stock)} "$@"` : "exit 1"}
 `
 }
 
+// The launcher stays at ~/.openmods/bin/<binary> from the first install on,
+// whether it runs the modded build or the stock one: bash remembers where it
+// found a command, so a launcher that came and went would leave `opencode`
+// pointing at a missing file after `openmods off`, or at the stock one after
+// `openmods on`.
 function switchOn(h: Harness, artifact: string) {
   endDev(h)
-  mkdirSync(BIN, { recursive: true })
-  const target = path.join(BIN, h.binary)
-  if (existsSync(target)) unlinkSync(target)
-  writeFileSync(target, launcherOf(h, artifact), { mode: 0o755 })
-  return target
+  writeLauncher(h, launcherOf(h, artifact))
 }
 
 function switchOff(h: Harness) {
   endDev(h)
+  writeLauncher(h, stockLauncherOf(h))
+}
+
+// Writes the launcher. A new one may not be picked up by a bash that already
+// ran the stock harness in this terminal, so that case gets one line of help.
+function writeLauncher(h: Harness, script: string) {
+  mkdirSync(BIN, { recursive: true })
   const target = path.join(BIN, h.binary)
-  if (existsSync(target)) unlinkSync(target)
+  const fresh = !existsSync(target)
+  if (!fresh) unlinkSync(target)
+  writeFileSync(target, script, { mode: 0o755 })
+  if (fresh && path.basename(process.env.SHELL ?? "") === "bash" && pathHasBin())
+    log(`If \`${h.binary}\` still starts your stock ${h.name} in a terminal that ran it before, run \`hash -r\` there once; bash remembers where it found it.`)
+}
+
+// The launcher while the mods are off: it finds the stock harness on PATH,
+// or where its official installer puts it, each time it starts.
+function stockLauncherOf(h: Harness) {
+  const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
+  const installed = (h.installer?.paths ?? []).map((p) => q(p.replace(/^~(?=\/|$)/, homedir())))
+  return `#!/bin/sh
+# openmods launcher for ${h.binary}, switched off: it starts your stock ${h.name}.
+# \`openmods on\` brings the mods back.
+SELF_DIR=${q(BIN)}
+OLD_IFS=$IFS; IFS=:
+for d in $PATH; do
+  IFS=$OLD_IFS
+  [ -n "$d" ] && [ "\${d%/}" != "$SELF_DIR" ] && [ -f "$d/${h.binary}" ] && [ -x "$d/${h.binary}" ] && exec "$d/${h.binary}" "$@"
+done
+IFS=$OLD_IFS
+${installed.length ? `for d in ${installed.join(" ")}; do
+  [ -f "$d/${h.binary}" ] && [ -x "$d/${h.binary}" ] && exec "$d/${h.binary}" "$@"
+done
+` : ""}printf '%s\n' ${q(`${h.binary}: your stock ${h.name} was not found. Install it, or run \`openmods on\` for the modded build.`)} >&2
+exit 127
+`
 }
 
 function stockBinary(h: Harness): string | null {

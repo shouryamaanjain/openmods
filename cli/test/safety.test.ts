@@ -127,7 +127,7 @@ describe("revocation", () => {
     rmSync(path.join(sb.reg, "mods", "t", "friendly"), { recursive: true })
     const r = await cli(sb, "uninstall", "t/friendly")
     expect(r.code, r.all).toBe(0)
-    expect(existsSync(launcher())).toBe(false)
+    expect(await greeting(sb)).toBe("stock greet")
     expect((await cli(sb, "status")).out).toContain("No mods installed")
   })
 })
