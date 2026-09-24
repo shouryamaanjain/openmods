@@ -23,7 +23,7 @@
       "hint": "Install git"
     }
   ],
-  "install": "bun install",
+  "install": "bun install --ignore-scripts",
   "typecheck": "bun turbo typecheck --filter=\"...[${OPENMODS_REF}]\" --concurrency=2",
   "build": "OPENCODE_VERSION=\"${OPENMODS_VERSION}+${OPENMODS_MODS}\" OPENCODE_CHANNEL=openmods bun run packages/opencode/script/build.ts --single --skip-install",
   "artifact": "packages/opencode/dist/opencode-{os}-{arch}/bin/opencode",
