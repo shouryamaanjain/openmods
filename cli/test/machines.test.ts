@@ -5,8 +5,9 @@
 import { beforeAll, describe, expect, test } from "bun:test"
 import { $ } from "bun"
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { cpus, totalmem } from "node:os"
 import path from "node:path"
-import { addFile, cli, createHarness, createMod, git, greeting, release, sandbox, setGreeting } from "./harness"
+import { addFile, cli, createHarness, createMod, git, greeting, release, run, sandbox, setGreeting } from "./harness"
 
 const sb = sandbox("machines")
 const checkout = () => path.join(sb.om, "harnesses", "fake", "src")
@@ -154,6 +155,34 @@ describe("what a build needs", () => {
     }
     expect([off.code, removed.code], off.all + removed.all).toEqual([0, 0])
     expect(await cli(sb, "install", "t/friendly")).toMatchObject({ code: 0 })
+  })
+})
+
+describe("a Rust build's jobs", () => {
+  const seen = path.join(sb.T, "jobs")
+  // A build that records the jobs it was given; the definition is put back after.
+  const recording = async (fn: () => Promise<void>) => {
+    const saved = readFileSync(definition, "utf8")
+    const build = `echo "$CARGO_BUILD_JOBS" > ${seen} && mkdir -p out/bin && cp greet.sh out/bin/greet && chmod +x out/bin/greet`
+    writeFileSync(definition, JSON.stringify({ ...JSON.parse(saved), build, artifact: "out/bin/greet", keep: undefined }))
+    try {
+      await fn()
+    } finally {
+      writeFileSync(definition, saved)
+    }
+  }
+  test("are capped by the machine's memory, and never more than its cores", async () => {
+    await recording(async () => {
+      expect((await cli(sb, "update", "fake", "--force")).code).toBe(0)
+    })
+    const expected = Math.max(1, Math.min(cpus().length, Math.floor(totalmem() / (2.5 * 1024 ** 3))))
+    expect(Number(readFileSync(seen, "utf8"))).toBe(expected)
+  })
+  test("are what you set, when you set them", async () => {
+    await recording(async () => {
+      expect((await run(sb, { env: { CARGO_BUILD_JOBS: "3" } }, "update", "fake", "--force")).code).toBe(0)
+    })
+    expect(readFileSync(seen, "utf8").trim()).toBe("3")
   })
 })
 
