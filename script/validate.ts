@@ -35,6 +35,13 @@ for (const id of harnesses) {
     if (!filled(r?.hint) || (!filled(r.command) && !filled(r.check)) || [r.command, r.check].some((v) => v !== undefined && !filled(v)))
       errors.push(`harnesses/${id}.json: each requirement needs a hint and a command or a check, none of them empty`)
     else if (r.os !== undefined && !["darwin", "linux", "win32"].includes(r.os)) errors.push(`harnesses/${id}.json: requirement os must be darwin, linux or win32`)
+    else if ([r.name, r.install].some((v) => v !== undefined && !filled(v)))
+      errors.push(`harnesses/${id}.json: a requirement's name and install cannot be empty`)
+    else if (
+      r.packages !== undefined &&
+      (r.packages === null || typeof r.packages !== "object" || Array.isArray(r.packages) || Object.entries(r.packages).some(([m, v]) => !["apt", "dnf", "brew"].includes(m) || !filled(v)))
+    )
+      errors.push(`harnesses/${id}.json: a requirement's packages name apt, dnf or brew packages`)
   }
   if (h.args !== undefined && (!Array.isArray(h.args) || h.args.some((a: unknown) => typeof a !== "string" || !a)))
     errors.push(`harnesses/${id}.json: args must be a list of arguments, none of them empty`)

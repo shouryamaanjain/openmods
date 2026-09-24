@@ -12,6 +12,7 @@ import { homedir, tmpdir } from "node:os"
 import path from "node:path"
 import { footprint, incompatibility as whyNot, type Footprint } from "./overlap"
 import { lastRebuild, Progress, roughly } from "./progress"
+import { managerHere, missingMessage, type Requirement } from "./requirements"
 
 type Harness = {
   id: string
@@ -24,8 +25,9 @@ type Harness = {
   // binary into, so it is found before the shell's PATH picks them up.
   installer?: { command: string; paths?: string[] }
   // What a build needs on the machine: a command on PATH, or a `check` that
-  // must succeed (a library, say), on every OS or only on `os`.
-  requirements?: { command?: string; check?: string; os?: string; hint: string }[]
+  // must succeed (a library, say), on every OS or only on `os`; see
+  // requirements.ts for how the missing ones are installed.
+  requirements?: Requirement[]
   install: string
   typecheck?: string
   build: string
@@ -621,16 +623,19 @@ function artifactPath(h: Harness, root: string, file = h.artifact) {
 // Before anything is fetched or built, so a missing tool or library is
 // found in a second, not at the end of a long build. All of them at once.
 async function checkRequirements(h: Harness) {
-  const missing: string[] = []
+  const missing: Requirement[] = []
   for (const r of h.requirements ?? []) {
     if (r.os && r.os !== process.platform) continue
     if (r.command === "bun") continue // provisioned per release by ensureToolchain
     const ok = r.check
       ? (await $`sh -c ${r.check}`.nothrow().quiet()).exitCode === 0
       : !r.command || !!Bun.which(r.command)
-    if (!ok) missing.push(r.hint)
+    if (!ok) missing.push(r)
   }
-  if (missing.length) fail(`building ${h.name} needs:\n${missing.map((m) => `  - ${m}`).join("\n")}`)
+  if (missing.length) {
+    const manager = managerHere(process.platform, (c) => !!Bun.which(c))
+    fail(missingMessage(h.name, missing, manager, process.getuid?.() === 0))
+  }
 }
 
 // Leaves no `git am` in progress. `git am --abort` is enough on most git
