@@ -837,7 +837,7 @@ if { { [ -t 0 ] && [ -t 1 ]; } || [ -n "$OPENMODS_ASSUME_TTY" ]; } && [ -z "$OPE
     printf '%s\n' "$KEY" > "$NOTE.seen"
     printf '%s\n' "$MESSAGE"
     if [ "$ASK" = 1 ]; then
-      printf '%s' "Update now? It rebuilds ${h.name}, which takes a few minutes. [y/N] "
+      printf '%s' "Update now? It rebuilds ${h.name}, which takes about a minute. [y/N] "
       read -r ANSWER
       case "$ANSWER" in
         y|Y|yes|YES)
