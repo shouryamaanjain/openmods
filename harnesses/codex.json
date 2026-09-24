@@ -16,32 +16,71 @@
   "requirements": [
     {
       "command": "rustup",
+      "name": "Rust",
+      "install": "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && . \"$HOME/.cargo/env\"",
       "hint": "Rust, installed with rustup: https://rustup.rs (it picks up the toolchain each Codex release pins)"
     },
     {
       "command": "cargo",
+      "name": "Rust",
+      "install": "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && . \"$HOME/.cargo/env\"",
       "hint": "Rust's cargo, installed with rustup: https://rustup.rs"
     },
     {
       "command": "git",
+      "name": "git",
+      "packages": {
+        "apt": "git",
+        "dnf": "git",
+        "brew": "git"
+      },
       "hint": "git"
     },
     {
       "check": "python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))'",
+      "name": "Python 3.11 or newer",
+      "packages": {
+        "apt": "python3",
+        "dnf": "python3",
+        "brew": "python"
+      },
       "hint": "Python 3.11 or newer, for Codex's package builder (macOS's own python3 is older: brew install python)"
     },
     {
       "command": "cc",
-      "hint": "a C compiler: build-essential on Debian or Ubuntu, Xcode's command line tools on macOS (xcode-select --install)"
+      "os": "linux",
+      "name": "a C compiler",
+      "packages": {
+        "apt": "build-essential",
+        "dnf": "gcc make"
+      },
+      "hint": "a C compiler: build-essential on Debian or Ubuntu, gcc on Fedora"
+    },
+    {
+      "command": "cc",
+      "os": "darwin",
+      "name": "a C compiler",
+      "install": "xcode-select --install",
+      "hint": "a C compiler: Xcode's command line tools (xcode-select --install)"
     },
     {
       "command": "pkg-config",
       "os": "linux",
+      "name": "pkg-config",
+      "packages": {
+        "apt": "pkg-config",
+        "dnf": "pkgconf"
+      },
       "hint": "pkg-config: sudo apt install pkg-config (Debian, Ubuntu) or sudo dnf install pkgconf (Fedora)"
     },
     {
       "check": "pkg-config --exists libcap",
       "os": "linux",
+      "name": "libcap's development files",
+      "packages": {
+        "apt": "libcap-dev",
+        "dnf": "libcap-devel"
+      },
       "hint": "libcap's development files, for Codex's sandbox: sudo apt install libcap-dev (Debian, Ubuntu) or sudo dnf install libcap-devel (Fedora)"
     }
   ],

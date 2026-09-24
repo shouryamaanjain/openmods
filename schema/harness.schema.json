@@ -65,7 +65,7 @@
     },
     "requirements": {
       "type": "array",
-      "description": "What a build needs on the machine, checked before anything is fetched or built. Each is a command that must be on PATH, or a check, a shell command that must succeed (for a library, say), on every OS or only on os.",
+      "description": "What a build needs on the machine, checked before anything is fetched or built. Each is a command that must be on PATH, or a check, a shell command that must succeed (for a library, say), on every OS or only on os. What is missing is installed with one line: every package in one install with the package manager found, then the install commands.",
       "items": {
         "type": "object",
         "required": [
@@ -94,6 +94,35 @@
             "type": "string",
             "description": "What to install, shown when it is missing.",
             "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "What it is, for the summary: \"a C compiler\"."
+          },
+          "packages": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "apt": {
+                "type": "string",
+                "minLength": 1
+              },
+              "dnf": {
+                "type": "string",
+                "minLength": 1
+              },
+              "brew": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "description": "Its package for each package manager; every missing one goes into one install line."
+          },
+          "install": {
+            "type": "string",
+            "minLength": 1,
+            "description": "A command that installs it, when it is not a package (rustup, say)."
           }
         },
         "anyOf": [
