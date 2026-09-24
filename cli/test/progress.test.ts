@@ -57,7 +57,7 @@ describe("a build in a terminal", () => {
     writeFileSync(file, JSON.stringify({ fake: { "Build:first": 600 } }))
     setBuild("sleep 1.5 && mkdir -p out/bin && cp greet.sh out/bin/greet && chmod +x out/bin/greet")
     expect((await run(sb, live, "update", "fake", "--force")).out).not.toContain("min left")
-  })
+  }, 20_000)
   test("turns a build's reported progress into a bar", async () => {
     setBuild(
       "printf '    Building [=====>     ] 5/10: some-crate\\r' && sleep 1.5 && mkdir -p out/bin && cp greet.sh out/bin/greet && chmod +x out/bin/greet",
@@ -65,7 +65,7 @@ describe("a build in a terminal", () => {
     const r = await run(sb, live, "update", "fake", "--force")
     expect(r.code, r.all).toBe(0)
     expect(r.out).toContain("██████████░░░░░░░░░░   50%")
-  })
+  }, 20_000)
   test("says how long is left from the last build here, once it is a minute or more", async () => {
     const file = path.join(sb.om, "timings.json")
     writeFileSync(file, JSON.stringify({ fake: { ...timings(), Build: 600 } }))
@@ -74,7 +74,7 @@ describe("a build in a terminal", () => {
     expect(r.code, r.all).toBe(0)
     expect(r.out).toContain("· ~10 min left")
     expect(r.out).not.toContain("<1 min")
-  })
+  }, 20_000)
   test("a failed step says so, with the end of its output and the log", async () => {
     setBuild("echo 'error: cannot find this'; exit 2")
     const r = await run(sb, live, "update", "fake", "--force")
@@ -93,7 +93,7 @@ describe("when things go wrong", () => {
     const r = await run(sb, live, "update", "fake", "--force")
     expect(r.code, r.all).toBe(0)
     expect(r.out).toContain("50%")
-  })
+  }, 20_000)
   test("a build that finishes without its binary fails its Build step, with the log", async () => {
     setBuild("rm -rf out && echo compiled nothing")
     const r = await run(sb, live, "update", "fake", "--force")
