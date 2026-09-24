@@ -47,7 +47,7 @@ describe("a build in a terminal", () => {
     const file = path.join(sb.om, "timings.json")
     writeFileSync(file, JSON.stringify({ fake: { "Build:first": 600, Build: 600 } }))
     setBuild(
-      "printf '    Building [==================> ] 99/100: codex\\r' && sleep 0.6 && mkdir -p out/bin && cp greet.sh out/bin/greet && chmod +x out/bin/greet",
+      "printf '    Building [==================> ] 99/100: codex\\r' && sleep 1.5 && mkdir -p out/bin && cp greet.sh out/bin/greet && chmod +x out/bin/greet",
     )
     const r = await run(sb, live, "update", "fake", "--force")
     expect(r.code, r.all).toBe(0)
@@ -55,12 +55,12 @@ describe("a build in a terminal", () => {
     expect(withBar.length).toBeGreaterThan(0)
     expect(withBar.some((frame) => frame.includes("min left"))).toBe(false)
     writeFileSync(file, JSON.stringify({ fake: { "Build:first": 600 } }))
-    setBuild("sleep 0.6 && mkdir -p out/bin && cp greet.sh out/bin/greet && chmod +x out/bin/greet")
+    setBuild("sleep 1.5 && mkdir -p out/bin && cp greet.sh out/bin/greet && chmod +x out/bin/greet")
     expect((await run(sb, live, "update", "fake", "--force")).out).not.toContain("min left")
   })
   test("turns a build's reported progress into a bar", async () => {
     setBuild(
-      "printf '    Building [=====>     ] 5/10: some-crate\\r' && sleep 0.6 && mkdir -p out/bin && cp greet.sh out/bin/greet && chmod +x out/bin/greet",
+      "printf '    Building [=====>     ] 5/10: some-crate\\r' && sleep 1.5 && mkdir -p out/bin && cp greet.sh out/bin/greet && chmod +x out/bin/greet",
     )
     const r = await run(sb, live, "update", "fake", "--force")
     expect(r.code, r.all).toBe(0)
@@ -69,7 +69,7 @@ describe("a build in a terminal", () => {
   test("says how long is left from the last build here, once it is a minute or more", async () => {
     const file = path.join(sb.om, "timings.json")
     writeFileSync(file, JSON.stringify({ fake: { ...timings(), Build: 600 } }))
-    setBuild("sleep 0.6 && mkdir -p out/bin && cp greet.sh out/bin/greet && chmod +x out/bin/greet")
+    setBuild("sleep 1.5 && mkdir -p out/bin && cp greet.sh out/bin/greet && chmod +x out/bin/greet")
     const r = await run(sb, live, "update", "fake", "--force")
     expect(r.code, r.all).toBe(0)
     expect(r.out).toContain("· ~10 min left")
@@ -89,7 +89,7 @@ describe("a build in a terminal", () => {
 describe("when things go wrong", () => {
   const good = "mkdir -p out/bin && cp greet.sh out/bin/greet && chmod +x out/bin/greet"
   test("a progress report split across two chunks of output still makes a bar", async () => {
-    setBuild(`printf '    Building [=====>     ] 5/' && sleep 0.3 && printf '10: some-crate\\r' && sleep 0.6 && ${good}`)
+    setBuild(`printf '    Building [=====>     ] 5/' && sleep 0.3 && printf '10: some-crate\\r' && sleep 1.5 && ${good}`)
     const r = await run(sb, live, "update", "fake", "--force")
     expect(r.code, r.all).toBe(0)
     expect(r.out).toContain("50%")
