@@ -45,6 +45,8 @@ export class Progress {
   readonly log: string
   readonly live: boolean
   private carry = ""
+  // The end of the step's output, kept here too, so a failure can show it even if the log cannot be written.
+  private recent = ""
   private step: { name: string; start: number; fraction?: number; expect?: number; output: boolean } | undefined
   private timer: ReturnType<typeof setInterval> | undefined
   private frame = 0
@@ -93,6 +95,7 @@ export class Progress {
     const expect = kept[key] ?? kept[this.first ? name : `${name}:first`]
     this.step = { name, start: Date.now(), expect, output: false }
     this.carry = ""
+    this.recent = ""
     this.note(`== ${name}`)
     if (this.live) {
       this.draw()
@@ -124,6 +127,7 @@ export class Progress {
     if (!this.step) return
     this.step.output = true
     // A report can be split across chunks, so the end of the last one is read with this one.
+    this.recent = (this.recent + chunk).slice(-8000)
     const text = this.carry + chunk
     this.carry = text.slice(-200)
     let last: RegExpExecArray | undefined
@@ -149,14 +153,12 @@ export class Progress {
     this.stop()
     this.step = undefined
     this.carry = ""
+    const recent = this.recent
+    this.recent = ""
     if (!this.live) return
     process.stdout.write(`  ${this.paint("✗", "31")} ${name.padEnd(13)} ${this.paint(`failed after ${clock(Date.now() - start)}`, "2")}\n`)
     if (!output) return
-    let text = ""
-    try {
-      text = readFileSync(this.log, "utf8")
-    } catch {}
-    const tail = text.split(/[\r\n]+/).filter((l) => l.trim() && !l.startsWith("== ")).slice(-15)
+    const tail = recent.split(/[\r\n]+/).filter((l) => l.trim() && !l.startsWith("== ")).slice(-15)
     process.stdout.write(`${tail.map((l) => `    ${this.paint(l, "2")}`).join("\n")}\n    Full log: ${this.log}\n`)
   }
 
