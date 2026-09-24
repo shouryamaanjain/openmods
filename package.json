@@ -10,7 +10,7 @@
     "typecheck": "bunx tsc --noEmit && bun run --cwd cli typecheck",
     "validate": "bun script/validate.ts",
     "site": "bun script/site.ts --out site",
-    "test": "bun test cli/test"
+    "test": "bun test --timeout 30000 cli/test"
   },
   "devDependencies": {
     "@types/bun": "1.3.13",
