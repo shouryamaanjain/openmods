@@ -98,6 +98,65 @@ describe("a kept build", () => {
   })
 })
 
+describe("what a build needs", () => {
+  test("is checked before anything is fetched, and all that is missing is listed at once", async () => {
+    const saved = readFileSync(definition, "utf8")
+    const other = process.platform === "linux" ? "darwin" : "linux"
+    writeFileSync(
+      definition,
+      JSON.stringify({
+        ...JSON.parse(saved),
+        requirements: [
+          { command: "surely-not-an-installed-command", hint: "the first thing" },
+          { check: "exit 1", hint: "the second thing" },
+          { check: "exit 1", os: other, hint: "a thing for another OS" },
+          { check: "exit 0", hint: "a thing that is there" },
+        ],
+      }),
+    )
+    const checkout = path.join(sb.om, "harnesses", "fake", "src")
+    const before = existsSync(checkout) ? readdirSync(checkout).length : 0
+    let r: Awaited<ReturnType<typeof cli>>
+    try {
+      r = await cli(sb, "update", "fake", "--force")
+    } finally {
+      writeFileSync(definition, saved)
+    }
+    expect(r.code).toBe(1)
+    expect(r.err).toContain("building Fake needs:\n  - the first thing\n  - the second thing")
+    expect(r.err).not.toContain("another OS")
+    expect(r.err).not.toContain("that is there")
+    expect(r.all).not.toContain("Fetching")
+    expect(existsSync(checkout) ? readdirSync(checkout).length : 0).toBe(before)
+  })
+  test("are checked before openmods check fetches a release to build or typecheck", async () => {
+    const saved = readFileSync(definition, "utf8")
+    writeFileSync(definition, JSON.stringify({ ...JSON.parse(saved), requirements: [{ check: "exit 1", hint: "something missing" }] }))
+    let r: Awaited<ReturnType<typeof cli>>
+    try {
+      r = await cli(sb, "check", "t/friendly", "--fake", "--typecheck", "--workspace", path.join(sb.T, "check-ws"))
+    } finally {
+      writeFileSync(definition, saved)
+    }
+    expect(r.code).toBe(1)
+    expect(r.err).toContain("building Fake needs:\n  - something missing")
+    expect(existsSync(path.join(sb.T, "check-ws", ".git"))).toBe(false)
+  })
+  test("are not needed to turn mods off or remove them", async () => {
+    const saved = readFileSync(definition, "utf8")
+    writeFileSync(definition, JSON.stringify({ ...JSON.parse(saved), requirements: [{ check: "exit 1", hint: "something missing" }] }))
+    let off: Awaited<ReturnType<typeof cli>>, removed: Awaited<ReturnType<typeof cli>>
+    try {
+      off = await cli(sb, "off", "t/friendly")
+      removed = await cli(sb, "uninstall", "t/friendly")
+    } finally {
+      writeFileSync(definition, saved)
+    }
+    expect([off.code, removed.code], off.all + removed.all).toEqual([0, 0])
+    expect(await cli(sb, "install", "t/friendly")).toMatchObject({ code: 0 })
+  })
+})
+
 describe("a dependency install", () => {
   test("that fails once is tried again", async () => {
     const marker = path.join(sb.T, "tried")

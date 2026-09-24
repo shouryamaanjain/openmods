@@ -16,11 +16,11 @@
   "requirements": [
     {
       "command": "bun",
-      "hint": "Install Bun from https://bun.sh (the exact version a release pins is provisioned automatically)"
+      "hint": "Bun: https://bun.sh (the exact version a release pins is provisioned automatically)"
     },
     {
       "command": "git",
-      "hint": "Install git"
+      "hint": "git"
     }
   ],
   "install": "bun install --ignore-scripts",

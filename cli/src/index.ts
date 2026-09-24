@@ -23,7 +23,9 @@ type Harness = {
   // harness the user does not have; `paths` are the folders it installs the
   // binary into, so it is found before the shell's PATH picks them up.
   installer?: { command: string; paths?: string[] }
-  requirements?: { command: string; hint: string }[]
+  // What a build needs on the machine: a command on PATH, or a `check` that
+  // must succeed (a library, say), on every OS or only on `os`.
+  requirements?: { command?: string; check?: string; os?: string; hint: string }[]
   install: string
   typecheck?: string
   build: string
@@ -612,11 +614,19 @@ function artifactPath(h: Harness, root: string, file = h.artifact) {
   return path.join(root, file.replaceAll("{os}", process.platform).replaceAll("{arch}", process.arch))
 }
 
+// Before anything is fetched or built, so a missing tool or library is
+// found in a second, not at the end of a long build. All of them at once.
 async function checkRequirements(h: Harness) {
+  const missing: string[] = []
   for (const r of h.requirements ?? []) {
+    if (r.os && r.os !== process.platform) continue
     if (r.command === "bun") continue // provisioned per release by ensureToolchain
-    if (!Bun.which(r.command)) fail(`${h.name} needs "${r.command}". ${r.hint}`)
+    const ok = r.check
+      ? (await $`sh -c ${r.check}`.nothrow().quiet()).exitCode === 0
+      : !r.command || !!Bun.which(r.command)
+    if (!ok) missing.push(r.hint)
   }
+  if (missing.length) fail(`building ${h.name} needs:\n${missing.map((m) => `  - ${m}`).join("\n")}`)
 }
 
 // Leaves no `git am` in progress. `git am --abort` is enough on most git
@@ -1137,7 +1147,6 @@ function explainSwitch(h: Harness, entry: State[string]) {
 // Nothing else moves the user to another release.
 async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[] = [], adding: string[] = [], target?: string) {
   const h = loadHarness(reg, harnessId)
-  await checkRequirements(h)
   const root = path.join(HOME, "harnesses", harnessId, "src")
   const state = loadState()
   if (all.length === 0) {
@@ -1215,6 +1224,9 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
       )
     }
   }
+  // Only now that there is something to build: turning mods off or removing
+  // them needs none of it.
+  await checkRequirements(h)
   const base = mods[0]!.upstream
   const builds = path.join(HOME, "harnesses", harnessId, "builds")
   const first = !existsSync(builds) || readdirSync(builds).length === 0
@@ -1770,6 +1782,8 @@ async function cmdCheck() {
   const result: Record<string, unknown> = spec
     ? { mod: mod.id, harness: mod.harness, madeFor: mod.upstream.ref, ref, touches: touchedFiles(mod) }
     : { harness: mod.harness, stock: true, ref }
+  // A build or typecheck needs these; found before anything is fetched.
+  if (has("build") || has("typecheck")) await checkRequirements(h)
   try {
     await initCheckout(h.repo, root)
     await $`git -C ${root} fetch --no-tags --depth 1 --filter=blob:none origin tag ${ref}`.quiet()
@@ -1799,7 +1813,6 @@ async function cmdCheck() {
       result.error = (am.stderr.toString() + am.stdout.toString()).trim()
       await clearApplyState(root)
     } else if (has("build") || has("typecheck")) {
-      await checkRequirements(h)
       // The stamp must be valid semver build metadata: mod names are, "(stock)" is not.
       buildEnv = { OPENMODS_HARNESS: h.id, OPENMODS_REF: ref, OPENMODS_VERSION: rel(ref), OPENMODS_MODS: mod.patches.length ? mod.name : "stock" }
       if (has("typecheck")) {

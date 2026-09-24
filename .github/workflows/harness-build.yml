@@ -43,6 +43,10 @@ jobs:
           bun-version: latest
       - name: Free disk space
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup || true
+      # What a Codex build needs on Linux, as Codex's own release installs.
+      - name: pkg-config and libcap for Codex
+        if: ${{ inputs.harness == 'codex' }}
+        run: sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends pkg-config libcap-dev >/dev/null
       - name: Build ${{ inputs.harness }} at ${{ inputs.ref }}
         run: bun cli/src/index.ts check --harness ${{ inputs.harness }} --ref ${{ inputs.ref }} --build --json
       - name: Record the recipe as verified
