@@ -34,15 +34,17 @@ export function loadTimings(file: string): Timings {
   }
 }
 
-/** How long a rebuild of `harness` took here last time, all steps, in seconds. */
+/** How long a rebuild of `harness` took here last time, all steps, in seconds; nothing unless every step was timed. */
 export function lastRebuild(file: string, harness: string): number | undefined {
   const t = loadTimings(file)[harness] ?? {}
   const steps = ["Source", "Patches", "Dependencies", "Build"].map((s) => t[s] ?? t[`${s}:first`])
-  return steps.every((s) => s === undefined) ? undefined : steps.reduce<number>((a, s) => a + (s ?? 0), 0)
+  return steps.some((s) => s === undefined) ? undefined : steps.reduce<number>((a, s) => a + s!, 0)
 }
 
 export class Progress {
   readonly log: string
+  readonly live: boolean
+  private carry = ""
   private step: { name: string; start: number; fraction?: number; expect?: number; output: boolean } | undefined
   private timer: ReturnType<typeof setInterval> | undefined
   private frame = 0
@@ -52,21 +54,27 @@ export class Progress {
    * harness before, so the time it takes is compared with other first builds.
    */
   constructor(
-    readonly live: boolean,
+    live: boolean,
     private readonly harness: string,
     private readonly first: boolean,
     private readonly timings: string,
     logs: string,
     private readonly color: boolean,
   ) {
-    mkdirSync(logs, { recursive: true })
     const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)
-    this.log = path.join(logs, `${harness}-${stamp}.log`)
-    const old = readdirSync(logs)
-      .filter((f) => f.startsWith(`${harness}-`) && f.endsWith(".log"))
-      .sort()
-    for (const f of old.slice(0, Math.max(0, old.length - (KEEP_LOGS - 1)))) rmSync(path.join(logs, f), { force: true })
-    writeFileSync(this.log, "")
+    this.log = path.join(logs, `${harness}-${stamp}-${process.pid}.log`)
+    // The log is where the output goes, so without one it streams as before.
+    try {
+      mkdirSync(logs, { recursive: true })
+      const old = readdirSync(logs)
+        .filter((f) => f.startsWith(`${harness}-`) && f.endsWith(".log"))
+        .sort()
+      for (const f of old.slice(0, Math.max(0, old.length - (KEEP_LOGS - 1)))) rmSync(path.join(logs, f), { force: true })
+      writeFileSync(this.log, "")
+      this.live = live
+    } catch {
+      this.live = false
+    }
   }
 
   get running() {
@@ -84,35 +92,54 @@ export class Progress {
     const kept = loadTimings(this.timings)[this.harness] ?? {}
     const expect = kept[key] ?? kept[this.first ? name : `${name}:first`]
     this.step = { name, start: Date.now(), expect, output: false }
+    this.carry = ""
     this.note(`== ${name}`)
     if (this.live) {
       this.draw()
       this.timer = setInterval(() => this.draw(), 120)
     }
-    const result = await fn()
+    let result: T
+    try {
+      result = await fn()
+    } catch (e) {
+      this.failed()
+      throw e
+    }
     const took = Date.now() - this.step.start
     this.stop()
     if (this.live) process.stdout.write(`  ${this.paint("✓", "32")} ${name.padEnd(13)} ${this.paint(clock(took), "2")}\n`)
-    const all = loadTimings(this.timings)
-    all[this.harness] = { ...all[this.harness], [key]: Math.round(took / 1000) }
-    writeFileSync(this.timings, JSON.stringify(all, null, 2) + "\n")
+    // Kept for next time when it can be; a build never fails for it.
+    try {
+      const all = loadTimings(this.timings)
+      all[this.harness] = { ...all[this.harness], [key]: Math.round(took / 1000) }
+      writeFileSync(this.timings, JSON.stringify(all, null, 2) + "\n")
+    } catch {}
     this.step = undefined
     return result
   }
 
   /** A command's output while a step runs: into the log, and scanned for progress. */
   output(chunk: string) {
-    appendFileSync(this.log, chunk)
+    this.append(chunk)
     if (!this.step) return
     this.step.output = true
+    // A report can be split across chunks, so the end of the last one is read with this one.
+    const text = this.carry + chunk
+    this.carry = text.slice(-200)
     let last: RegExpExecArray | undefined
-    for (const m of chunk.matchAll(CARGO_PROGRESS)) last = m as RegExpExecArray
+    for (const m of text.matchAll(CARGO_PROGRESS)) last = m as RegExpExecArray
     if (last && Number(last[2]) > 0) this.step.fraction = Number(last[1]) / Number(last[2])
   }
 
   /** A message that would have been printed: kept in the log instead. */
   note(msg: string) {
-    appendFileSync(this.log, `${msg}\n`)
+    this.append(`${msg}\n`)
+  }
+
+  private append(text: string) {
+    try {
+      appendFileSync(this.log, text)
+    } catch {}
   }
 
   /** The step running failed: says so, with the end of its output when it had any. */
@@ -121,10 +148,15 @@ export class Progress {
     const { name, start, output } = this.step
     this.stop()
     this.step = undefined
+    this.carry = ""
     if (!this.live) return
     process.stdout.write(`  ${this.paint("✗", "31")} ${name.padEnd(13)} ${this.paint(`failed after ${clock(Date.now() - start)}`, "2")}\n`)
     if (!output) return
-    const tail = readFileSync(this.log, "utf8").split(/[\r\n]+/).filter((l) => l.trim() && !l.startsWith("== ")).slice(-15)
+    let text = ""
+    try {
+      text = readFileSync(this.log, "utf8")
+    } catch {}
+    const tail = text.split(/[\r\n]+/).filter((l) => l.trim() && !l.startsWith("== ")).slice(-15)
     process.stdout.write(`${tail.map((l) => `    ${this.paint(l, "2")}`).join("\n")}\n    Full log: ${this.log}\n`)
   }
 

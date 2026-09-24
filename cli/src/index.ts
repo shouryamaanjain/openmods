@@ -792,12 +792,12 @@ async function build(h: Harness, root: string) {
     if (toolchain) buildEnv = { ...buildEnv, PATH: `${toolchain}${path.delimiter}${process.env.PATH ?? ""}` }
     await installDeps(h, root)
   })
+  const artifact = artifactPath(h, root)
   await step("Build", async () => {
     log(`Building: ${h.build}`)
     await shell(h.build, root)
+    if (!existsSync(artifact)) fail(`build finished but ${artifact} does not exist`)
   })
-  const artifact = artifactPath(h, root)
-  if (!existsSync(artifact)) fail(`build finished but ${artifact} does not exist`)
   return artifact
 }
 
