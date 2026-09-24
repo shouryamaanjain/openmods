@@ -29,6 +29,9 @@ type Harness = {
   artifact: string
   // Runs a clone from source, for `openmods dev`; see schema/harness.schema.json.
   dev?: string
+  // Set for the modded build (and a dev clone) when it starts, such as turning
+  // off the harness's own self-update: OpenMods offers updates for it.
+  env?: Record<string, string>
   releaseTagPattern?: string
 }
 
@@ -795,6 +798,16 @@ const pretty = (p: string) => p.replace(homedir(), "~")
 // or a new update of one of them) the next launch asks, once. A no is final
 // for that offer: it asks again only when there is something new. It never
 // rebuilds without a yes.
+// `export` lines for a harness's env; names that are not shell variable
+// names are left out.
+function envOf(h: Harness) {
+  const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
+  return Object.entries(h.env ?? {})
+    .filter(([k]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k))
+    .map(([k, v]) => `export ${k}=${q(v)}\n`)
+    .join("")
+}
+
 function launcherOf(h: Harness, artifact: string) {
   const cli = Bun.which("openmods") ?? `${process.execPath} ${path.resolve(import.meta.path)}`
   return `#!/bin/sh
@@ -839,7 +852,7 @@ if { { [ -t 0 ] && [ -t 1 ]; } || [ -n "$OPENMODS_ASSUME_TTY" ]; } && [ -z "$OPE
   fi
 fi
 
-exec "$REAL" "$@"
+${envOf(h)}exec "$REAL" "$@"
 `
 }
 
@@ -861,7 +874,7 @@ function devLauncherOf(h: Harness, clone: string, version: string, toolchain: st
   return `#!/bin/sh
 # openmods dev: \`${h.binary}\` runs your clone at ${clone} from source.
 # \`openmods dev --stop\` switches back.
-${toolchain ? `PATH=${q(toolchain)}:"$PATH"; export PATH\n` : ""}${run} "$@"
+${toolchain ? `PATH=${q(toolchain)}:"$PATH"; export PATH\n` : ""}${envOf(h)}${run} "$@"
 `
 }
 

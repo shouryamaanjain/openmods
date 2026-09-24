@@ -28,6 +28,13 @@ for (const id of harnesses) {
     if (h.installer?.paths !== undefined && (!Array.isArray(h.installer.paths) || h.installer.paths.some((p: unknown) => typeof p !== "string")))
       errors.push(`harnesses/${id}.json: installer.paths must be a list of folders`)
   }
+  // Set for the modded build when it starts.
+  if (h.env !== undefined) {
+    if (typeof h.env !== "object" || h.env === null || Array.isArray(h.env)) errors.push(`harnesses/${id}.json: env must be an object of variable names to strings`)
+    else
+      for (const [k, v] of Object.entries(h.env))
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) || typeof v !== "string") errors.push(`harnesses/${id}.json: env.${k} must be a variable name set to a string`)
+  }
 }
 
 // mods/<owner>/<name>/mod.json, README.md, and one folder per supported
