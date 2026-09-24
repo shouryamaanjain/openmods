@@ -632,10 +632,16 @@ async function ensureCheckout(h: Harness, root: string, commit: string, ref: str
     log(`Setting up ${h.repo} (blobless, this is a one-time cost)`)
     await initCheckout(h.repo, root)
   }
-  const have = await $`git -C ${root} cat-file -t ${commit}`.nothrow().quiet()
-  if (have.exitCode !== 0) {
+  // Checked by the tag, not the commit: asking a blobless checkout about an
+  // object it lacks makes git download it, with all the history behind it.
+  const tagged = await $`git -C ${root} rev-parse -q --verify ${`refs/tags/${ref}^{commit}`}`.nothrow().quiet()
+  if (tagged.exitCode !== 0) {
     log(`Fetching ${ref}`)
-    await $`git -C ${root} fetch --no-tags origin tag ${ref}`.quiet()
+    await $`git -C ${root} fetch --no-tags --depth 1 origin tag ${ref}`.quiet()
+  } else if (tagged.stdout.toString().trim() !== commit) {
+    // The registry pins a different commit than the tag we have.
+    log(`Fetching ${commit.slice(0, 12)}`)
+    await $`git -C ${root} fetch --no-tags --depth 1 origin ${commit}`.quiet()
   }
   await clearApplyState(root)
   await $`git -C ${root} checkout -q --force --detach ${commit}`
@@ -649,8 +655,11 @@ async function ensureCheckout(h: Harness, root: string, commit: string, ref: str
 // makes git fetch exactly those versions.
 async function fetchBases(root: string, mod: Mod) {
   if (!mod.upstream.commit) return
-  const have = await $`git -C ${root} cat-file -e ${mod.upstream.commit}^{commit}`.nothrow().quiet()
-  if (have.exitCode !== 0) await $`git -C ${root} fetch --no-tags --filter=blob:none origin ${mod.upstream.commit}`.nothrow().quiet()
+  // Usually the release being built, found by its tag. Otherwise it is
+  // fetched on its own: looking the commit up would download it with all
+  // its history (see ensureCheckout).
+  const tagged = await $`git -C ${root} rev-parse -q --verify ${`refs/tags/${mod.upstream.ref}^{commit}`}`.nothrow().quiet()
+  if (tagged.stdout.toString().trim() !== mod.upstream.commit) await $`git -C ${root} fetch --no-tags --depth 1 --filter=blob:none origin ${mod.upstream.commit}`.nothrow().quiet()
   for (const file of touchedFiles(mod)) await $`git -C ${root} cat-file -p ${mod.upstream.commit + ":" + file}`.nothrow().quiet()
 }
 
@@ -682,7 +691,13 @@ class CommandFailed extends Error {}
 async function shell(cmd: string, cwd: string) {
   // With --json, stdout carries only the JSON result: a harness's install,
   // build and typecheck output goes to stderr instead.
-  const proc = Bun.spawn(["sh", "-c", cmd], { cwd, stdio: ["inherit", has("json") ? 2 : "inherit", "inherit"], env: { ...process.env, ...buildEnv } })
+  // Bun's package and transpiler caches go in ~/.openmods too, unless you
+  // chose a place for them, so builds leave nothing behind outside it.
+  const cache = {
+    BUN_INSTALL_CACHE_DIR: process.env.BUN_INSTALL_CACHE_DIR ?? path.join(HOME, "cache", "bun"),
+    BUN_RUNTIME_TRANSPILER_CACHE_PATH: process.env.BUN_RUNTIME_TRANSPILER_CACHE_PATH ?? path.join(HOME, "cache", "transpiler"),
+  }
+  const proc = Bun.spawn(["sh", "-c", cmd], { cwd, stdio: ["inherit", has("json") ? 2 : "inherit", "inherit"], env: { ...process.env, ...cache, ...buildEnv } })
   const code = await proc.exited
   if (code !== 0) throw new CommandFailed(`command failed (${code}): ${cmd}`)
 }
@@ -705,12 +720,25 @@ async function ensureToolchain(root: string): Promise<string | null> {
   const bin = path.join(dir, "bin")
   if (!existsSync(path.join(bin, "bun"))) {
     if (process.platform === "win32") fail(`this release needs bun ${want} (you have ${have || "none"}); install it from https://bun.sh`)
-    log(`This release builds with bun ${want} (you have ${have || "none"}); installing it under ${pretty(dir)}`)
-    mkdirSync(dir, { recursive: true })
-    const r = await $`curl -fsSL https://bun.sh/install | BUN_INSTALL=${dir} bash -s ${"bun-v" + want}`.nothrow().quiet()
+    log(`Getting Bun ${want}, the version this release builds with (once, into ${pretty(dir)})`)
+    const r = await $`sh ${path.resolve(import.meta.dir, "..", "get-bun.sh")} ${want} ${dir}`.nothrow().quiet()
     if (r.exitCode !== 0 || !existsSync(path.join(bin, "bun"))) fail(`could not install bun ${want}: ${r.stderr.toString().trim().split("\n").at(-1)}`)
   }
   return bin
+}
+
+// A dependency install downloads thousands of packages, and on a slow or
+// flaky connection some fail. A second try usually finishes the job from
+// what the first one got.
+async function installDeps(h: Harness, root: string, what = "dependencies") {
+  log(`Installing ${what}: ${h.install}`)
+  try {
+    await shell(h.install, root)
+  } catch (e) {
+    if (!(e instanceof CommandFailed)) throw e
+    log("Some downloads failed. Trying once more.")
+    await shell(h.install, root)
+  }
 }
 
 // The compiler's front half: verifies every name, type and signature a mod
@@ -719,8 +747,7 @@ async function typecheck(h: Harness, root: string) {
   const cmd = h.typecheck ?? fail(`${h.name} has no typecheck command in its harness definition`)
   const toolchain = await ensureToolchain(root)
   if (toolchain) buildEnv = { ...buildEnv, PATH: `${toolchain}${path.delimiter}${process.env.PATH ?? ""}` }
-  log(`Installing dependencies: ${h.install}`)
-  await shell(h.install, root)
+  await installDeps(h, root)
   log(`Typechecking: ${cmd}`)
   await shell(cmd, root)
 }
@@ -728,8 +755,7 @@ async function typecheck(h: Harness, root: string) {
 async function build(h: Harness, root: string) {
   const toolchain = await ensureToolchain(root)
   if (toolchain) buildEnv = { ...buildEnv, PATH: `${toolchain}${path.delimiter}${process.env.PATH ?? ""}` }
-  log(`Installing dependencies: ${h.install}`)
-  await shell(h.install, root)
+  await installDeps(h, root)
   log(`Building: ${h.build}`)
   await shell(h.build, root)
   const artifact = artifactPath(h, root)
@@ -1414,8 +1440,7 @@ async function cmdDev() {
   // Its dependencies, with the toolchain its release pins.
   const toolchain = await ensureToolchain(clone)
   if (toolchain) buildEnv = { ...buildEnv, PATH: `${toolchain}${path.delimiter}${process.env.PATH ?? ""}` }
-  log(`Installing ${h.name}'s dependencies in ${pretty(clone)}: ${h.install}`)
-  await shell(h.install, clone).catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)))
+  await installDeps(h, clone, `${h.name}'s dependencies in ${pretty(clone)}`).catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)))
 
   const d = loadDev()
   d[h.id] = { path: clone, version }
@@ -1600,7 +1625,7 @@ async function cmdCheck() {
     : { harness: mod.harness, stock: true, ref }
   try {
     await initCheckout(h.repo, root)
-    await $`git -C ${root} fetch --no-tags --filter=blob:none origin tag ${ref}`.quiet()
+    await $`git -C ${root} fetch --no-tags --depth 1 --filter=blob:none origin tag ${ref}`.quiet()
     await clearApplyState(root)
     await $`git -C ${root} checkout -q --force --detach ${ref}`
     result.commit = (await $`git -C ${root} rev-parse HEAD`.text()).trim()

@@ -73,7 +73,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ~/.bun/install/cache
+            ~/.openmods/cache/bun
             work/${{ matrix.harness }}/codex-rs/target
             work/${{ matrix.harness }}/node_modules
           key: typecheck-${{ matrix.harness }}-${{ matrix.ref }}

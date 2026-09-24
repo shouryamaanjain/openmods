@@ -22,7 +22,7 @@ A mod is named after its author, like `shouryamaanjain/tetris`, and can support 
 
 Your stock OpenCode is never modified. `install` builds a separate modded binary and puts it first on PATH. `off` steps aside so the stock one runs; `on` steps back in. `openmods status` tells you which one `opencode` runs right now.
 
-The installer clones the registry under `~/.openmods`, puts an `openmods` command in `~/.openmods/bin`, and installs Bun if you do not have it. Working on the registry itself? `bun link ./cli` from a checkout does the same with your working copy. Requirements: `git` and `bun` to run the CLI. Each harness release pins the exact Bun it builds with, and the CLI installs that version under `~/.openmods/toolchains` for the build, so your own Bun is never changed. The first install of a harness clones and builds it, which takes a few minutes. Later installs reuse the checkout.
+The installer clones the registry under `~/.openmods` and puts an `openmods` command in `~/.openmods/bin`. It needs `git`, `curl` and `tar`, nothing else: no compiler, no Node, and no Bun of your own. The CLI runs on its own Bun in `~/.openmods/toolchains`, next to the exact Bun each harness release pins for its build, and Bun's caches go in `~/.openmods/cache`. Nothing outside `~/.openmods` changes except one PATH line in your shell profile, so removing that folder and that line removes OpenMods. Working on the registry itself? `bun link ./cli` from a checkout runs your working copy. The first install of a harness fetches that release's source and builds it, which takes a few minutes. Later installs reuse it.
 
 ## Harnesses
 

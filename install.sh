@@ -1,21 +1,21 @@
 #!/bin/sh
 # Installs the openmods CLI: a clone of the registry under ~/.openmods and
 # an `openmods` command in ~/.openmods/bin, which install also puts first
-# on your PATH. Needs git; installs Bun for the CLI if it is missing.
+# on your PATH. The CLI runs on its own copy of Bun, kept in
+# ~/.openmods/toolchains with the versions harness builds pin; nothing
+# outside ~/.openmods changes except that PATH line. Needs git, curl and tar.
 #
 #   curl -fsSL https://openmods.dev/install.sh | sh
 set -e
 
 OM="${OPENMODS_HOME:-$HOME/.openmods}"
 REG="${OPENMODS_REGISTRY:-https://github.com/shouryamaanjain/openmods}"
+BUN_VERSION=1.3.14
+BUN="$OM/toolchains/bun-$BUN_VERSION/bin/bun"
 
-command -v git >/dev/null 2>&1 || { echo "openmods needs git. Install it and run this again."; exit 1; }
-
-if ! command -v bun >/dev/null 2>&1; then
-  echo "Installing Bun for the CLI (your harness builds use the version each release pins, installed separately)."
-  curl -fsSL https://bun.sh/install | bash >/dev/null 2>&1 || { echo "Could not install Bun. Install it from https://bun.sh and run this again."; exit 1; }
-  export PATH="$HOME/.bun/bin:$PATH"
-fi
+for c in git curl tar; do
+  command -v "$c" >/dev/null 2>&1 || { echo "openmods needs $c. Install it and run this again."; exit 1; }
+done
 
 mkdir -p "$OM/bin"
 if [ -d "$OM/registry/.git" ]; then
@@ -27,11 +27,17 @@ else
   esac
 fi
 
-cat > "$OM/bin/openmods" <<'WRAP'
+if [ ! -x "$BUN" ]; then
+  echo "Getting Bun $BUN_VERSION for the CLI, into $OM/toolchains"
+  sh "$OM/registry/cli/get-bun.sh" "$BUN_VERSION" "$OM/toolchains/bun-$BUN_VERSION"
+fi
+
+# Bun caches the CLI's transpiled code; on Linux it would go in ~/.bun.
+cat > "$OM/bin/openmods" <<WRAP
 #!/bin/sh
-OM="${OPENMODS_HOME:-$HOME/.openmods}"
-BUN=$(command -v bun 2>/dev/null || echo "$HOME/.bun/bin/bun")
-exec "$BUN" "$OM/registry/cli/src/index.ts" "$@"
+OM="\${OPENMODS_HOME:-\$HOME/.openmods}"
+export BUN_RUNTIME_TRANSPILER_CACHE_PATH="\${BUN_RUNTIME_TRANSPILER_CACHE_PATH-\$OM/cache/transpiler}"
+exec "\$OM/toolchains/bun-$BUN_VERSION/bin/bun" "\$OM/registry/cli/src/index.ts" "\$@"
 WRAP
 chmod 755 "$OM/bin/openmods"
 
