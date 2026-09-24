@@ -16,7 +16,7 @@ describe("the install line", () => {
   test("on Ubuntu without Rust or build tools, puts every package in one apt install, then rustup", () => {
     const missing = on("linux", "Rust", "a C compiler", "pkg-config", "libcap's development files")
     expect(missingMessage("Codex CLI", missing, "apt", false)).toBe(
-      `building Codex CLI needs Rust, a C compiler, pkg-config and libcap's development files. Install them with:\n\n  sudo apt install -y build-essential pkg-config libcap-dev && ${RUST}\n`,
+      `building Codex CLI needs Rust, a C compiler, pkg-config and libcap's development files. Install them with:\n\n  sudo apt update && sudo apt install -y build-essential pkg-config libcap-dev && ${RUST}\n`,
     )
   })
   test("leaves out sudo for root, and uses dnf's package names on Fedora", () => {
@@ -33,7 +33,7 @@ describe("the install line", () => {
   })
   test("a single missing thing is 'it'", () => {
     expect(missingMessage("Codex CLI", on("linux", "libcap's development files"), "apt", false)).toBe(
-      "building Codex CLI needs libcap's development files. Install it with:\n\n  sudo apt install -y libcap-dev\n",
+      "building Codex CLI needs libcap's development files. Install it with:\n\n  sudo apt update && sudo apt install -y libcap-dev\n",
     )
   })
   test("without a package manager it knows, lists each requirement's hint", () => {

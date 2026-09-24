@@ -5,7 +5,7 @@
 //
 //   error: building Codex CLI needs Rust, a C compiler and pkg-config. Install them with:
 //
-//     sudo apt install -y build-essential pkg-config && curl … | sh -s -- -y && . "$HOME/.cargo/env"
+//     sudo apt update && sudo apt install -y build-essential pkg-config && curl … | sh -s -- -y && . "$HOME/.cargo/env"
 
 export type Requirement = {
   command?: string
@@ -24,7 +24,8 @@ export type Requirement = {
 export type Manager = "apt" | "dnf" | "brew"
 
 const INSTALL: Record<Manager, (packages: string, root: boolean) => string> = {
-  apt: (p, root) => `${root ? "" : "sudo "}apt install -y ${p}`,
+  // A fresh system may never have fetched apt's package lists.
+  apt: (p, root) => `${root ? "" : "sudo "}apt update && ${root ? "" : "sudo "}apt install -y ${p}`,
   dnf: (p, root) => `${root ? "" : "sudo "}dnf install -y ${p}`,
   brew: (p) => `brew install ${p}`,
 }
