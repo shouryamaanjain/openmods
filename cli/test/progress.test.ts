@@ -97,6 +97,21 @@ describe("a build in a terminal", () => {
     expect(r.out).toContain("The compiler was killed, most likely for running out of memory")
     expect(r.out).not.toContain("x".repeat(300))
   })
+  test("a retried install's own error shows, after the first attempt's traceback", async () => {
+    const marker = path.join(sb.T, "tried-once")
+    rmSync(marker, { force: true })
+    const saved = readFileSync(definition, "utf8")
+    const install = `if [ -f ${marker} ]; then echo 'error: second attempt failed' >&2; else touch ${marker}; printf 'error: first\\nTraceback (most recent call last):\\n  File x\\n' >&2; fi; exit 1`
+    writeFileSync(definition, JSON.stringify({ ...JSON.parse(saved), install }))
+    let r: Awaited<ReturnType<typeof run>>
+    try {
+      r = await run(sb, live, "update", "fake", "--force")
+    } finally {
+      writeFileSync(definition, saved)
+    }
+    expect(r.code).toBe(1)
+    expect(r.out).toContain("error: second attempt failed")
+  })
   test("with many errors, the first and the last are shown", async () => {
     setBuild(`for i in $(seq 1 40); do echo "error: problem $i" >&2; done; exit 1`)
     const r = await run(sb, live, "update", "fake", "--force")

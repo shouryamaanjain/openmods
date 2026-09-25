@@ -142,6 +142,12 @@ export class Progress {
     return result
   }
 
+  /** A new command in the step (a retry, say): its errors count again after an earlier traceback. */
+  command() {
+    this.wrapped = false
+    this.partial = ""
+  }
+
   /** A command's output while a step runs: into the log, and scanned for progress. */
   output(chunk: string) {
     this.append(chunk)

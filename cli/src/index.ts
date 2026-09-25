@@ -758,6 +758,7 @@ async function shell(cmd: string, cwd: string) {
   if (progress?.live && progress.running) {
     // On screen is the step's line; the output goes to its log, and Cargo is
     // asked to report its progress there too.
+    progress.command()
     const proc = Bun.spawn(["sh", "-c", cmd], {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
