@@ -15,16 +15,16 @@ This needs `git`, `curl` and `tar`. Everything goes in `~/.openmods`, including 
 ## Use
 
 ```sh
-openmods list                                        # what is published
-openmods info shouryamaanjain/space-invaders         # what a mod changes, file by file
-openmods install shouryamaanjain/space-invaders      # build it in, and switch to that build
-codex                                                # the modded build
+openmods list                                              # what is published
+openmods info shouryamaanjain/space-invaders               # what a mod changes, file by file
+openmods install shouryamaanjain/space-invaders --codex    # build it into Codex, and switch to that build
+codex                                                      # the modded build
 
-openmods off                                         # back to your stock build
-openmods on                                          # and to the modded one
-openmods status                                      # which one runs right now
-openmods update                                      # move to newer releases and mod updates
-openmods uninstall shouryamaanjain/space-invaders
+openmods off                                               # back to your stock build
+openmods on                                                # and to the modded one
+openmods status                                            # which one runs right now
+openmods update                                            # move to newer releases and mod updates
+openmods uninstall shouryamaanjain/space-invaders --codex
 ```
 
 A mod is named `<owner>/<mod>` and can support several harnesses; add `--opencode` or `--codex` to pick one, or the CLI asks. You can install several mods on one harness. If two of them change the same lines, the CLI refuses before it builds and names the lines.
@@ -36,7 +36,7 @@ Every command is documented at [openmods.dev/cli](https://openmods.dev/cli/) and
 Mods are built from source on your machine, nothing is prebuilt. The first build of a harness takes a few minutes, and a progress line shows the time left. Later builds reuse what they can.
 
 - **OpenCode** needs nothing more: the CLI fetches the exact Bun version each release pins.
-- **Codex CLI** is a large Rust project: around ten minutes on a recent laptop, longer on a smaller machine, and a few GB of build cache. It needs Rust, a C compiler, `pkg-config` and Python 3.11+, plus the libcap and OpenSSL headers on Linux. If any are missing, the CLI prints one command that installs them.
+- **Codex CLI** is a large Rust project: around ten minutes on a recent laptop, longer on a smaller machine, and a few GB of build cache. It needs Rust, a C compiler, `pkg-config` and Python 3.11+, plus the libcap and OpenSSL headers on Linux. If any are missing, the CLI says which, and prints one command that installs them where your package manager has them.
 
 ### Updates
 
