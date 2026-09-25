@@ -71,7 +71,6 @@ export const COMMANDS: Command[] = [
     examples: [
       { command: "openmods install shouryamaanjain/space-invaders", note: "asks which harness" },
       { command: "openmods install shouryamaanjain/space-invaders --opencode" },
-      { command: "openmods install shouryamaanjain/space-invaders someone/another-mod --codex", note: "two mods, one build" },
       { command: "openmods install .", note: "in your OpenCode clone: try your commits as a mod" },
     ],
     audience: "users",
