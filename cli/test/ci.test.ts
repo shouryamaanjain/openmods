@@ -76,6 +76,13 @@ describe("the versions CI checks", () => {
     expect(r).toContainEqual({ mod: "mods/t/friendly/fake", at: "v2.0.0" })
     expect(r).toContainEqual({ mod: "mods/openmods/base/fake", at: "v2.0.0" })
   })
+  test("every mod's newest version when how mods are checked changed", async () => {
+    mkdirSync(path.join(sb.reg, "script"), { recursive: true })
+    writeFileSync(path.join(sb.reg, "script", "changed-versions.ts"), "// changed\n")
+    const r = await checked()
+    expect(r).toContainEqual({ mod: "mods/t/friendly/fake", at: "v2.0.0" })
+    expect(r).toContainEqual({ mod: "mods/openmods/base/fake", at: "v2.0.0" })
+  })
   test("nothing for a change outside the mods, the CLI and the harnesses", async () => {
     writeFileSync(path.join(sb.reg, "NOTES.md"), "notes\n")
     expect(await checked()).toEqual([])

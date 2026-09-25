@@ -6,8 +6,8 @@
 //   - a mod's newest version, when its shared files (mod.json, README) changed
 //   - for a changed version of the OpenMods base patch, every other mod's
 //     version for that release, since they are checked on top of it
-//   - every mod's newest version when the CLI changed, and every newest
-//     version on a harness whose definition changed
+//   - every mod's newest version when the CLI or how mods are checked
+//     changed, and every newest version on a harness whose definition changed
 //
 //   bun script/changed-versions.ts --base <sha> [--registry <dir>]
 //   → [{"mod":"mods/<owner>/<name>/<harness>","at":"<release>"}, ...]
@@ -46,7 +46,7 @@ const out = new Map<string, Set<string>>()
 const add = (dir: string, ref: string | undefined) => {
   if (ref && versions(dir).some((v) => v.ref === ref)) out.set(dir, (out.get(dir) ?? new Set()).add(ref))
 }
-const cli = changed.some((f) => f.startsWith("cli/"))
+const cli = changed.some((f) => f.startsWith("cli/") || f === "script/changed-versions.ts" || f === ".github/workflows/validate.yml")
 for (const dir of dirs) {
   const harness = path.basename(dir)
   const shared = changed.some((f) => path.dirname(f) === path.dirname(dir))
