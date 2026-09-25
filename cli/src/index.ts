@@ -1077,8 +1077,12 @@ const launchersSince = (): Record<string, number> => {
   }
 }
 
-// When the shell this was run from started, to the second, or null when that
-// cannot be told.
+// When the shell this was run from started, or null when that cannot be told.
+// ps gives it to the second, and on Linux can put it up to a second early, so
+// a shell counts as older than a launcher only by more than STARTED_WITHIN; a
+// terminal that ran the stock harness before the launcher existed is older by
+// far more.
+const STARTED_WITHIN = 2000
 async function shellStarted(): Promise<number | null> {
   const r = await $`ps -o lstart= -p ${process.ppid}`.nothrow().quiet()
   const t = Date.parse(r.stdout.toString().trim())
@@ -1229,7 +1233,7 @@ async function explainSwitch(h: Harness, entry: State[string]) {
     log(`Note: in this terminal \`${h.binary}\` still finds ${pretty(found)} first. Run:`)
     log(`  export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"`)
     log(`If a new terminal does the same, move the openmods line in your shell's startup file below the one that adds ${pretty(path.dirname(found))}.`)
-  } else if (stock && shell !== "fish" && Math.floor((launchersSince()[h.binary] ?? 0) / 1000) * 1000 > ((await shellStarted()) ?? 0)) {
+  } else if (stock && shell !== "fish" && (launchersSince()[h.binary] ?? 0) - ((await shellStarted()) ?? 0) > STARTED_WITHIN) {
     log("")
     log(`If \`${h.binary}\` still starts your stock ${h.name} in a terminal that ran it before, run \`hash -r\` there once; the shell remembers where it found it.`)
   }

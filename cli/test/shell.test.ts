@@ -55,7 +55,7 @@ async function fromShell(age: number, ...a: string[]) {
 
 describe("the first install", () => {
   test("tells a terminal older than the launcher how to pick it up", async () => {
-    const r = await fromShell(1, "install", "t/friendly")
+    const r = await fromShell(3, "install", "t/friendly")
     expect(r.code, r.all).toBe(0)
     expect(r.out).toContain("If `greet` still starts your stock Fake in a terminal that ran it before, run `hash -r` there once")
     // Not a terminal opened after the launcher appeared.
