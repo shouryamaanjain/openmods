@@ -296,8 +296,8 @@ function layout(opts: { title: string; depth: number; nav: string; body: string;
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(opts.title)}</title>
-<meta name="description" content="${esc(opts.description ?? "Source-level mods for open-source coding agents.")}">
-${SITE_URL ? `<link rel="canonical" href="${SITE_URL}/${opts.path ?? ""}">\n<meta property="og:title" content="${esc(opts.title)}">\n<meta property="og:description" content="${esc(opts.description ?? "Source-level mods for open-source coding agents.")}">\n<meta property="og:url" content="${SITE_URL}/${opts.path ?? ""}">` : ""}
+<meta name="description" content="${esc(opts.description ?? "Source-level mods for open-source harnesses.")}">
+${SITE_URL ? `<link rel="canonical" href="${SITE_URL}/${opts.path ?? ""}">\n<meta property="og:title" content="${esc(opts.title)}">\n<meta property="og:description" content="${esc(opts.description ?? "Source-level mods for open-source harnesses.")}">\n<meta property="og:url" content="${SITE_URL}/${opts.path ?? ""}">` : ""}
 <link rel="stylesheet" href="${link("style.css")}">
 </head>
 <body>
@@ -368,7 +368,7 @@ function home() {
   const body = `
 <section class="hero"><div class="wrap">
 <pre aria-hidden="true">${WORDMARK}</pre>
-<h1>Source-level mods for open-source coding agents.</h1>
+<h1>Source-level mods for open-source harnesses.</h1>
 <p>A mod is a set of patches to a harness like OpenCode or Codex, made against one of its releases. Install one and your <code>opencode</code> becomes that release with the mod built in. Your stock install is never touched, and you can switch back any time.</p>
 <div class="cmd"><span class="dollar">$</span><span>curl -fsSL https://openmods.dev/install.sh | sh</span></div>
 <p style="margin:10px 0 0;color:var(--muted);font-size:14px">Installs the <code>openmods</code> command. Then <code>openmods install &lt;owner&gt;/&lt;mod&gt;</code>, and pick the harness. <a href="install.sh">Read the script first</a> if you like; it is short.</p>
@@ -389,7 +389,7 @@ ${
 <div class="md"><p>A mod is named <code>owner/mod</code> and supports one or more harnesses, each with its own patches made against one of that harness's releases. <code>openmods install</code> clones that release, applies the patches, builds it with the exact toolchain the release pins, and puts the result first on your PATH. <code>openmods off</code> steps aside so the stock binary runs again.</p>
 <p>When a harness ships a new release, CI applies and typechecks every mod for it. A mod that still works has its release moved forward here automatically. A mod that does not stays on its last working release, shows as <span class="badge behind">behind</span>, and its maintainers get an issue with the error and the steps to rebase.</p></div>
 </section>`
-  return layout({ title: `${SITE_NAME} · source-level mods for open-source coding agents`, depth: 0, nav: "mods", body, js: true, path: "" })
+  return layout({ title: `${SITE_NAME} · source-level mods for open-source harnesses`, depth: 0, nav: "mods", body, js: true, path: "" })
 }
 
 // The mods this one cannot be installed together with on a harness.
