@@ -46,7 +46,7 @@ export const COMMANDS: Command[] = [
       { flag: "--<harness>", description: "Only this harness." },
       { flag: "--json", description: "Machine-readable output, including the touched files." },
     ],
-    examples: [{ command: "openmods info shouryamaanjain/tetris" }, { command: "openmods info shouryamaanjain/tetris --codex" }],
+    examples: [{ command: "openmods info shouryamaanjain/space-invaders" }, { command: "openmods info shouryamaanjain/space-invaders --codex" }],
     audience: "users",
   },
   {
@@ -69,9 +69,9 @@ export const COMMANDS: Command[] = [
       { flag: "--registry <dir|url>", description: "Use another registry checkout or git URL." },
     ],
     examples: [
-      { command: "openmods install shouryamaanjain/tetris", note: "asks which harness" },
-      { command: "openmods install shouryamaanjain/tetris --opencode" },
-      { command: "openmods install shouryamaanjain/tetris shouryamaanjain/hello-placeholder --codex", note: "two mods, one build" },
+      { command: "openmods install shouryamaanjain/space-invaders", note: "asks which harness" },
+      { command: "openmods install shouryamaanjain/space-invaders --opencode" },
+      { command: "openmods install shouryamaanjain/space-invaders <owner>/<mod> --codex", note: "two mods, one build" },
       { command: "openmods install .", note: "in your OpenCode clone: try your commits as a mod" },
     ],
     audience: "users",
@@ -86,7 +86,7 @@ export const COMMANDS: Command[] = [
       "When the mod is installed on several harnesses and none is named with a flag, it asks which, listing only the ones it is installed on.",
       "When the last mod for a harness is removed, the launcher, the built binary and the patched commits are removed too, and the checkout is reset to the stock release. The checkout itself stays as a cache so the next install does not clone and install dependencies again; delete ~/.openmods/harnesses/<id> to reclaim the space.",
     ],
-    examples: [{ command: "openmods uninstall shouryamaanjain/tetris" }, { command: "openmods uninstall shouryamaanjain/tetris --codex" }],
+    examples: [{ command: "openmods uninstall shouryamaanjain/space-invaders" }, { command: "openmods uninstall shouryamaanjain/space-invaders --codex" }],
     audience: "users",
   },
   {
@@ -109,7 +109,7 @@ export const COMMANDS: Command[] = [
       "With no argument, or a harness id: writes the launcher back into ~/.openmods/bin. Instant, nothing is rebuilt.",
       "With a mod: rebuilds the harness with that mod included again, after an `off <owner>/<mod>`. Asks which harness if it is installed on several.",
     ],
-    examples: [{ command: "openmods on" }, { command: "openmods on shouryamaanjain/tetris --opencode" }],
+    examples: [{ command: "openmods on" }, { command: "openmods on shouryamaanjain/space-invaders --opencode" }],
     audience: "users",
   },
   {
@@ -120,7 +120,7 @@ export const COMMANDS: Command[] = [
       "With no argument, or a harness id: removes the launcher, so `opencode` falls through to the stock binary. Instant, and the modded build is kept for `on`.",
       "With a mod: rebuilds the harness without that mod. It stays installed and listed in status as off.",
     ],
-    examples: [{ command: "openmods off" }, { command: "openmods off codex", note: "just Codex" }, { command: "openmods off shouryamaanjain/tetris --codex" }],
+    examples: [{ command: "openmods off" }, { command: "openmods off codex", note: "just Codex" }, { command: "openmods off shouryamaanjain/space-invaders --codex" }],
     audience: "users",
   },
   {
