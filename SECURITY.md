@@ -23,7 +23,7 @@ The registry only carries patches. Nothing is prebuilt: your machine compiles th
 - The hourly job that moves mods to new releases never changes a mod's code: if a rebase would change the reviewed lines, the mod waits for its maintainer instead.
 - When the harness ships a new release, the hourly check applies and typechecks every mod against it, so a mod cannot silently drift, and holds every mod if the release changed how the harness builds.
 - Your machine builds everything you install, from the release and the patches.
-- Modded builds carry the OpenMods base patch, for each release it has a version for. It adds no network access: it points feedback and crash reports at OpenMods rather than the upstream project, and for Codex turns off Codex's own update notice and its shared background server. Report problems with a modded build here, after checking whether they also happen with `openmods off`.
+- Modded builds carry the OpenMods base patch, for each release it has a version for. It adds no network access: it tells people to report problems to OpenMods rather than the upstream project, and for Codex turns off Codex's own update notice and, from Codex 0.156.1, runs without the shared background server except for `codex agents` and `--remote`. Report problems with a modded build here, after checking whether they also happen with `openmods off`.
 
 These are checks on the process, not a guarantee about intent. A malicious patch can pass all of them. Reading the diff is what protects you.
 

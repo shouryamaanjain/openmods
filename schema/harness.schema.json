@@ -9,6 +9,7 @@
     "repo",
     "binary",
     "install",
+    "typecheck",
     "build",
     "artifact"
   ],

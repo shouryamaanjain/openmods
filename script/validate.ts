@@ -22,7 +22,7 @@ const harnesses = new Set(
 for (const id of harnesses) {
   const h = JSON.parse(readFileSync(path.join(root, "harnesses", `${id}.json`), "utf8"))
   if (h.id !== id) errors.push(`harnesses/${id}.json: id "${h.id}" does not match file name`)
-  for (const k of ["name", "repo", "binary", "install", "build", "artifact"]) {
+  for (const k of ["name", "repo", "binary", "install", "typecheck", "build", "artifact"]) {
     if (typeof h[k] !== "string" || !h[k]) errors.push(`harnesses/${id}.json: missing "${k}"`)
   }
   // Offered to users who install a mod without having the harness.
