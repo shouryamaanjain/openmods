@@ -152,6 +152,7 @@ describe("the harness standards", () => {
     binary: "newh",
     installer: { command: "curl -fsSL https://newh.example/install | sh", paths: ["~/.newh/bin"] },
     install: "npm ci",
+    typecheck: "npm run typecheck",
     build: "npm run build",
     artifact: "dist/newh",
     recipe: [{ file: "package.json" }],
@@ -165,6 +166,14 @@ describe("the harness standards", () => {
     expect(r.code, r.out).toBe(0)
     expect(r.out).toContain("Meets the harness standards.")
     expect(r.out).toContain("Labels: harness")
+  })
+  test("a proposal needs a typecheck command, which every check of its mods runs", async () => {
+    const { typecheck, ...rest } = proposal
+    write(rest)
+    await commit("newh without typecheck")
+    const r = await check("someone")
+    expect(r.code).toBe(1)
+    expect(r.out).toContain('needs "typecheck"')
   })
   test("a proposal needs a public GitHub repo, a license and the official installer", async () => {
     const { license, installer, ...rest } = proposal

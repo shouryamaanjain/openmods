@@ -13,7 +13,7 @@ What it does, in one or two sentences. Add a screenshot or a recording if it cha
 
 Which harness, and where its source and install instructions are.
 
-- [ ] One file, `harnesses/<id>.json`, with its repo, license, official installer, install, typecheck and build commands, artifact and recipe
+- [ ] One file, `harnesses/<id>.json`, with its id, name, repo, license, official installer, install, typecheck and build commands, artifact, recipe and release tag pattern
 - [ ] I built a release with these commands
 
 ## A change to OpenMods
