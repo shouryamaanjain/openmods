@@ -173,9 +173,14 @@ describe("a Rust build's jobs", () => {
   }
   test("are capped by the machine's memory, and never more than its cores", async () => {
     await recording(async () => {
-      expect((await cli(sb, "update", "fake", "--force")).code).toBe(0)
+      // Cleared, in case the machine running the tests sets it.
+      expect((await run(sb, { env: { CARGO_BUILD_JOBS: "" } }, "update", "fake", "--force")).code).toBe(0)
     })
-    const expected = Math.max(1, Math.min(cpus().length, Math.floor(totalmem() / (2.5 * 1024 ** 3))))
+    const limit = ["/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"]
+      .map((f) => (existsSync(f) ? Number(readFileSync(f, "utf8").trim()) : Number.NaN))
+      .find((n) => Number.isFinite(n) && n > 0)
+    const memory = Math.min(totalmem(), limit ?? Number.POSITIVE_INFINITY)
+    const expected = Math.max(1, Math.min(cpus().length, Math.floor(memory / (2.5 * 1024 ** 3))))
     expect(Number(readFileSync(seen, "utf8"))).toBe(expected)
   })
   test("are what you set, when you set them", async () => {

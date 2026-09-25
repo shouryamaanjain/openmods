@@ -78,7 +78,7 @@ describe("a build in a terminal", () => {
   test("a failed step shows the build's error, not the traceback of a wrapper around it", async () => {
     const traceback = Array.from({ length: 30 }, (_, i) => `  File "cargo.py", line ${i}, in build`).join("\\n")
     setBuild(
-      `printf 'Compiling a\\nerror: failed to run custom build command for \\x60openssl-sys v0.9.111\\x60\\n  Could not find directory of OpenSSL installation\\nCompiling b\\n' >&2; printf 'Traceback (most recent call last):\\n${traceback}\\nsubprocess.CalledProcessError: Command cargo returned 101\\n' >&2; exit 1`,
+      `printf 'Compiling a\\nerror: failed to run custom build command for \\140openssl-sys v0.9.111\\140\\n  Could not find directory of OpenSSL installation\\nCompiling b\\n' >&2; printf 'Traceback (most recent call last):\\n${traceback}\\nsubprocess.CalledProcessError: Command cargo returned 101\\n' >&2; exit 1`,
     )
     const r = await run(sb, live, "update", "fake", "--force")
     expect(r.code).toBe(1)
@@ -88,12 +88,24 @@ describe("a build in a terminal", () => {
   })
   test("a compiler killed for memory is said so, and a long command line is cut short", async () => {
     const long = "x".repeat(3000)
-    setBuild(`printf 'error: could not compile \\x60codex-core\\x60 (lib)\\n\\nCaused by:\\n  process did not exit successfully: \\x60rustc ${long}\\x60 (signal: 9, SIGKILL: kill)\\n' >&2; exit 101`)
+    setBuild(`printf 'error: could not compile \\140codex-core\\140 (lib)\\n\\nCaused by:\\n  process did not exit successfully: \\140rustc ${long}\\140 (signal: 9, SIGKILL: kill)\\n' >&2; exit 101`)
     const r = await run(sb, live, "update", "fake", "--force")
     expect(r.code).toBe(1)
     expect(r.out).toContain("error: could not compile `codex-core` (lib)")
     expect(r.out).toContain("The compiler was killed, most likely for running out of memory")
     expect(r.out).not.toContain("x".repeat(300))
+  })
+  test("with many errors, the first and the last are shown", async () => {
+    setBuild(`for i in $(seq 1 40); do echo "error: problem $i" >&2; done; exit 1`)
+    const r = await run(sb, live, "update", "fake", "--force")
+    expect(r.code).toBe(1)
+    expect([r.out.includes("error: problem 1\n"), r.out.includes("error: problem 40"), r.out.includes("error: problem 20"), r.out.includes("…")]).toEqual([true, true, false, true])
+  })
+  test("an error on a last line without a newline is still shown", async () => {
+    setBuild(`printf 'error: the very last thing' >&2; exit 1`)
+    const r = await run(sb, live, "update", "fake", "--force")
+    expect(r.code).toBe(1)
+    expect(r.out).toContain("error: the very last thing")
   })
   test("a failed step says so, with the end of its output and the log", async () => {
     setBuild("echo 'error: cannot find this'; exit 2")

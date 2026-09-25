@@ -15,7 +15,8 @@ const FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 const KEEP_LOGS = 5
 // A compiler's or build tool's error line: "error: …", "error[E0425]: …", a panic.
 const ERROR = /(^|\s)error(\[E\d+\])?:|panicked at /
-const ERROR_LINES = 25
+// Shown: the first and the last of the error lines, so a later error is not lost.
+const ERROR_LINES = 12
 // Where an error's own lines end: a wrapper's traceback, or cargo waiting on other jobs.
 const AFTER_ERROR = /^Traceback \(most recent call last\)|^warning: build failed/
 // Cargo reports progress even into a pipe when asked to (see `buildEnv`).
@@ -146,20 +147,23 @@ export class Progress {
     this.recent = (this.recent + chunk).slice(-8000)
     const lines = (this.partial + chunk).split(/\r\n|\n|\r/)
     this.partial = lines.pop() ?? ""
-    for (const line of lines) {
-      if (this.errors.length >= ERROR_LINES) break
-      if (ERROR.test(line)) this.following = 12
-      else if (AFTER_ERROR.test(line)) this.following = 0
-      if (this.following > 0 && line.trim()) {
-        this.errors.push(line)
-        this.following--
-      }
-    }
+    for (const line of lines) this.scan(line)
     const text = this.carry + chunk
     this.carry = text.slice(-200)
     let last: RegExpExecArray | undefined
     for (const m of text.matchAll(CARGO_PROGRESS)) last = m as RegExpExecArray
     if (last && Number(last[2]) > 0) this.step.fraction = Number(last[1]) / Number(last[2])
+  }
+
+  // An error line starts a dozen lines worth showing; a traceback ends them.
+  private scan(line: string) {
+    if (ERROR.test(line)) this.following = 12
+    else if (AFTER_ERROR.test(line)) this.following = 0
+    if (this.following > 0 && line.trim()) {
+      this.errors.push(line)
+      if (this.errors.length > 400) this.errors.splice(ERROR_LINES, this.errors.length - 400 + ERROR_LINES)
+      this.following--
+    }
   }
 
   /** A message that would have been printed: kept in the log instead. */
@@ -177,6 +181,8 @@ export class Progress {
   failed() {
     if (!this.step) return
     const { name, start, output } = this.step
+    // Output that ended without a newline still counts.
+    if (this.partial) this.scan(this.partial)
     this.stop()
     this.step = undefined
     this.carry = ""
@@ -188,7 +194,8 @@ export class Progress {
     if (!this.live) return
     process.stdout.write(`  ${this.paint("✗", "31")} ${name.padEnd(13)} ${this.paint(`failed after ${clock(Date.now() - start)}`, "2")}\n`)
     if (!output) return
-    const tail = errors.length ? errors : recent.split(/[\r\n]+/).filter((l) => l.trim() && !l.startsWith("== ")).slice(-15)
+    const shown = errors.length > 2 * ERROR_LINES ? [...errors.slice(0, ERROR_LINES), "…", ...errors.slice(-ERROR_LINES)] : errors
+    const tail = shown.length ? shown : recent.split(/[\r\n]+/).filter((l) => l.trim() && !l.startsWith("== ")).slice(-15)
     // A compiler command line can run to thousands of characters.
     const short = (l: string) => (l.length > 200 ? `${l.slice(0, 199)}…` : l)
     // The system killed the compiler: out of memory, most likely.

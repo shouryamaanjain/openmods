@@ -728,8 +728,20 @@ class CommandFailed extends Error {}
 // and never more than there are cores.
 function cargoJobs() {
   if (process.env.CARGO_BUILD_JOBS) return process.env.CARGO_BUILD_JOBS
-  const byMemory = Math.floor(totalmem() / (2.5 * 1024 ** 3))
+  const byMemory = Math.floor(Math.min(totalmem(), containerMemory()) / (2.5 * 1024 ** 3))
   return String(Math.max(1, Math.min(cpus().length, byMemory)))
+}
+
+// In a Linux container, the memory it may use, which can be far below the
+// machine's (cgroup v2, then v1); otherwise no limit.
+function containerMemory() {
+  for (const file of ["/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"]) {
+    try {
+      const limit = Number(readFileSync(file, "utf8").trim())
+      if (Number.isFinite(limit) && limit > 0) return limit
+    } catch {}
+  }
+  return Number.POSITIVE_INFINITY
 }
 
 async function shell(cmd: string, cwd: string) {
