@@ -124,6 +124,13 @@ describe("a build in a terminal", () => {
     expect(r.code).toBe(1)
     expect(r.out).toContain("error: the very last thing")
   })
+  test("a download that failed is said so, with what to do", async () => {
+    setBuild(`printf 'error: failed to get \\140actix-web\\140 as a dependency\\n  failed to download from \\140https://index.crates.io/ac/ti/actix-web\\140\\n  [28] Timeout was reached\\n' >&2; exit 101`)
+    const r = await run(sb, live, "update", "fake", "--force")
+    expect(r.code).toBe(1)
+    expect(r.out).toContain("A download failed. Check your internet connection and run the same command again")
+    expect(r.out).not.toContain("running out of memory")
+  })
   test("a failed step says so, with the end of its output and the log", async () => {
     setBuild("echo 'error: cannot find this'; exit 2")
     const r = await run(sb, live, "update", "fake", "--force")
