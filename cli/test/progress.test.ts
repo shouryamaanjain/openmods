@@ -124,6 +124,26 @@ describe("a build in a terminal", () => {
     expect(r.code).toBe(1)
     expect(r.out).toContain("error: the very last thing")
   })
+  test("a download that failed is said so, with what to do", async () => {
+    setBuild(`printf 'error: failed to get \\140actix-web\\140 as a dependency\\n  failed to download from \\140https://index.crates.io/ac/ti/actix-web\\140\\n  [28] Timeout was reached\\n' >&2; exit 101`)
+    const r = await run(sb, live, "update", "fake", "--force")
+    expect(r.code).toBe(1)
+    expect(r.out).toContain("A download failed. Check your internet connection and run the same command again")
+    expect(r.out).not.toContain("running out of memory")
+  })
+  test("a timeout outside the build's error lines still counts as a failed download", async () => {
+    const lines = Array.from({ length: 20 }, (_, i) => `retrying ${i}`).join("\\n")
+    setBuild(`printf 'error: first try failed\\n${lines}\\n[28] Timeout was reached\\n' >&2; exit 101`)
+    const r = await run(sb, live, "update", "fake", "--force")
+    expect(r.out).toContain("A download failed.")
+  })
+  test("a local connection that was refused is not taken for a download", async () => {
+    setBuild(`printf 'error: tests could not reach the database: Connection refused\\n' >&2; exit 1`)
+    const refused = await run(sb, live, "update", "fake", "--force")
+    expect(refused.out).not.toContain("A download failed.")
+    setBuild(`printf 'error: fetching https://registry.npmjs.org/x: Connection refused\\n' >&2; exit 1`)
+    expect((await run(sb, live, "update", "fake", "--force")).out).toContain("A download failed.")
+  })
   test("a failed step says so, with the end of its output and the log", async () => {
     setBuild("echo 'error: cannot find this'; exit 2")
     const r = await run(sb, live, "update", "fake", "--force")

@@ -17,6 +17,13 @@ const KEEP_LOGS = 5
 const ERROR = /(^|\s)error(\[E\d+\])?:|panicked at /
 // Shown: the first and the last of the error lines, so a later error is not lost.
 const ERROR_LINES = 12
+// A download that timed out or could not connect, as cargo, bun, curl or git
+// say it. The weaker signs could be a local service, so they count only
+// alongside signs of downloading.
+const NETWORK = /spurious network error|Timeout was reached|failed to download|Could not resolve host|ENOTFOUND|EAI_AGAIN/i
+const MAYBE_NETWORK = /Connection (reset|refused|timed out)|Couldn't connect|Network is unreachable|ETIMEDOUT|ECONNRESET/i
+const DOWNLOADING = /download|fetch|registry|https?:\/\//i
+const downloadFailed = (text: string) => NETWORK.test(text) || (MAYBE_NETWORK.test(text) && DOWNLOADING.test(text))
 // Where an error's own lines end: cargo waiting on other jobs, or a wrapper's
 // traceback, after which nothing is the build's own.
 const AFTER_ERROR = /^warning: build failed/
@@ -219,6 +226,9 @@ export class Progress {
     const killed = /signal: 9, SIGKILL|Killed signal terminated program/.test(recent + errors.join("\n"))
     process.stdout.write(`${tail.map((l) => `    ${this.paint(short(l), "2")}`).join("\n")}\n`)
     if (killed) process.stdout.write("    The compiler was killed, most likely for running out of memory. Close other programs, or build with fewer jobs at once: CARGO_BUILD_JOBS=2\n")
+    // A download that failed: nothing to fix in the build.
+    else if (downloadFailed(`${errors.join("\n")}\n${recent}`))
+      process.stdout.write("    A download failed. Check your internet connection and run the same command again; what is already downloaded is kept.\n")
     process.stdout.write(`    Full log: ${this.log}\n`)
   }
 
