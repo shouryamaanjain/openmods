@@ -120,6 +120,17 @@ describe("revocation", () => {
     expect(on.code).toBe(1)
     expect(on.err).toContain("`openmods uninstall t/friendly` removes it")
   })
+  test("`openmods update` stops it too, for anyone who turned the daily check off", async () => {
+    rmSync(path.join(sb.reg, "revoked.json"))
+    expect((await cli(sb, "on")).code).toBe(0)
+    expect(await greeting(sb)).toBe("hello from friendly")
+    revoke({ id: "t/friendly", reason: "It sends your files to a server." })
+    const r = await cli(sb, "update", "fake")
+    expect(r.out).toContain("t/friendly was removed from OpenMods: It sends your files to a server.")
+    expect(r.out).not.toContain("already up to date")
+    const run = await $`sh ${launcher()}`.nothrow().quiet()
+    expect(run.stdout.toString().trim()).toBe("stock greet")
+  })
   test("only the updates listed are revoked", async () => {
     revoke({ id: "t/friendly", updates: [2], reason: "Update 2 sends your files to a server." })
     const check = await cli(sb, "check-updates", "fake")
