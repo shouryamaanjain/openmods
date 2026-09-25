@@ -10,7 +10,7 @@ Supported: [OpenCode](https://github.com/anomalyco/opencode) and [Codex CLI](htt
 curl -fsSL https://openmods.dev/install.sh | sh
 ```
 
-This needs `git`, `curl` and `tar`. Everything goes in `~/.openmods`, including the Bun the CLI runs on. Outside that folder, it adds one line to your shell's startup file that puts `~/.openmods/bin` first on PATH; for bash on Linux, it also adds the line to the file a login shell reads. In `~/.openmods/bin` it puts a small launcher for each harness you have, which runs your stock one until you install a mod.
+This needs `git`, `curl` and `tar`. OpenMods keeps its files in `~/.openmods`, including the Bun the CLI runs on. Outside that folder, it adds a PATH line, marked `# openmods`, to your shell's startup file so `~/.openmods/bin` comes first; for bash on Linux, also to the file a login shell reads. In `~/.openmods/bin` it puts a small launcher for each harness you have, which runs your stock one until you install a mod.
 
 ## Use
 
@@ -33,14 +33,14 @@ Every command is documented at [openmods.dev/cli](https://openmods.dev/cli/) and
 
 ### Building
 
-Mods are built from source on your machine, nothing is prebuilt. The first build of a harness takes a few minutes, and a progress line shows the time left. Later builds reuse what they can.
+Mods are built from source on your machine, nothing is prebuilt. The first build of a harness takes a few minutes; a progress line shows each step and how long it has run, and the time left once it can tell. Later builds reuse what they can.
 
 - **OpenCode** needs nothing more: the CLI fetches the exact Bun version each release pins.
-- **Codex CLI** is a large Rust project: around ten minutes on a recent laptop, longer on a smaller machine, and a few GB of build cache. It needs Rust, a C compiler, `pkg-config` and Python 3.11+, plus the libcap and OpenSSL headers on Linux. If any are missing, the CLI says which, and prints one command that installs them where your package manager has them.
+- **Codex CLI** is a large Rust project: around ten minutes on a recent laptop, longer on a smaller machine, and a few GB of build cache. Its Rust crates download to Cargo's usual `~/.cargo`. It needs Rust, a C compiler and Python 3.11+, plus `pkg-config` and the libcap and OpenSSL headers on Linux. If any are missing, the CLI says which, with one command that installs them all when your package manager has them. OpenMods builds Codex with less optimization than its official releases, which roughly halves the build time.
 
 ### Updates
 
-The launcher checks for updates once a day in the background. When a newer release is supported by every mod you have, or one of your mods has a new update, it asks once before starting. `openmods update` does the same on demand, and `OPENMODS_NO_PROMPT=1` turns the question off.
+The launcher checks for updates once a day in the background. When a newer release is supported by every mod you have switched on, or one of your mods has a new update, it asks once before starting. `openmods update` does the same on demand, and `OPENMODS_NO_PROMPT=1` turns the question off.
 
 A build's version names what went into it: `codex --version` prints something like `0.157.0+space-invaders-1`.
 
@@ -60,11 +60,11 @@ mods/<owner>/<mod>/
     rust-v0.157.0/0001-….patch
 ```
 
-`openmods install` clones the harness, checks out a release every one of your mods supports, applies the patches with `git am -3`, and builds it with the harness's own build commands and pinned toolchain. The result goes in `~/.openmods/harnesses/<id>/builds`, and `~/.openmods/bin/<binary>` is a small launcher that runs it, or your stock build after `openmods off`.
+`openmods install` clones the harness, checks out a release every one of your mods supports, applies the patches with `git am -3`, and builds it with the harness's own build commands and the toolchain that release pins. The result goes in `~/.openmods/harnesses/<id>/builds`, and `~/.openmods/bin/<binary>` is a small launcher that runs it, or your stock build after `openmods off`.
 
-Every modded build also gets the OpenMods base patch ([`mods/openmods/base`](mods/openmods/base)). It sends feedback and crash reports to OpenMods rather than to the upstream project, which did not ship the mods.
+The OpenMods base patch ([`mods/openmods/base`](mods/openmods/base)) goes into every modded build, for each release it has a version for. It sends nothing anywhere; it changes where people are told to report problems, to OpenMods rather than the upstream project, which did not ship the mods: OpenCode's feedback line and crash screen, and Codex's `/feedback`, which explains where to report instead of uploading logs. For Codex it also turns off Codex's own update notice, since OpenMods does the updating, and from Codex 0.156.1 runs modded Codex without the background server stock Codex shares, except for `codex agents` and `--remote`, which need one.
 
-When a harness publishes a release, a scheduled job applies and typechecks every mod against it. Mods that still apply get a version for the new release automatically. For a mod that no longer applies, the job opens an issue for its maintainers with the error.
+When a harness publishes a release, a scheduled job applies and typechecks every mod against it. Mods that still apply and typecheck get a version for the new release automatically. For a mod that no longer does, the job opens an issue for its maintainers with the error. If the release changed how the harness builds, the mods wait until a maintainer has built it.
 
 Patches rather than forks: a patch series is small enough to read and review, and it names the release it applies to. It also stacks with other mods, where two forks can't be combined.
 

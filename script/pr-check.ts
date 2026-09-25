@@ -198,7 +198,7 @@ async function harnessStandards() {
     need(typeof h.license === "string" && h.license.length > 0, `needs its "license", e.g. MIT or Apache-2.0.`)
     need(typeof h.binary === "string" && h.binary.length > 0, `needs the "binary" users run.`)
     need(typeof h.installer?.command === "string" && h.installer.command.length > 0, `needs "installer.command", the install command from the harness's own docs, offered to users who do not have it.`)
-    for (const k of ["install", "build", "artifact", "releaseTagPattern"]) need(typeof h[k] === "string" && h[k].length > 0, `needs "${k}".`)
+    for (const k of ["install", "typecheck", "build", "artifact", "releaseTagPattern"]) need(typeof h[k] === "string" && h[k].length > 0, `needs "${k}".`)
     need(Array.isArray(h.recipe) && h.recipe.length > 0, `needs a "recipe": the files, or lines of files, its install and build commands depend on.`)
     notes.push(`${file}: its installer, install, typecheck and build commands run on users' machines and in CI; read each one.`)
   }

@@ -109,6 +109,13 @@ describe("mistakes", () => {
     expect(r.code).toBe(1)
     expect(r.err).toContain("openmods install t/solo --fake")
   })
+  test("updating a harness with no mods installed says so, and changes nothing", async () => {
+    registerHarness(sb, { id: "unused", name: "Unused", binary: "unused" })
+    const r = await cli(sb, "update", "unused")
+    expect(r.code, r.all).toBe(0)
+    expect(r.out).toContain("No mods are installed for Unused; nothing to update.")
+    expect(existsSync(path.join(sb.om, "bin", "unused"))).toBe(false)
+  })
   test("a misspelled harness flag is refused", async () => {
     const r = await cli(sb, "install", "t/both", "--othr")
     expect(r.code).toBe(1)

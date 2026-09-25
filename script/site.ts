@@ -190,7 +190,6 @@ const entries: Entry[] = [...new Set(mods.map((m) => m.id))].sort().map((id) => 
 for (const h of harnesses) h.latest = await latestRelease(h, mods.filter((m) => m.harness === h.id))
 
 const PLANNED = [
-  { id: "codex", name: "Codex CLI", repo: "https://github.com/openai/codex" },
   { id: "fx", name: "fx", repo: "https://github.com/vercel-labs/fx" },
 ].filter((p) => !harnesses.some((h) => h.id === p.id))
 
@@ -387,7 +386,7 @@ ${
 }
 <h2>How it works</h2>
 <div class="md"><p>A mod is named <code>owner/mod</code> and supports one or more harnesses, each with its own patches made against one of that harness's releases. <code>openmods install</code> clones that release, applies the patches, builds it with the exact toolchain the release pins, and puts the result first on your PATH. <code>openmods off</code> steps aside so the stock binary runs again.</p>
-<p>When a harness ships a new release, CI applies and typechecks every mod for it. A mod that still works has its release moved forward here automatically. A mod that does not stays on its last working release, shows as <span class="badge behind">behind</span>, and its maintainers get an issue with the error and the steps to rebase.</p></div>
+<p>When a harness ships a new release, CI applies and typechecks every mod for it, unless the release changed how the harness builds; then the mods wait until a maintainer has built it. A mod that still works has its release moved forward here automatically. A mod that does not stays on its last working release, shows as <span class="badge behind">behind</span>, and its maintainers get an issue with the error and the steps to rebase.</p></div>
 </section>`
   return layout({ title: `${SITE_NAME} · source-level mods for open-source harnesses`, depth: 0, nav: "mods", body, js: true, path: "" })
 }
@@ -425,7 +424,7 @@ function modPage(e: Entry) {
 <div class="stat"><b>${m.versions[0]!.update ?? 1}</b><span>update</span></div>
 </div>
 ${m.versions[0]!.note ? `<p class="releases">Update ${m.versions[0]!.update ?? 1}: ${esc(m.versions[0]!.note!)}</p>` : ""}
-${m.versions.length > 1 ? `<p class="releases">Has a version for ${esc(h.name)} ${m.versions.map((v) => `${esc(rel(v.ref))} (update ${v.update ?? 1})`).join(", ")}. openmods builds the newest one all your mods share; the files and diff below are for ${esc(rel(m.upstream.ref))}.</p>` : ""}
+${m.versions.length > 1 ? `<p class="releases">Has a version for ${esc(h.name)} ${m.versions.map((v) => `${esc(rel(v.ref))} (update ${v.update ?? 1})`).join(", ")}. openmods builds the release you are on when all your mods have a version for it, else the newest they share; the files and diff below are for ${esc(rel(m.upstream.ref))}.</p>` : ""}
 ${notice}
 ${clash(m)}
 <div class="files">${files}</div>
@@ -538,7 +537,7 @@ function makePage() {
   const md = readFileSync(path.join(root, "CONTRIBUTING.md"), "utf8")
   const html = (marked.parse(md, { renderer: headingIds() }) as string).replace(/<h1>.*?<\/h1>/, "")
   const body = `<div class="wrap page"><main><h1 class="title">Make a mod</h1><p class="lead">Clone the harness, change what you want, commit, pack. The registry does the rest.</p><article class="md">${html}</article></main>
-<aside><section><h3>Commands</h3><ul><li><code>openmods pack . --name my-mod --local</code></li><li><code>openmods install you/my-mod --opencode</code></li><li><code>openmods check mods/you/my-mod/opencode --build</code></li></ul></section>
+<aside><section><h3>Commands</h3><ul><li><code>openmods dev</code></li><li><code>openmods install .</code></li><li><code>openmods pack . --name my-mod --registry ../openmods</code></li></ul></section>
 <section><h3>Links</h3><ul><li><a href="https://github.com/${REPO}/blob/main/CONTRIBUTING.md">This guide on GitHub</a></li><li><a href="https://github.com/${REPO}/blob/main/schema/mod.schema.json">mod.json schema</a></li></ul></section></aside></div>`
   return layout({ title: `Make a mod · ${SITE_NAME}`, depth: 1, nav: "make", body, path: "make-a-mod/" })
 }

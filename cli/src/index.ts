@@ -1652,11 +1652,15 @@ async function cmdUpdate() {
   const ids = positional[1] ? [positional[1]] : Object.keys(state)
   for (const id of ids) {
     const e = state[id]
+    if (!e) {
+      log(`No mods are installed for ${loadHarness(reg, id).name}; nothing to update.`)
+      continue
+    }
     // A revoked mod stops running here too, for anyone who turned the daily
     // check off; there is nothing to update it to.
-    const bad = e && !devOf(id) ? revokedIn(reg, id, e) : []
+    const bad = devOf(id) ? [] : revokedIn(reg, id, e)
     if (bad.length) {
-      log(stopRevoked(loadHarness(reg, id), e!, bad))
+      log(stopRevoked(loadHarness(reg, id), e, bad))
       continue
     }
     const mods = (e?.mods ?? []).map((n) => resolveMod(reg, n, id))
@@ -1767,10 +1771,11 @@ async function cmdPack(opts: { quiet?: boolean } = {}): Promise<{ owner: string;
   const harness = await harnessOfClone(reg, checkout)
 
   // The owner is the author's GitHub handle: --owner, else git's github.user,
-  // else the GitHub CLI's login.
-  const detected =
+  // else the GitHub CLI's login. GitHub handles ignore case; owners are lowercase.
+  const detected = (
     (await $`git config --get github.user`.nothrow().quiet().text()).trim() ||
-    (await $`gh api user --jq .login`.nothrow().quiet().text()).trim().toLowerCase()
+    (await $`gh api user --jq .login`.nothrow().quiet().text()).trim()
+  ).toLowerCase()
   const owner = flag("owner") ?? (detected || fail("cannot tell who owns this mod; pass --owner <your GitHub handle>"))
   if (!ID.test(owner)) fail(`owner "${owner}" must be lowercase letters, digits and hyphens`)
 
