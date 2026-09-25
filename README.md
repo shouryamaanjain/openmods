@@ -10,7 +10,7 @@ Supported: [OpenCode](https://github.com/anomalyco/opencode) and [Codex CLI](htt
 curl -fsSL https://openmods.dev/install.sh | sh
 ```
 
-This needs `git`, `curl` and `tar`. Everything goes in `~/.openmods`, including the Bun the CLI runs on. The one change outside that folder is a line in your shell's startup file that puts `~/.openmods/bin` first on PATH.
+This needs `git`, `curl` and `tar`. Everything goes in `~/.openmods`, including the Bun the CLI runs on. Outside that folder, it adds one line to your shell's startup file that puts `~/.openmods/bin` first on PATH; for bash on Linux, it also adds the line to the file a login shell reads. In `~/.openmods/bin` it puts a small launcher for each agent you have, which runs your stock one until you install a mod.
 
 ## Use
 
@@ -87,7 +87,7 @@ A mod is code that runs with your permissions, like anything you build from sour
 
 ## Uninstalling OpenMods
 
-Delete `~/.openmods` and the `# openmods` line in your shell's startup file. Your stock harnesses were never changed.
+Delete `~/.openmods` and the `# openmods` lines in your shell's startup files. Your stock harnesses were never changed.
 
 ## Development
 

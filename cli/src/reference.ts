@@ -116,7 +116,7 @@ export const COMMANDS: Command[] = [
     usage: "openmods off [harness | <owner>/<mod> [--<harness>]]",
     summary: "Make your command run the stock build again, or build one mod out.",
     description: [
-      "With no argument, or a harness id: removes the launcher, so `opencode` falls through to the stock binary. Instant, and the modded build is kept for `on`.",
+      "With no argument, or a harness id: the launcher starts the stock binary instead. Instant, and the modded build is kept for `on`.",
       "With a mod: rebuilds the harness without that mod. It stays installed and listed in status as off.",
     ],
     examples: [{ command: "openmods off" }, { command: "openmods off codex", note: "just Codex" }, { command: "openmods off shouryamaanjain/space-invaders --codex" }],
@@ -131,6 +131,16 @@ export const COMMANDS: Command[] = [
     ],
     flags: [{ flag: "--force", description: "Rebuild even if nothing changed." }],
     examples: [{ command: "openmods update" }, { command: "openmods update codex --force" }],
+    audience: "users",
+  },
+  {
+    name: "setup",
+    usage: "openmods setup",
+    summary: "Put ~/.openmods/bin first on PATH, and a launcher in front of each harness you have.",
+    description: [
+      "The installer runs it; running it again changes only what is missing. Each launcher starts your stock harness until you install a mod for it, so in a terminal opened after setup, installing a mod takes effect at once, even if that terminal already ran the harness. An older terminal is told to run `hash -r`. PATH goes in your shell's startup file; for bash on Linux, also in the one a login shell such as an SSH session reads, which can otherwise put ~/.local/bin, where Codex installs, first.",
+    ],
+    examples: [{ command: "openmods setup" }],
     audience: "users",
   },
   {
@@ -239,7 +249,8 @@ export const ENVIRONMENT: Flag[] = [
 ]
 
 export const FILES: Flag[] = [
-  { flag: "~/.openmods/bin/<binary>", description: "The launcher for a harness: the modded build while on, your stock one while off. It stays put so a shell that remembers commands (bash) keeps finding it." },
+  { flag: "~/.openmods/bin/<binary>", description: "The launcher for a harness: the modded build while on, your stock one while off or before you install a mod. It stays put so a shell that remembers commands (bash, zsh) keeps finding it." },
+  { flag: "~/.openmods/launchers.json", description: "When each launcher first appeared, so a terminal opened before that is told to run `hash -r`." },
   { flag: "~/.openmods/harnesses/<id>/src", description: "The harness checkout, patched, kept as a cache." },
   { flag: "~/.openmods/harnesses/<id>/builds", description: "The current modded build, kept until a newer one succeeds." },
   { flag: "~/.openmods/toolchains/", description: "The Bun the CLI runs on, and the exact toolchain each harness release pins." },

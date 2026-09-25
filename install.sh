@@ -3,7 +3,8 @@
 # an `openmods` command in ~/.openmods/bin, which install also puts first
 # on your PATH. The CLI runs on its own copy of Bun, kept in
 # ~/.openmods/toolchains with the versions harness builds pin; nothing
-# outside ~/.openmods changes except that PATH line. Needs git, curl and tar.
+# outside ~/.openmods changes except the PATH line in your shell's startup
+# files. Needs git, curl and tar.
 #
 #   curl -fsSL https://openmods.dev/install.sh | sh
 set -e
@@ -41,25 +42,7 @@ exec "\$OM/toolchains/bun-$BUN_VERSION/bin/bun" "\$OM/registry/cli/src/index.ts"
 WRAP
 chmod 755 "$OM/bin/openmods"
 
-case ":$PATH:" in
-  *":$OM/bin:"*) ;;
-  *)
-    SHELL_NAME=$(basename "${SHELL:-sh}")
-    case "$SHELL_NAME" in
-      zsh) RC="$HOME/.zshrc" ;;
-      fish) RC="$HOME/.config/fish/config.fish" ;;
-      *) if [ "$(uname)" = "Darwin" ]; then RC="$HOME/.bash_profile"; else RC="$HOME/.bashrc"; fi ;;
-    esac
-    if ! grep -q "# openmods" "$RC" 2>/dev/null; then
-      mkdir -p "$(dirname "$RC")"
-      if [ "$SHELL_NAME" = "fish" ]; then
-        printf '\n# openmods: modded builds go first; `openmods off` steps aside\nfish_add_path --prepend --move %s  # openmods\n' "$OM/bin" >> "$RC"
-      else
-        printf '\n# openmods: modded builds go first; `openmods off` steps aside\nexport PATH="%s:$PATH"  # openmods\n' "$OM/bin" >> "$RC"
-      fi
-      echo "Added $OM/bin to PATH in $RC. Open a new terminal, or run:"
-      echo "  export PATH=\"$OM/bin:\$PATH\""
-    fi ;;
-esac
+# PATH, and a launcher in front of each harness you have (see `openmods help setup`).
+"$OM/bin/openmods" setup
 
 echo "openmods is installed. Try: openmods list"
