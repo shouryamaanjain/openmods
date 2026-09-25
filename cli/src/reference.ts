@@ -116,7 +116,7 @@ export const COMMANDS: Command[] = [
     usage: "openmods off [harness | <owner>/<mod> [--<harness>]]",
     summary: "Make your command run the stock build again, or build one mod out.",
     description: [
-      "With no argument, or a harness id: removes the launcher, so `opencode` falls through to the stock binary. Instant, and the modded build is kept for `on`.",
+      "With no argument, or a harness id: the launcher starts the stock binary instead. Instant, and the modded build is kept for `on`.",
       "With a mod: rebuilds the harness without that mod. It stays installed and listed in status as off.",
     ],
     examples: [{ command: "openmods off" }, { command: "openmods off codex", note: "just Codex" }, { command: "openmods off shouryamaanjain/space-invaders --codex" }],
@@ -131,6 +131,16 @@ export const COMMANDS: Command[] = [
     ],
     flags: [{ flag: "--force", description: "Rebuild even if nothing changed." }],
     examples: [{ command: "openmods update" }, { command: "openmods update codex --force" }],
+    audience: "users",
+  },
+  {
+    name: "setup",
+    usage: "openmods setup",
+    summary: "Put ~/.openmods/bin first on PATH, and a launcher in front of each harness you have.",
+    description: [
+      "The installer runs it; running it again changes only what is missing. Each launcher starts your stock harness until you install a mod for it, so the install takes effect at once, even in a terminal that already ran the harness. PATH goes in your shell's startup file; for bash on Linux, also in the one a login shell such as an SSH session reads, which can otherwise put ~/.local/bin, where Codex installs, first.",
+    ],
+    examples: [{ command: "openmods setup" }],
     audience: "users",
   },
   {

@@ -1058,16 +1058,15 @@ function switchOff(h: Harness) {
   writeLauncher(h, stockLauncherOf(h))
 }
 
-// Writes the launcher. A new one may not be picked up by a bash that already
-// ran the stock harness in this terminal, so that case gets one line of help.
+// Writes the launcher. A new one may not be picked up by a shell that already
+// ran the stock harness in this terminal, so `explainSwitch` says what to do.
+const newLaunchers = new Set<string>()
 function writeLauncher(h: Harness, script: string) {
   mkdirSync(BIN, { recursive: true })
   const target = path.join(BIN, h.binary)
-  const fresh = !existsSync(target)
-  if (!fresh) unlinkSync(target)
+  if (existsSync(target)) unlinkSync(target)
+  else newLaunchers.add(h.binary)
   writeFileSync(target, script, { mode: 0o755 })
-  if (fresh && path.basename(process.env.SHELL ?? "") === "bash" && pathHasBin())
-    log(`If \`${h.binary}\` still starts your stock ${h.name} in a terminal that ran it before, run \`hash -r\` there once; bash remembers where it found it.`)
 }
 
 // The launcher while the mods are off: it finds the stock harness on PATH,
@@ -1116,39 +1115,74 @@ async function versionOf(bin: string | null) {
 
 const pathHasBin = () => (process.env.PATH ?? "").split(path.delimiter).some((d) => d && path.resolve(d) === BIN)
 
+// What `binary` runs in this shell: the first one on its PATH.
+const firstOnPath = (binary: string) =>
+  (process.env.PATH ?? "")
+    .split(path.delimiter)
+    .filter(Boolean)
+    .map((d) => path.join(path.resolve(d), binary))
+    .find((f) => existsSync(f)) ?? null
+
+// A line that can put a folder in front of ~/.openmods/bin: one that sets
+// PATH, or runs a script that may, as nvm's `\. "$NVM_DIR/nvm.sh"` does.
+const setsPath = (l: string) => !l.trim().startsWith("#") && /PATH|fish_add_path|shellenv|(^|&&|;|\|\|)\s*\\?(\.|source)\s/.test(l)
+
 // Keeps ~/.openmods/bin at the front of PATH in the user's shell config.
-// Adds the line once. If a later line puts something in front of it, such as
-// a harness installer that appended its own PATH line, the openmods line
-// moves back to the end so modded builds still go first. Returns the file it
-// edited and whether it added or moved the line, or null when nothing changed.
-function setupPath(): { rc: string; moved: boolean } | null {
-  if (has("no-path") || process.platform === "win32") return null
+// Adds the line once. If a later line can put something in front of it, such
+// as a harness installer that appended its own PATH line, the openmods line
+// moves back to the end so modded builds still go first. bash on Linux also
+// gets it in the file a login shell (an SSH session, say) reads: that file
+// reads ~/.bashrc and may then put folders first, as Ubuntu's ~/.profile
+// does with ~/.local/bin, where Codex installs. Returns each file it edited
+// and whether it added or moved the line.
+function setupPath(): { rc: string; moved: boolean }[] {
+  if (has("no-path") || process.platform === "win32") return []
   const shell = path.basename(process.env.SHELL ?? "")
-  const rc =
+  const home = homedir()
+  const files =
     shell === "zsh"
-      ? path.join(homedir(), ".zshrc")
+      ? [path.join(home, ".zshrc")]
       : shell === "fish"
-        ? path.join(homedir(), ".config", "fish", "config.fish")
-        : path.join(homedir(), process.platform === "darwin" ? ".bash_profile" : ".bashrc")
+        ? [path.join(home, ".config", "fish", "config.fish")]
+        : process.platform === "darwin"
+          ? [path.join(home, ".bash_profile")]
+          : [path.join(home, ".bashrc"), ...[".bash_profile", ".bash_login", ".profile"].map((f) => path.join(home, f)).filter((f) => existsSync(f)).slice(0, 1)]
   const line =
     shell === "fish"
       ? `fish_add_path --prepend --move ${pretty(BIN).replace("~", "$HOME")}  # openmods`
       : `export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"  # openmods`
   const block = `# openmods: modded builds go first; \`openmods off\` steps aside\n${line}\n`
-  const current = existsSync(rc) ? readFileSync(rc, "utf8") : ""
-  const lines = current.split("\n")
-  const last = lines.findLastIndex((l) => l.includes("# openmods"))
-  if (last >= 0) {
-    const later = lines.slice(last + 1).some((l) => !l.trim().startsWith("#") && /PATH|fish_add_path|shellenv/.test(l))
-    if (!later) return null
-    const kept = lines.filter((l) => !l.includes("# openmods")).join("\n").replace(/\n{3,}/g, "\n\n").replace(/\n*$/, "\n")
-    writeFileSync(rc, `${kept}\n${block}`)
-    return { rc, moved: true }
+  const read = (f: string) => (existsSync(f) ? readFileSync(f, "utf8") : "")
+  const edits: { rc: string; moved: boolean }[] = []
+  for (const rc of files) {
+    const current = read(rc)
+    const lines = current.split("\n")
+    const last = lines.findLastIndex((l) => l.includes("# openmods"))
+    if (last >= 0) {
+      if (!lines.slice(last + 1).some(setsPath)) continue
+      const kept = lines.filter((l) => !l.includes("# openmods")).join("\n").replace(/\n{3,}/g, "\n\n").replace(/\n*$/, "\n")
+      writeFileSync(rc, `${kept}\n${block}`)
+      edits.push({ rc, moved: true })
+      continue
+    }
+    // Not when PATH already has it some other way; the login file only
+    // alongside ~/.bashrc's line.
+    if (rc === files[0] ? pathHasBin() : !read(files[0]!).includes("# openmods")) continue
+    mkdirSync(path.dirname(rc), { recursive: true })
+    writeFileSync(rc, `${current}${current.endsWith("\n") || current === "" ? "" : "\n"}\n${block}`)
+    edits.push({ rc, moved: false })
   }
-  if (pathHasBin()) return null
-  mkdirSync(path.dirname(rc), { recursive: true })
-  writeFileSync(rc, `${current}${current.endsWith("\n") || current === "" ? "" : "\n"}\n${block}`)
-  return { rc, moved: false }
+  return edits
+}
+
+// What was edited, and how to have it in the current terminal.
+function explainPath(edits: { rc: string; moved: boolean }[]) {
+  const added = edits.filter((e) => !e.moved).map((e) => pretty(e.rc))
+  const moved = edits.filter((e) => e.moved).map((e) => pretty(e.rc))
+  if (added.length) log(`Added ${pretty(BIN)} to the front of PATH in ${added.join(" and ")}.`)
+  if (moved.length) log(`Moved the openmods line to the end of ${moved.join(" and ")}, so ${pretty(BIN)} stays first on PATH after a line added later.`)
+  log(`Open a new terminal, or run this in the current one:`)
+  log(`  export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"`)
 }
 
 function explainSwitch(h: Harness, entry: State[string]) {
@@ -1161,21 +1195,42 @@ function explainSwitch(h: Harness, entry: State[string]) {
   } else {
     log(`\`${h.binary}\` runs your stock ${h.name} again${stock ? ` (${pretty(stock)})` : ""}. \`openmods on\` brings the mods back.`)
   }
-  const edited = entry.enabled ? setupPath() : null
-  if (edited) {
+  if (!entry.enabled) return
+  const edits = setupPath()
+  const found = firstOnPath(h.binary)
+  const shell = path.basename(process.env.SHELL ?? "")
+  if (edits.length) {
     log("")
-    log(
-      edited.moved
-        ? `Moved the openmods line to the end of ${pretty(edited.rc)}, so ${pretty(BIN)} stays first on PATH after a line added later.`
-        : `Added ${pretty(BIN)} to the front of PATH in ${pretty(edited.rc)}.`,
-    )
-    log(`Open a new terminal, or run this in the current one:`)
-    log(`  export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"`)
-  } else if (entry.enabled && !pathHasBin()) {
+    explainPath(edits)
+  } else if (!pathHasBin()) {
     log("")
     log(`Note: ${pretty(BIN)} is not on PATH in this shell. Open a new terminal, or run:`)
     log(`  export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"`)
+  } else if (found && path.dirname(found) !== BIN) {
+    log("")
+    log(`Note: in this terminal \`${h.binary}\` still finds ${pretty(found)} first. Run:`)
+    log(`  export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"`)
+    log(`If a new terminal does the same, move the openmods line in your shell's startup file below the one that adds ${pretty(path.dirname(found))}.`)
+  } else if (newLaunchers.has(h.binary) && stock && shell !== "fish") {
+    log("")
+    log(`If \`${h.binary}\` still starts your stock ${h.name} in a terminal that ran it before, run \`hash -r\` there once; the shell remembers where it found it.`)
   }
+}
+
+// What install.sh runs, and safe to run again: ~/.openmods/bin first on PATH,
+// and a launcher in front of each harness installed here that starts the
+// stock one until a mod is installed. A shell remembers where it first found
+// a command, so with the launcher there before that, installing a mod
+// changes what `codex` runs at once, even in a terminal that already ran it.
+async function cmdSetup() {
+  const reg = await ensureRegistry()
+  const put = allHarnesses(reg).filter((h) => !existsSync(path.join(BIN, h.binary)) && stockBinary(h))
+  for (const h of put) writeLauncher(h, stockLauncherOf(h))
+  const names = put.map((h) => `\`${h.binary}\``)
+  if (put.length)
+    log(`${names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0]} now start${put.length > 1 ? "" : "s"} through ${pretty(BIN)}: the stock build until you install a mod.`)
+  const edits = setupPath()
+  if (edits.length) explainPath(edits)
 }
 
 // `adding` names the mods this rebuild brings in (install, on), so a clash is
@@ -1474,7 +1529,9 @@ async function cmdStatus() {
     e.artifact ||= artifactPath(h, path.join(HOME, "harnesses", id, "src"))
     const built = existsSync(e.artifact)
     const onPath = pathHasBin()
-    const runs = e.enabled && built && onPath ? "modded" : "stock"
+    const first = firstOnPath(h.binary)
+    const reaches = !!first && path.dirname(first) === BIN
+    const runs = e.enabled && built && reaches ? "modded" : "stock"
     log(`${h.binary} → ${runs}`)
     const active = e.mods.filter((m) => !e.off.includes(m))
     log(`  modded  ${h.name} ${rel(e.ref)} + ${active.join(" + ") || "(nothing)"}  ${e.enabled ? "on" : "off (openmods on)"}${built || !active.length ? "" : "  [not built; run openmods update]"}`)
@@ -1484,6 +1541,7 @@ async function cmdStatus() {
     const pending = readNote(id)
     if (pending?.ASK === "1" && pending.MESSAGE) log(`  update  ${pending.MESSAGE} \`openmods update ${id}\` does it.`)
     if (e.enabled && !onPath) log(`  note    ${pretty(BIN)} is not on PATH in this shell; open a new terminal or run: export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"`)
+    else if (e.enabled && !reaches && first) log(`  note    in this terminal \`${h.binary}\` finds ${pretty(first)} first; run: export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"`)
   }
 }
 
@@ -1648,9 +1706,11 @@ async function cmdDev() {
   log("")
   log(`\`${h.binary}\` now runs your clone at ${pretty(clone)} from source, as ${h.name} ${version}.`)
   log(`Edit, then start \`${h.binary}\` again to see the change: nothing to commit, pack or build. \`openmods dev --stop\` switches back to ${back}.`)
-  const edited = setupPath()
-  if (edited) log(`Added ${pretty(BIN)} to the front of PATH in ${pretty(edited.rc)}; open a new terminal to use it.`)
-  else if (!pathHasBin()) log(`Note: ${pretty(BIN)} is not on PATH in this shell. Open a new terminal, or run: export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"`)
+  const edits = setupPath()
+  if (edits.length) {
+    log("")
+    explainPath(edits)
+  } else if (!pathHasBin()) log(`Note: ${pretty(BIN)} is not on PATH in this shell. Open a new terminal, or run: export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"`)
 }
 
 // Author command: turn commits on top of a harness release into a mod folder.
@@ -2096,6 +2156,7 @@ const commands: Record<string, () => Promise<void>> = {
   check: cmdCheck,
   registry: cmdRegistry,
   "check-updates": cmdCheckUpdates,
+  setup: cmdSetup,
 }
 
 const cmd = positional[0]
