@@ -7,7 +7,7 @@ A modded harness still looks like the harness it came from, including the places
 ## What it changes
 
 - **OpenCode:** the system prompts' feedback line and the crash screen. Users are asked to check with `openmods off` whether the stock build has the same problem: if it does, they report it to OpenCode; if not, to OpenMods. The crash report opens an OpenMods issue, with the version, which names the mods.
-- **Codex CLI:** `/feedback` explains that this is a modded build and where to report instead of uploading logs to OpenAI. Codex's own update notice and prompt are off: they point to the stock install, while a modded build moves to a new release when OpenMods rebuilds it. A modded build also runs without Codex's shared background server, as `--no-daemon` does, so the server stays stock Codex's.
+- **Codex CLI:** `/feedback` explains that this is a modded build and where to report instead of uploading logs to OpenAI. Codex's own update notice and prompt are off: they point to the stock install, while a modded build moves to a new release when OpenMods rebuilds it. A modded build also runs without Codex's shared background server, as `--no-daemon` does, so the server stays stock Codex's; only `codex agents` and `--remote`, which need a server, still use one.
 
 ## Permissions
 
