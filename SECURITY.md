@@ -29,11 +29,15 @@ These are checks on the process, not a guarantee about intent. A malicious patch
 
 ## The launcher and updates
 
-`openmods` never rebuilds or installs anything without a yes. The launcher checks for updates in the background but only asks at an interactive terminal, and `OPENMODS_NO_PROMPT=1` or `OPENMODS_NO_CHECK=1` turn that off. Updates only ever move a mod to a release that CI has verified it builds on.
+`openmods` never rebuilds or installs anything without a yes. The launcher checks for updates in the background but only asks at an interactive terminal, and `OPENMODS_NO_PROMPT=1` or `OPENMODS_NO_CHECK=1` turn that off. Updates only ever move a mod to a release where CI has checked that it applies and typechecks.
 
 ## Reporting a problem
 
-Open an issue on the registry, or email the maintainer listed in the mod's `mod.json` for a problem with one mod. If a published mod is doing something harmful, start the issue title with "Harmful mod:" and name it. A maintainer labels it `harmful mod`, revokes the mod first, and discusses it after.
+Report a vulnerability in OpenMods, or in a mod, privately: use **Report a vulnerability** on the repository's Security tab, so it can be fixed before it is public.
+
+If a published mod is doing something harmful, open an issue instead, so users see it: start the title with "Harmful mod:" and name the mod. A maintainer labels it `harmful mod`, revokes the mod first, and discusses it after.
+
+Other problems with a mod go in an issue that names it; its maintainers are listed in its `mod.json`.
 
 ## Revoked mods
 

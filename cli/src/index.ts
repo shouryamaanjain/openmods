@@ -287,7 +287,7 @@ function allHarnesses(reg: string): Harness[] {
 /** `owner/name`, checked. */
 function parseId(reg: string, spec: string): string {
   const parts = spec.split("/")
-  if (parts.length !== 2 || !ID.test(parts[0]!) || !ID.test(parts[1]!)) fail(`"${spec}" is not a mod name. Mods are written owner/mod, e.g. shouryamaanjain/tetris.`)
+  if (parts.length !== 2 || !ID.test(parts[0]!) || !ID.test(parts[1]!)) fail(`"${spec}" is not a mod name. Mods are written owner/mod, e.g. shouryamaanjain/space-invaders.`)
   return spec
 }
 
@@ -296,7 +296,7 @@ function supportsOf(reg: string, spec: string): Mod[] {
   const id = parseId(reg, spec)
   const found = listMods(reg).filter((m) => m.id === id && !m.internal)
   if (found.length === 0) {
-    // The old harness/mod form, e.g. opencode/tetris.
+    // The old harness/mod form, e.g. opencode/space-invaders.
     const [first, name] = id.split("/")
     const h = allHarnesses(reg).find((x) => x.id === first)
     const owners = h ? [...new Set(listMods(reg).filter((m) => m.name === name).map((m) => m.owner))] : []
@@ -710,7 +710,7 @@ async function applyMods(root: string, mods: Mod[]) {
   }
 }
 
-// "tetris-8.vim-keys-3": each mod and the update it is on, valid as semver
+// "space-invaders-8.vim-keys-3": each mod and the update it is on, valid as semver
 // build metadata, so `opencode --version` says exactly what is built in.
 const stampOf = (mods: Mod[]) => mods.map((m) => `${m.name}-${m.update}`).join(".")
 
@@ -1375,7 +1375,7 @@ const isPathSpec = (s: string) => s === "." || s === ".." || /^(\.{1,2}\/|\/|~)/
 async function cmdInstall() {
   const reg = await ensureRegistry()
   let specs = positional.slice(1)
-  if (specs.length === 0) fail("install needs a mod, e.g. openmods install shouryamaanjain/tetris --opencode. `openmods list` shows what is available.")
+  if (specs.length === 0) fail("install needs a mod, e.g. openmods install shouryamaanjain/space-invaders --opencode. `openmods list` shows what is available.")
   // `openmods install .` in a clone of a harness: pack its commits on top of
   // the release as a local mod, then install that, so an author can try a
   // mod the way users will run it without a separate pack step.
@@ -1414,7 +1414,7 @@ async function cmdInstall() {
 async function cmdUninstall() {
   const reg = await ensureRegistry()
   const specs = positional.slice(1)
-  if (specs.length === 0) fail("uninstall needs a mod, e.g. openmods uninstall shouryamaanjain/tetris. `openmods status` shows what is installed.")
+  if (specs.length === 0) fail("uninstall needs a mod, e.g. openmods uninstall shouryamaanjain/space-invaders. `openmods status` shows what is installed.")
   const state = loadState()
   const byHarness = new Map<string, string[]>()
   for (const spec of specs) {
