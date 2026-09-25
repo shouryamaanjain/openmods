@@ -3,7 +3,7 @@
 // terminal that already ran the harness, and ~/.openmods/bin goes first on
 // PATH wherever the shell reads it, login shells included.
 import { beforeAll, describe, expect, test } from "bun:test"
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { CLI, createHarness, createMod, run, sandbox, setGreeting } from "./harness"
 
@@ -56,13 +56,15 @@ describe("the launchers", () => {
     expect(again.out).not.toContain("now starts")
   })
   test("so an install takes effect at once in a terminal that already ran the harness", async () => {
-    const r = await bash(["greet", "openmods install t/friendly >/dev/null", "greet"])
-    expect(r.out.trim().split("\n"), r.err).toEqual(["stock greet", "hello from friendly"])
+    const r = await bash(["greet", "openmods install t/friendly | grep -c 'hash -r'", "greet"])
+    // The terminal opened after the launcher appeared, so it needs no `hash -r`.
+    expect(r.out.trim().split("\n"), r.err).toEqual(["stock greet", "0", "hello from friendly"])
   })
 })
 
 describe("PATH", () => {
   test("a terminal that finds another one first is told so", async () => {
+    await run(sb, {}, "install", "t/friendly")
     const r = await run(sb, { env: { PATH: `${stockDir()}:${bin()}:${process.env.PATH}` } }, "on")
     expect(r.code, r.all).toBe(0)
     expect(r.out).toContain("in this terminal `greet` still finds ~/.greet/bin/greet first")
@@ -70,12 +72,14 @@ describe("PATH", () => {
     expect(status.out).toContain("greet → stock")
     expect(status.out).toContain("in this terminal `greet` finds ~/.greet/bin/greet first")
   })
-  test("a script sourced after the openmods line, like nvm, moves it to the end", async () => {
+  test("a later line that can put a folder first, like nvm's or zsh's path=(...), moves it to the end", async () => {
     const rc = path.join(sb.home, ".zshrc")
-    writeFileSync(rc, `${ours()}\nexport NVM_DIR="$HOME/.nvm"\n[ -s "$NVM_DIR/nvm.sh" ] && \\. "$NVM_DIR/nvm.sh"  # This loads nvm\n`)
-    const r = await run(sb, { path: true, env: { SHELL: "/bin/zsh" } }, "setup")
-    expect(r.out).toContain("Moved the openmods line to the end of ~/.zshrc")
-    expect(readFileSync(rc, "utf8").trim().split("\n").at(-1)).toContain("# openmods")
+    for (const later of ['export NVM_DIR="$HOME/.nvm"\n[ -s "$NVM_DIR/nvm.sh" ] && \\. "$NVM_DIR/nvm.sh"  # This loads nvm', "path=(~/.local/bin $path)"]) {
+      writeFileSync(rc, `${ours()}\n${later}\n`)
+      const r = await run(sb, { path: true, env: { SHELL: "/bin/zsh" } }, "setup")
+      expect(r.out).toContain("Moved the openmods line to the end of ~/.zshrc")
+      expect(readFileSync(rc, "utf8").trim().split("\n").at(-1)).toContain("# openmods")
+    }
   })
   test.skipIf(process.platform !== "linux")("bash on Linux also gets it where a login shell reads it, after ~/.local/bin", async () => {
     const profile = path.join(sb.home, ".profile")
@@ -93,5 +97,12 @@ describe("PATH", () => {
     expect(login.stdout.toString().trim()).toBe(path.join(bin(), "greet"))
     const again = await run(sb, { path: true, env: { SHELL: "/bin/bash" } }, "setup")
     expect(again.out).not.toContain("PATH")
+  })
+  test.skipIf(process.platform !== "linux")("with no file for a login shell to read, bash on Linux gets ~/.profile", async () => {
+    for (const f of [".bashrc", ".profile", ".bash_profile", ".bash_login"]) rmSync(path.join(sb.home, f), { force: true })
+    const r = await run(sb, { path: true, env: { SHELL: "/bin/bash" } }, "setup")
+    expect(r.out).toContain("to the front of PATH in ~/.bashrc and ~/.profile")
+    const login = await Bun.$`bash -lc 'command -v greet'`.env({ HOME: sb.home, PATH: `${stockDir()}:/usr/bin:/bin` }).nothrow().quiet()
+    expect(login.stdout.toString().trim()).toBe(path.join(bin(), "greet"))
   })
 })

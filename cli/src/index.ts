@@ -1059,14 +1059,30 @@ function switchOff(h: Harness) {
 }
 
 // Writes the launcher. A new one may not be picked up by a shell that already
-// ran the stock harness in this terminal, so `explainSwitch` says what to do.
-const newLaunchers = new Set<string>()
+// ran the stock harness, so when each launcher first appeared is kept, for
+// `explainSwitch` to tell a terminal older than that what to do.
+const LAUNCHERS_SINCE = path.join(HOME, "launchers.json")
 function writeLauncher(h: Harness, script: string) {
   mkdirSync(BIN, { recursive: true })
   const target = path.join(BIN, h.binary)
   if (existsSync(target)) unlinkSync(target)
-  else newLaunchers.add(h.binary)
+  else writeFileSync(LAUNCHERS_SINCE, JSON.stringify({ ...launchersSince(), [h.binary]: Date.now() }) + "\n")
   writeFileSync(target, script, { mode: 0o755 })
+}
+const launchersSince = (): Record<string, number> => {
+  try {
+    return JSON.parse(readFileSync(LAUNCHERS_SINCE, "utf8"))
+  } catch {
+    return {}
+  }
+}
+
+// When the shell this was run from started, to the second, or null when that
+// cannot be told.
+async function shellStarted(): Promise<number | null> {
+  const r = await $`ps -o lstart= -p ${process.ppid}`.nothrow().quiet()
+  const t = Date.parse(r.stdout.toString().trim())
+  return r.exitCode === 0 && !Number.isNaN(t) ? t : null
 }
 
 // The launcher while the mods are off: it finds the stock harness on PATH,
@@ -1125,7 +1141,8 @@ const firstOnPath = (binary: string) =>
 
 // A line that can put a folder in front of ~/.openmods/bin: one that sets
 // PATH, or runs a script that may, as nvm's `\. "$NVM_DIR/nvm.sh"` does.
-const setsPath = (l: string) => !l.trim().startsWith("#") && /PATH|fish_add_path|shellenv|(^|&&|;|\|\|)\s*\\?(\.|source)\s/.test(l)
+// zsh's `path=(~/.local/bin $path)` included.
+const setsPath = (l: string) => !l.trim().startsWith("#") && /PATH|(^|[\s;&|])path(\+?=|\[)|fish_add_path|shellenv|(^|&&|;|\|\|)\s*\\?(\.|source)\s/.test(l)
 
 // Keeps ~/.openmods/bin at the front of PATH in the user's shell config.
 // Adds the line once. If a later line can put something in front of it, such
@@ -1134,7 +1151,8 @@ const setsPath = (l: string) => !l.trim().startsWith("#") && /PATH|fish_add_path
 // gets it in the file a login shell (an SSH session, say) reads: that file
 // reads ~/.bashrc and may then put folders first, as Ubuntu's ~/.profile
 // does with ~/.local/bin, where Codex installs. Returns each file it edited
-// and whether it added or moved the line.
+// and whether it added or moved the line. With no such file, it is ~/.profile:
+// bash's login shell reads none, and ~/.bashrc only from one of them.
 function setupPath(): { rc: string; moved: boolean }[] {
   if (has("no-path") || process.platform === "win32") return []
   const shell = path.basename(process.env.SHELL ?? "")
@@ -1146,7 +1164,7 @@ function setupPath(): { rc: string; moved: boolean }[] {
         ? [path.join(home, ".config", "fish", "config.fish")]
         : process.platform === "darwin"
           ? [path.join(home, ".bash_profile")]
-          : [path.join(home, ".bashrc"), ...[".bash_profile", ".bash_login", ".profile"].map((f) => path.join(home, f)).filter((f) => existsSync(f)).slice(0, 1)]
+          : [path.join(home, ".bashrc"), [".bash_profile", ".bash_login"].map((f) => path.join(home, f)).find((f) => existsSync(f)) ?? path.join(home, ".profile")]
   const line =
     shell === "fish"
       ? `fish_add_path --prepend --move ${pretty(BIN).replace("~", "$HOME")}  # openmods`
@@ -1185,7 +1203,7 @@ function explainPath(edits: { rc: string; moved: boolean }[]) {
   log(`  export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"`)
 }
 
-function explainSwitch(h: Harness, entry: State[string]) {
+async function explainSwitch(h: Harness, entry: State[string]) {
   const stock = stockBinary(h)
   log("")
   if (entry.enabled) {
@@ -1211,7 +1229,7 @@ function explainSwitch(h: Harness, entry: State[string]) {
     log(`Note: in this terminal \`${h.binary}\` still finds ${pretty(found)} first. Run:`)
     log(`  export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"`)
     log(`If a new terminal does the same, move the openmods line in your shell's startup file below the one that adds ${pretty(path.dirname(found))}.`)
-  } else if (newLaunchers.has(h.binary) && stock && shell !== "fish") {
+  } else if (stock && shell !== "fish" && Math.floor((launchersSince()[h.binary] ?? 0) / 1000) * 1000 > ((await shellStarted()) ?? 0)) {
     log("")
     log(`If \`${h.binary}\` still starts your stock ${h.name} in a terminal that ran it before, run \`hash -r\` there once; the shell remembers where it found it.`)
   }
@@ -1351,7 +1369,7 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
   saveState(state)
   // The launcher's note described the build this replaces.
   rmSync(path.join(HOME, "updates", harnessId), { force: true })
-  explainSwitch(h, state[harnessId]!)
+  await explainSwitch(h, state[harnessId]!)
 }
 
 // ---------------------------------------------------------------- commands
@@ -1586,7 +1604,7 @@ async function cmdOn() {
     switchOn(h, e.artifact)
     e.enabled = true
     saveState(state)
-    explainSwitch(h, e)
+    await explainSwitch(h, e)
   }
 }
 
@@ -1612,7 +1630,7 @@ async function cmdOff() {
     switchOff(h)
     e.enabled = false
     saveState(state)
-    explainSwitch(h, e)
+    await explainSwitch(h, e)
   }
 }
 

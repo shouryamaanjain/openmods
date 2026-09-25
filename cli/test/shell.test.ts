@@ -1,13 +1,12 @@
 // The launcher and the shell. bash remembers where it found a command, so the
 // launcher stays at ~/.openmods/bin/<binary> from the first install on and
 // starts the stock harness while the mods are off: `openmods off` and
-// `openmods on` then work in a terminal that already ran it. Only the first
-// install can be missed by such a terminal, and a bash user is told how to
-// fix that.
+// `openmods on` then work in a terminal that already ran it. Only a terminal
+// older than the launcher can miss it, and it is told how to fix that.
 import { beforeAll, describe, expect, test } from "bun:test"
 import { renameSync, symlinkSync } from "node:fs"
 import path from "node:path"
-import { CLI, createHarness, createMod, greeting, run, sandbox, setGreeting } from "./harness"
+import { CLI, createHarness, createMod, greeting, sandbox, setGreeting } from "./harness"
 
 const sb = sandbox("shell")
 const bin = () => path.join(sb.om, "bin")
@@ -42,14 +41,26 @@ beforeAll(async () => {
   await createMod(sb, "friendly", setGreeting("hello from friendly"))
 })
 
+// The CLI run from its own shell, as from a terminal: one that has been open
+// for `age` seconds when it runs the command.
+async function fromShell(age: number, ...a: string[]) {
+  const p = Bun.spawn(["sh", "-c", `sleep ${age}; bun "$@"; exit $?`, "sh", CLI, ...a, "--registry", sb.reg, "--no-path"], {
+    env: { ...process.env, SHELL: "/bin/bash", PATH: `${bin()}:${process.env.PATH}`, HOME: sb.home, OPENMODS_HOME: sb.om, OPENMODS_NO_CHECK: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()])
+  return { code: await p.exited, out, all: out + err }
+}
+
 describe("the first install", () => {
-  test("tells a bash user how to have a terminal that ran the stock harness pick it up", async () => {
-    const env = { SHELL: "/bin/bash", PATH: `${bin()}:${process.env.PATH}` }
-    const r = await run(sb, { env }, "install", "t/friendly")
+  test("tells a terminal older than the launcher how to pick it up", async () => {
+    const r = await fromShell(1, "install", "t/friendly")
     expect(r.code, r.all).toBe(0)
     expect(r.out).toContain("If `greet` still starts your stock Fake in a terminal that ran it before, run `hash -r` there once")
-    // Only when the launcher is new.
-    const again = await run(sb, { env }, "update", "fake", "--force")
+    // Not a terminal opened after the launcher appeared.
+    const again = await fromShell(0, "update", "fake", "--force")
+    expect(again.code, again.all).toBe(0)
     expect(again.out).not.toContain("hash -r")
   })
 })
