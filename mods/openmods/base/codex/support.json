@@ -5,25 +5,33 @@
       "ref": "rust-v0.157.0",
       "commit": "00c972ed5d6ff6499317fd41b7f23605b8e6850d",
       "patches": [
-        "rust-v0.157.0/0001-openmods-point-feedback-in-modded-builds-to-OpenMods.patch"
+        "rust-v0.157.0/0001-openmods-point-feedback-in-modded-builds-to-OpenMods.patch",
+        "rust-v0.157.0/0002-openmods-leave-a-modded-build-s-updates-to-OpenMods.patch",
+        "rust-v0.157.0/0003-openmods-run-modded-builds-without-Codex-s-shared-ba.patch"
       ],
-      "update": 1
+      "update": 2,
+      "note": "Codex's own update notice is off, and modded builds run without its shared background server"
     },
     {
       "ref": "rust-v0.156.1",
       "commit": "b412ff32c417f855c2b2d1581b77058eed87c84b",
       "patches": [
-        "rust-v0.156.1/0001-openmods-point-feedback-in-modded-builds-to-OpenMods.patch"
+        "rust-v0.156.1/0001-openmods-point-feedback-in-modded-builds-to-OpenMods.patch",
+        "rust-v0.156.1/0002-openmods-leave-a-modded-build-s-updates-to-OpenMods.patch",
+        "rust-v0.156.1/0003-openmods-run-modded-builds-without-Codex-s-shared-ba.patch"
       ],
-      "update": 1
+      "update": 2,
+      "note": "Codex's own update notice is off, and modded builds run without its shared background server"
     },
     {
       "ref": "rust-v0.155.1",
       "commit": "be2951ea34f0d295ed0becf97079f92fa5f6950e",
       "patches": [
-        "rust-v0.155.1/0001-openmods-point-feedback-in-modded-builds-to-OpenMods.patch"
+        "rust-v0.155.1/0001-openmods-point-feedback-in-modded-builds-to-OpenMods.patch",
+        "rust-v0.155.1/0002-openmods-leave-a-modded-build-s-updates-to-OpenMods.patch"
       ],
-      "update": 1
+      "update": 2,
+      "note": "Codex's own update notice is off in modded builds"
     }
   ]
 }

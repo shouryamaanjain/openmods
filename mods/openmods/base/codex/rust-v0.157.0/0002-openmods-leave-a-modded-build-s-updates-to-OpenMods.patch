@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: OpenMods <openmods@localhost>
+Date: Fri, 25 Sep 2026 10:55:36 +0530
+Subject: [PATCH] openmods: leave a modded build's updates to OpenMods
+
+A modded build moves to a new Codex release when OpenMods rebuilds it.
+Codex's own update notice and prompt point to the stock install, so they
+are off in a modded build.
+
+diff --git a/codex-rs/tui/src/updates.rs b/codex-rs/tui/src/updates.rs
+index 9bbdf310a861672584e09b73e94cf9e117c966bf..ff431d91f9dc726e906030ed3e1ccea410dfb26a 100644
+--- a/codex-rs/tui/src/updates.rs
++++ b/codex-rs/tui/src/updates.rs
+@@ -24,8 +24,16 @@ use crate::version::CODEX_CLI_VERSION;
+ 
+ pub(crate) use crate::updates_cache::dismiss_version;
+ 
++/// OpenMods: a modded build moves to a new Codex release when OpenMods
++/// rebuilds it, so Codex's own update notice, which points to the stock
++/// install, is off.
++const OPENMODS_BUILD: bool = true;
++
+ pub fn get_upgrade_version(config: &Config) -> Option<String> {
+-    if !config.check_for_update_on_startup || is_source_build_version(CODEX_CLI_VERSION) {
++    if OPENMODS_BUILD
++        || !config.check_for_update_on_startup
++        || is_source_build_version(CODEX_CLI_VERSION)
++    {
+         return None;
+     }
+ 
+@@ -150,7 +158,10 @@ async fn fetch_latest_github_release_version(
+ /// Returns the latest version to show in a popup, if it should be shown.
+ /// This respects the user's dismissal choice for the current latest version.
+ pub fn get_upgrade_version_for_popup(config: &Config) -> Option<String> {
+-    if !config.check_for_update_on_startup || is_source_build_version(CODEX_CLI_VERSION) {
++    if OPENMODS_BUILD
++        || !config.check_for_update_on_startup
++        || is_source_build_version(CODEX_CLI_VERSION)
++    {
+         return None;
+     }
+ 
