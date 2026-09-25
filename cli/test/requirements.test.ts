@@ -14,9 +14,9 @@ const RUST = `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s 
 
 describe("the install line", () => {
   test("on Ubuntu without Rust or build tools, puts every package in one apt install, then rustup", () => {
-    const missing = on("linux", "Rust", "a C compiler", "pkg-config", "libcap's development files")
+    const missing = on("linux", "Rust", "a C compiler", "pkg-config", "libcap's development files", "OpenSSL's development files")
     expect(missingMessage("Codex CLI", missing, "apt", false)).toBe(
-      `building Codex CLI needs Rust, a C compiler, pkg-config and libcap's development files. Install them with:\n\n  sudo apt update && sudo apt install -y build-essential pkg-config libcap-dev && ${RUST}\n`,
+      `building Codex CLI needs Rust, a C compiler, pkg-config, libcap's development files and OpenSSL's development files. Install them with:\n\n  sudo apt update && sudo apt install -y build-essential pkg-config libcap-dev libssl-dev && ${RUST}\n`,
     )
   })
   test("leaves out sudo for root, and uses dnf's package names on Fedora", () => {

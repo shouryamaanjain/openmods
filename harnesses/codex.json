@@ -90,6 +90,16 @@
         "dnf": "libcap-devel"
       },
       "hint": "libcap's development files, for Codex's sandbox: sudo apt install libcap-dev (Debian, Ubuntu) or sudo dnf install libcap-devel (Fedora)"
+    },
+    {
+      "check": "pkg-config --exists openssl",
+      "os": "linux",
+      "name": "OpenSSL's development files",
+      "packages": {
+        "apt": "libssl-dev",
+        "dnf": "openssl-devel"
+      },
+      "hint": "OpenSSL's development files: sudo apt install libssl-dev (Debian, Ubuntu) or sudo dnf install openssl-devel (Fedora)"
     }
   ],
   "install": "true",

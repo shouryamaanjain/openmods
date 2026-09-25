@@ -8,7 +8,7 @@
 
 import { $ } from "bun"
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
-import { homedir, tmpdir } from "node:os"
+import { cpus, homedir, tmpdir, totalmem } from "node:os"
 import path from "node:path"
 import { footprint, incompatibility as whyNot, type Footprint } from "./overlap"
 import { lastRebuild, Progress, roughly } from "./progress"
@@ -722,6 +722,28 @@ let buildEnv: Record<string, string> = {}
 
 class CommandFailed extends Error {}
 
+// Cargo runs a compile job per core whatever the memory, and a big crate can
+// then run a machine out of it (Codex's core alone peaks near 4 GB). Unless
+// you set CARGO_BUILD_JOBS, a Rust build runs one job per 2.5 GB of memory,
+// and never more than there are cores.
+function cargoJobs() {
+  if (process.env.CARGO_BUILD_JOBS) return process.env.CARGO_BUILD_JOBS
+  const byMemory = Math.floor(Math.min(totalmem(), containerMemory()) / (2.5 * 1024 ** 3))
+  return String(Math.max(1, Math.min(cpus().length, byMemory)))
+}
+
+// In a Linux container, the memory it may use, which can be far below the
+// machine's (cgroup v2, then v1); otherwise no limit.
+function containerMemory() {
+  for (const file of ["/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"]) {
+    try {
+      const limit = Number(readFileSync(file, "utf8").trim())
+      if (Number.isFinite(limit) && limit > 0) return limit
+    } catch {}
+  }
+  return Number.POSITIVE_INFINITY
+}
+
 async function shell(cmd: string, cwd: string) {
   // With --json, stdout carries only the JSON result: a harness's install,
   // build and typecheck output goes to stderr instead.
@@ -731,11 +753,12 @@ async function shell(cmd: string, cwd: string) {
     BUN_INSTALL_CACHE_DIR: process.env.BUN_INSTALL_CACHE_DIR ?? path.join(HOME, "cache", "bun"),
     BUN_RUNTIME_TRANSPILER_CACHE_PATH: process.env.BUN_RUNTIME_TRANSPILER_CACHE_PATH ?? path.join(HOME, "cache", "transpiler"),
   }
-  const env = { ...process.env, ...cache, ...buildEnv }
+  const env = { ...process.env, ...cache, CARGO_BUILD_JOBS: cargoJobs(), ...buildEnv }
   let code: number
   if (progress?.live && progress.running) {
     // On screen is the step's line; the output goes to its log, and Cargo is
     // asked to report its progress there too.
+    progress.command()
     const proc = Bun.spawn(["sh", "-c", cmd], {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
