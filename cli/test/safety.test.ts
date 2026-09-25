@@ -80,6 +80,19 @@ describe("the files a mod may contain", () => {
     expect(r.exitCode).toBe(1)
     expect(r.stderr.toString()).toContain("fake/setup.sh is not a file a mod may contain")
   })
+  test("a mod.json field the schema does not know fails it, so a typo is caught", async () => {
+    const file = path.join(sb.reg, "mods", "t", "friendly", "mod.json")
+    const before = readFileSync(file, "utf8")
+    writeFileSync(file, JSON.stringify({ ...JSON.parse(before), descripton: "typo" }))
+    let r
+    try {
+      r = await $`bun ${VALIDATE} --registry ${sb.reg}`.nothrow().quiet()
+    } finally {
+      writeFileSync(file, before)
+    }
+    expect(r.exitCode).toBe(1)
+    expect(r.stderr.toString()).toContain('"descripton" is not a mod.json field')
+  })
 })
 
 describe("revocation", () => {

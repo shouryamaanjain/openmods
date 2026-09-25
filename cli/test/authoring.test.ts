@@ -25,6 +25,14 @@ describe("pack", () => {
     expect(meta.version).toBeUndefined()
     expect(existsSync(path.join(dir, "..", "README.md"))).toBe(true)
   })
+  test("keeps what mod.json already had, fields pack does not know included", async () => {
+    const dir = await createMod(sb, "kept", setGreeting("hello from kept"))
+    const metaFile = path.join(dir, "..", "mod.json")
+    writeFileSync(metaFile, JSON.stringify({ ...JSON.parse(readFileSync(metaFile, "utf8")), internal: true, tags: ["tui"] }))
+    await createMod(sb, "kept", setGreeting("hello from kept, again"))
+    const meta = JSON.parse(readFileSync(metaFile, "utf8"))
+    expect([meta.internal, meta.tags]).toEqual([true, ["tui"]])
+  })
   test("refuses a bad name", async () => {
     expect((await cli(sb, "pack", sb.harness, "--name", "Bad_Name", "--owner", "t", "--harness", "fake")).code).toBe(1)
   })

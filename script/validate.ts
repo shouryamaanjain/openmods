@@ -10,6 +10,9 @@ import path from "node:path"
 const at = process.argv.indexOf("--registry")
 const root = path.resolve(at === -1 ? path.join(import.meta.dir, "..") : process.argv[at + 1]!)
 const errors: string[] = []
+// The fields a mod.json may have, from this checkout's schema: a misspelled
+// or obsolete one would otherwise pass unseen.
+const MOD_FIELDS = new Set(Object.keys(JSON.parse(readFileSync(path.join(import.meta.dir, "..", "schema", "mod.schema.json"), "utf8")).properties))
 const harnesses = new Set(
   readdirSync(path.join(root, "harnesses"))
     .filter((f) => f.endsWith(".json"))
@@ -77,6 +80,7 @@ for (const owner of dirs(modsRoot)) {
     if (m.owner !== owner) errors.push(`${rel}: owner "${m.owner}" does not match folder`)
     if (m.name !== name) errors.push(`${rel}: name "${m.name}" does not match folder`)
     if ("version" in m) errors.push(`${rel}: drop "version"; a mod is versioned by the harness release it supports`)
+    for (const k of Object.keys(m)) if (k !== "version" && !MOD_FIELDS.has(k)) errors.push(`${rel}: "${k}" is not a mod.json field`)
     if (typeof m.description !== "string" || m.description.length === 0 || m.description.length > 200 || m.description.startsWith("TODO"))
       errors.push(`${rel}: description must be 1-200 characters and not a TODO`)
     if (!m.license) errors.push(`${rel}: missing license`)

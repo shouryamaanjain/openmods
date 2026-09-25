@@ -1718,11 +1718,13 @@ async function cmdPack(opts: { quiet?: boolean } = {}): Promise<{ owner: string;
   )
 
   // mod.json is shared by every harness the mod supports: create it once,
-  // keep what the author filled in.
+  // keep what the author filled in, fields pack does not know included
+  // (the base patch's "internal").
   const author = (await $`git -C ${checkout} log -1 --format=%an HEAD`.text()).trim()
   const metaFile = path.join(root, "mod.json")
   const existing = existsSync(metaFile) ? readJsonFile(metaFile) : {}
   const meta = {
+    ...existing,
     $schema: path.relative(root, path.join(reg, "schema", "mod.schema.json")).replaceAll("\\", "/"),
     owner,
     name,
