@@ -144,8 +144,10 @@ export class Progress {
 
   /** A new command in the step (a retry, say): its errors count again after an earlier traceback. */
   command() {
+    if (this.partial) this.scan(this.partial)
     this.wrapped = false
     this.partial = ""
+    this.following = 0
   }
 
   /** A command's output while a step runs: into the log, and scanned for progress. */
