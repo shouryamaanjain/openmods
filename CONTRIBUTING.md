@@ -122,7 +122,7 @@ To ship an update, change your commits and pack again, with `--force` if that re
 
 ## Proposing a harness
 
-OpenMods supports open-source harnesses: an agent whose source is public on GitHub and can be built from a release. To propose one, open a pull request that adds a single file, `harnesses/<id>.json`, following `schema/harness.schema.json`, and if you like a row in the README's list of harnesses. It is labelled `harness`.
+OpenMods supports open-source harnesses: any harness whose source is public on GitHub and can be built from a release. To propose one, open a pull request that adds a single file, `harnesses/<id>.json`, following `schema/harness.schema.json`. It is labelled `harness`.
 
 The definition needs:
 

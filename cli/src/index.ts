@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// openmods: install source-level mods into open-source agent harnesses.
+// openmods: install source-level mods into open-source harnesses.
 //
 // A mod is an ordered series of git patches against a pinned upstream commit.
 // Installing one clones the harness, checks out that commit, applies the

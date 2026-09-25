@@ -1,6 +1,6 @@
 # OpenMods
 
-Mods for open-source coding agents. A mod changes the agent's own source code: a new command, a different layout, a game to play while it works. OpenMods builds the agent with the mods you pick and puts that build on your PATH, while your stock install stays as it is.
+Mods for open-source harnesses. A mod changes a harness's own source code: a new command, a different layout, a game to play while it works. OpenMods builds the harness with the mods you pick and puts that build on your PATH, while your stock install stays as it is.
 
 Supported: [OpenCode](https://github.com/anomalyco/opencode) and [Codex CLI](https://github.com/openai/codex), on macOS and Linux.
 
@@ -10,7 +10,7 @@ Supported: [OpenCode](https://github.com/anomalyco/opencode) and [Codex CLI](htt
 curl -fsSL https://openmods.dev/install.sh | sh
 ```
 
-This needs `git`, `curl` and `tar`. Everything goes in `~/.openmods`, including the Bun the CLI runs on. Outside that folder, it adds one line to your shell's startup file that puts `~/.openmods/bin` first on PATH; for bash on Linux, it also adds the line to the file a login shell reads. In `~/.openmods/bin` it puts a small launcher for each agent you have, which runs your stock one until you install a mod.
+This needs `git`, `curl` and `tar`. Everything goes in `~/.openmods`, including the Bun the CLI runs on. Outside that folder, it adds one line to your shell's startup file that puts `~/.openmods/bin` first on PATH; for bash on Linux, it also adds the line to the file a login shell reads. In `~/.openmods/bin` it puts a small launcher for each harness you have, which runs your stock one until you install a mod.
 
 ## Use
 

@@ -17,7 +17,7 @@ export type Command = {
   audience: "users" | "authors"
 }
 
-export const INTRO = "Source-level mods for open-source coding agents. Your stock harness is never modified: the modded build lives under ~/.openmods and its launcher sits first on PATH, so `opencode` runs the modded build while it is on and the stock one otherwise."
+export const INTRO = "Source-level mods for open-source harnesses. Your stock harness is never modified: the modded build lives under ~/.openmods and its launcher sits first on PATH, so `opencode` runs the modded build while it is on and the stock one otherwise."
 
 export const COMMANDS: Command[] = [
   {
