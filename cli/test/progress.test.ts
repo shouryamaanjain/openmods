@@ -78,13 +78,15 @@ describe("a build in a terminal", () => {
   test("a failed step shows the build's error, not the traceback of a wrapper around it", async () => {
     const traceback = Array.from({ length: 30 }, (_, i) => `  File "cargo.py", line ${i}, in build`).join("\\n")
     setBuild(
-      `printf 'Compiling a\\nerror: failed to run custom build command for \\140openssl-sys v0.9.111\\140\\n  Could not find directory of OpenSSL installation\\nCompiling b\\n' >&2; printf 'Traceback (most recent call last):\\n${traceback}\\nsubprocess.CalledProcessError: Command cargo returned 101\\n' >&2; exit 1`,
+      `printf 'Compiling a\\nerror: failed to run custom build command for \\140openssl-sys v0.9.111\\140\\n  Could not find directory of OpenSSL installation\\nCompiling b\\n' >&2; printf 'Traceback (most recent call last):\\n${traceback}\\nsubprocess.CalledProcessError: Command cargo returned 101\\nerror: command failed (1): cargo build\\n' >&2; exit 1`,
     )
     const r = await run(sb, live, "update", "fake", "--force")
     expect(r.code).toBe(1)
     expect(r.out).toContain("error: failed to run custom build command for `openssl-sys v0.9.111`")
     expect(r.out).toContain("Could not find directory of OpenSSL installation")
     expect(r.out).not.toContain("Traceback")
+    // The wrapper's own error after its traceback is not the build's.
+    expect(r.out).not.toContain("error: command failed (1): cargo build")
   })
   test("a compiler killed for memory is said so, and a long command line is cut short", async () => {
     const long = "x".repeat(3000)

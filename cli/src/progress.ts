@@ -17,8 +17,10 @@ const KEEP_LOGS = 5
 const ERROR = /(^|\s)error(\[E\d+\])?:|panicked at /
 // Shown: the first and the last of the error lines, so a later error is not lost.
 const ERROR_LINES = 12
-// Where an error's own lines end: a wrapper's traceback, or cargo waiting on other jobs.
-const AFTER_ERROR = /^Traceback \(most recent call last\)|^warning: build failed/
+// Where an error's own lines end: cargo waiting on other jobs, or a wrapper's
+// traceback, after which nothing is the build's own.
+const AFTER_ERROR = /^warning: build failed/
+const TRACEBACK = /^Traceback \(most recent call last\)/
 // Cargo reports progress even into a pipe when asked to (see `buildEnv`).
 const CARGO_PROGRESS = /Building \[[^\]]*\]\s+(\d+)\/(\d+)/g
 
@@ -62,6 +64,7 @@ export class Progress {
   private errors: string[] = []
   private partial = ""
   private following = 0
+  private wrapped = false
   private step: { name: string; start: number; fraction?: number; expect?: number; output: boolean } | undefined
   private timer: ReturnType<typeof setInterval> | undefined
   private frame = 0
@@ -113,6 +116,7 @@ export class Progress {
     this.errors = []
     this.partial = ""
     this.following = 0
+    this.wrapped = false
     this.note(`== ${name}`)
     if (this.live) {
       this.draw()
@@ -157,6 +161,11 @@ export class Progress {
 
   // An error line starts a dozen lines worth showing; a traceback ends them.
   private scan(line: string) {
+    if (this.wrapped) return
+    if (TRACEBACK.test(line)) {
+      this.wrapped = true
+      return
+    }
     if (ERROR.test(line)) this.following = 12
     else if (AFTER_ERROR.test(line)) this.following = 0
     if (this.following > 0 && line.trim()) {
