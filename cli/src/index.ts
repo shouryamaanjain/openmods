@@ -347,6 +347,14 @@ function revokedIn(reg: string, harness: string, e: State[string]) {
   })
 }
 
+// A revoked mod stops running: the launcher warns on every launch and starts
+// the stock harness instead, until the mod is uninstalled. Returns what to say.
+function stopRevoked(h: Harness, e: State[string], bad: { id: string; reason: string }[]) {
+  const launcher = path.join(BIN, h.binary)
+  if (e.enabled && existsSync(launcher)) writeFileSync(launcher, revokedLauncherOf(h, bad, stockBinary(h)), { mode: 0o755 })
+  return `${bad.map((b) => `${b.id} was removed from OpenMods: ${b.reason}`).join(" ")} \`openmods uninstall ${bad.map((b) => b.id).join(" ")}\` removes it.`
+}
+
 /** The harnesses named on the command line: --opencode, --codex, or --harness <id>. */
 function harnessFlags(reg: string): string[] {
   const ids = allHarnesses(reg).map((h) => h.id)
@@ -1644,6 +1652,13 @@ async function cmdUpdate() {
   const ids = positional[1] ? [positional[1]] : Object.keys(state)
   for (const id of ids) {
     const e = state[id]
+    // A revoked mod stops running here too, for anyone who turned the daily
+    // check off; there is nothing to update it to.
+    const bad = e && !devOf(id) ? revokedIn(reg, id, e) : []
+    if (bad.length) {
+      log(stopRevoked(loadHarness(reg, id), e!, bad))
+      continue
+    }
     const mods = (e?.mods ?? []).map((n) => resolveMod(reg, n, id))
     const active = mods.filter((m) => !e?.off.includes(m.id))
     // The newest release every mod that is on has a version for, with the
@@ -1934,7 +1949,25 @@ async function cmdCheck() {
     if (!result.applies) {
       result.error = (am.stderr.toString() + am.stdout.toString()).trim()
       await clearApplyState(root)
-    } else if (has("build") || has("typecheck")) {
+    }
+    // Then as users build it: the OpenMods base patch first, as in every
+    // install, when it has a version for this release. The patches above are
+    // the mod's alone, so they apply with or without it.
+    const base = spec && mod.id !== BASE_ID ? baseFor(reg, mod.harness) : undefined
+    const baseVersion = base ? at(base, ref) : undefined
+    if (result.applies && baseVersion && files.length) {
+      await $`git -C ${root} checkout -q --force --detach ${result.commit as string}`
+      await fetchBases(root, baseVersion)
+      const identity = { ...process.env, ...GIT_IDENTITY }
+      const b = await $`git -C ${root} am -3 --quiet ${baseVersion.patches.map((p) => path.join(baseVersion.dir, p))}`.env(identity).nothrow().quiet()
+      const both = b.exitCode === 0 ? await $`git -C ${root} am -3 --quiet ${files}`.env(identity).nothrow().quiet() : b
+      if (both.exitCode !== 0) {
+        result.applies = false
+        result.error = `${b.exitCode === 0 ? "it does not apply on top of the OpenMods base patch" : "the OpenMods base patch does not apply"} at ${rel(ref)}:\n${(both.stderr.toString() + both.stdout.toString()).trim()}`
+        await clearApplyState(root)
+      } else result.base = baseVersion.update
+    }
+    if (result.applies && (has("build") || has("typecheck"))) {
       // The stamp must be valid semver build metadata: mod names are, "(stock)" is not.
       buildEnv = { OPENMODS_HARNESS: h.id, OPENMODS_REF: ref, OPENMODS_VERSION: rel(ref), OPENMODS_MODS: mod.patches.length ? mod.name : "stock" }
       if (has("typecheck")) {
@@ -1963,7 +1996,7 @@ async function cmdCheck() {
   if (has("json")) console.log(JSON.stringify(result, null, 2))
   else {
     log(result.stock ? `stock ${mod.harness} at ${rel(ref)} (${String(result.commit ?? "?").slice(0, 12)})` : `${result.mod} (made for ${rel(String(result.madeFor))}) against ${rel(ref)} (${String(result.commit ?? "?").slice(0, 12)})`)
-    log(`  applies:    ${result.applies ? "yes" : "NO"}`)
+    log(`  applies:    ${result.applies ? "yes" : "NO"}${result.base ? " (with the OpenMods base patch)" : ""}`)
     if (has("typecheck")) log(`  typechecks: ${result.typechecks ? "yes" : "NO"}`)
     if (has("build")) log(`  builds:     ${result.builds ? "yes" : "NO"}`)
     if (result.error) log(`  ${String(result.error).split("\n").join("\n  ")}`)
@@ -1995,13 +2028,9 @@ async function cmdCheckUpdates() {
       log(`${id}: runs your clone (openmods dev); no updates while it does.`)
       continue
     }
-    // A revoked mod stops running: the launcher warns on every launch and
-    // starts the stock harness instead, until the mod is uninstalled.
     const bad = revokedIn(reg, id, e)
     if (bad.length) {
-      if (e.enabled && existsSync(launcher)) writeFileSync(launcher, revokedLauncherOf(h, bad, stockBinary(h)), { mode: 0o755 })
-      const message = `${bad.map((b) => `${b.id} was removed from OpenMods: ${b.reason}`).join(" ")} \`openmods uninstall ${bad.map((b) => b.id).join(" ")}\` removes it.`
-      log(`${id}: ${message}`)
+      log(`${id}: ${stopRevoked(h, e, bad)}`)
       if (has("json")) console.log(JSON.stringify({ current: rel(e.ref), revoked: bad }))
       continue
     }

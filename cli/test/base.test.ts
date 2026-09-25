@@ -49,6 +49,19 @@ describe("the base patch", () => {
     expect(r.err).toContain("t/first-line does not work with the OpenMods base patch on Fake")
     expect(r.err).toContain("cannot be installed until its author moves those lines")
   })
+  test("a mod is checked with it, as users build it, and its patches stay its own", async () => {
+    const r = await cli(sb, "check", path.join(sb.reg, "mods", "t", "friendly", "fake"), "--json")
+    expect(r.code, r.all).toBe(0)
+    const out = JSON.parse(r.out)
+    expect(out).toMatchObject({ applies: true, base: 1 })
+    expect(out.patches).toHaveLength(1)
+    expect(out.patches[0].text).not.toContain("by openmods")
+  })
+  test("a mod that changes its lines fails the check", async () => {
+    const r = await cli(sb, "check", path.join(sb.reg, "mods", "t", "first-line", "fake"))
+    expect(r.code).toBe(1)
+    expect(r.out).toContain("it does not apply on top of the OpenMods base patch at 1.0.0")
+  })
   test("is not listed on the site", async () => {
     const out = path.join(sb.T, "site")
     expect((await script(sb, SITE, "--registry", sb.reg, "--out", out, "--offline")).code).toBe(0)
