@@ -1,6 +1,6 @@
 {
-  "tested": "rust-v0.157.0",
-  "supports": "rust-v0.157.0",
+  "tested": "rust-v0.157.1",
+  "supports": "rust-v0.157.1",
   "ok": true,
-  "checked": "2026-09-25T03:34:53.282Z"
+  "checked": "2026-09-26T01:35:53.146Z"
 }

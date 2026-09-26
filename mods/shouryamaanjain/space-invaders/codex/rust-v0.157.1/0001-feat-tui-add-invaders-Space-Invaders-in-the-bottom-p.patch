@@ -1,0 +1,1125 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Shouryamaan Jain <jainshouryamaan@gmail.com>
+Date: Thu, 24 Sep 2026 13:47:09 +0530
+Subject: [PATCH] feat(tui): add /invaders, Space Invaders in the bottom pane
+ while Codex works
+
+/invaders (or /space-invaders) opens the game in the bottom pane in place
+of the composer, while the conversation keeps going above it and the
+status line stays in view. The arrow keys, space and p belong to the
+game; Esc or Ctrl-C closes it, and /invaders reopens it where it left
+off, paused. Up to three shots in the air, an extra life every 1500
+points, a mystery ship, and a field that fits the pane.
+
+diff --git a/codex-rs/tui/src/bottom_pane/bottom_pane_view.rs b/codex-rs/tui/src/bottom_pane/bottom_pane_view.rs
+index 84e373830e961387f2a2b12d2954baadb4953470..9b44dc9dfdb965e6b9223fb829fcfa3d001eef65 100644
+--- a/codex-rs/tui/src/bottom_pane/bottom_pane_view.rs
++++ b/codex-rs/tui/src/bottom_pane/bottom_pane_view.rs
+@@ -71,6 +71,12 @@ pub(crate) trait BottomPaneView: Renderable {
+         None
+     }
+ 
++    /// Return true when the status line should stay visible above this view,
++    /// for a view that sits beside the agent's work rather than asking for input.
++    fn keeps_status_visible(&self) -> bool {
++        false
++    }
++
+     /// Handle Ctrl-C while this view is active.
+     fn on_ctrl_c(&mut self) -> CancellationEvent {
+         CancellationEvent::NotHandled
+diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
+index 158c39f1c7df6eec7d0a0af28f15305a929ecbcf..a0f7939684f6cf63af404e50780fdc2b31331941 100644
+--- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
++++ b/codex-rs/tui/src/bottom_pane/chat_composer.rs
+@@ -518,6 +518,7 @@ fn parent_owned_command_is_allowed(command: SlashCommand, args: &str) -> bool {
+                 | SlashCommand::Statusline
+                 | SlashCommand::Theme
+                 | SlashCommand::Pets
++                | SlashCommand::Invaders
+                 | SlashCommand::Ps
+                 | SlashCommand::Stop
+                 | SlashCommand::MemoryDrop
+diff --git a/codex-rs/tui/src/bottom_pane/invaders_game.rs b/codex-rs/tui/src/bottom_pane/invaders_game.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..578fe4fff90ecbc0a52bdc997364c9862367cafe
+--- /dev/null
++++ b/codex-rs/tui/src/bottom_pane/invaders_game.rs
+@@ -0,0 +1,460 @@
++//! Space Invaders, the game itself: a field of `w` by `h` cells that steps
++//! once per tick. `InvadersView` draws it in the bottom pane and feeds it keys.
++//!
++//! A formation of aliens marches sideways and drops a row at each edge,
++//! faster as it thins out, while the lowest alien of a column drops bombs.
++//! Up to three shots can be in the air; a mystery ship crosses the top now and
++//! then; every 1500 points is an extra life. Clearing a wave starts the next,
++//! a little lower and faster.
++
++use std::time::SystemTime;
++use std::time::UNIX_EPOCH;
++
++pub(crate) const SPRITES: [[&str; 2]; 3] = [["/o\\", "\\o/"], ["{@}", "}@{"], ["<=>", ">=<"]];
++pub(crate) const SHIP: &str = "▟█▙";
++pub(crate) const SHIP_HIT: &str = "*▒*";
++pub(crate) const UFO: &str = "<o=o>";
++const POINTS: [u32; 3] = [30, 20, 10];
++const UFO_POINTS: [u32; 4] = [50, 100, 150, 300];
++const ALIEN_W: i32 = 3;
++const ALIEN_STEP: i32 = 5; // an alien and the gap after it
++const ROWS: i32 = 5;
++const MAX_SHOTS: usize = 3; // in the air at once
++const SHOT_SPEED: i32 = 2; // rows per tick
++const COOLDOWN: u32 = 3; // ticks between shots
++const EXTRA_LIFE: u32 = 1500;
++const MAX_LIVES: u32 = 5;
++/// Rows from a new wave's lowest row down to the ship's, however low waves start.
++const START_ROOM: i32 = 4;
++pub(crate) const MIN_W: i32 = 24;
++pub(crate) const MIN_H: i32 = 10;
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub(crate) struct Point {
++    pub(crate) x: i32,
++    pub(crate) y: i32,
++}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub(crate) struct Alien {
++    pub(crate) x: i32,
++    pub(crate) y: i32,
++    pub(crate) kind: usize,
++    pub(crate) alive: bool,
++}
++
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub(crate) struct Boom {
++    pub(crate) x: i32,
++    pub(crate) y: i32,
++    pub(crate) text: String,
++    ttl: u32,
++}
++
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub(crate) struct Banner {
++    pub(crate) text: String,
++    ttl: u32,
++}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub(crate) struct Ufo {
++    pub(crate) x: i32,
++    dir: i32,
++}
++
++/// xorshift, seeded from the clock: enough randomness for a game.
++#[derive(Clone, Debug)]
++pub(crate) struct Rng(u64);
++
++impl Rng {
++    pub(crate) fn from_clock() -> Self {
++        let seed = SystemTime::now()
++            .duration_since(UNIX_EPOCH)
++            .map_or(0x9E37_79B9_7F4A_7C15, |d| d.as_nanos() as u64);
++        Self::new(seed)
++    }
++
++    pub(crate) fn new(seed: u64) -> Self {
++        Self(seed | 1)
++    }
++
++    fn next(&mut self) -> u64 {
++        self.0 ^= self.0 << 13;
++        self.0 ^= self.0 >> 7;
++        self.0 ^= self.0 << 17;
++        self.0
++    }
++
++    /// True with probability `p`.
++    fn chance(&mut self, p: f64) -> bool {
++        (self.next() % 1_000_000) as f64 / 1_000_000.0 < p
++    }
++
++    fn below(&mut self, n: usize) -> usize {
++        (self.next() % n as u64) as usize
++    }
++}
++
++#[derive(Clone, Debug)]
++pub(crate) struct Game {
++    pub(crate) w: i32,
++    pub(crate) h: i32,
++    pub(crate) ship: i32,
++    pub(crate) shots: Vec<Point>,
++    pub(crate) bombs: Vec<Point>,
++    pub(crate) aliens: Vec<Alien>,
++    pub(crate) ufo: Option<Ufo>,
++    pub(crate) booms: Vec<Boom>,
++    pub(crate) banner: Option<Banner>,
++    pub(crate) frame: usize,
++    pub(crate) score: u32,
++    pub(crate) best: u32,
++    pub(crate) lives: u32,
++    pub(crate) wave: u32,
++    /// Ticks left of the ship's explosion; nothing moves meanwhile.
++    pub(crate) hit: u32,
++    pub(crate) over: bool,
++    pub(crate) paused: bool,
++    total: usize,
++    dir: i32,
++    wait: i32,
++    cool: u32,
++    next_life: u32,
++    ticks: u64,
++    rng: Rng,
++}
++
++impl Game {
++    pub(crate) fn new(w: i32, h: i32, rng: Rng) -> Self {
++        let mut game = Self {
++            w: 0,
++            h: 0,
++            ship: 0,
++            shots: Vec::new(),
++            bombs: Vec::new(),
++            aliens: Vec::new(),
++            ufo: None,
++            booms: Vec::new(),
++            banner: None,
++            frame: 0,
++            score: 0,
++            best: 0,
++            lives: 3,
++            wave: 1,
++            hit: 0,
++            over: false,
++            paused: false,
++            total: 0,
++            dir: 1,
++            wait: 0,
++            cool: 0,
++            next_life: EXTRA_LIFE,
++            ticks: 0,
++            rng,
++        };
++        game.start_wave(w, h, 1);
++        game
++    }
++
++    /// Sets up a wave at the given size, keeping the score, lives and best.
++    fn start_wave(&mut self, w: i32, h: i32, wave: u32) {
++        let (w, h) = (w.max(MIN_W), h.max(MIN_H));
++        let cols = ((w - 4) / ALIEN_STEP).clamp(4, 11);
++        let row_gap = if h >= 24 { 2 } else { 1 };
++        let left = (w - (cols * ALIEN_STEP - 2)) / 2;
++        // Later waves start lower, but always with room above the ship.
++        let lowest_top = h - 1 - START_ROOM - (ROWS - 1) * row_gap;
++        let top = (2 + (wave as i32 - 1).min(4)).min(lowest_top).max(1);
++        self.aliens = (0..ROWS)
++            .flat_map(|r| {
++                (0..cols).map(move |c| Alien {
++                    x: left + c * ALIEN_STEP,
++                    y: top + r * row_gap,
++                    kind: match r {
++                        0 => 0,
++                        1 | 2 => 1,
++                        _ => 2,
++                    },
++                    alive: true,
++                })
++            })
++            .collect();
++        self.total = self.aliens.len();
++        self.w = w;
++        self.h = h;
++        self.ship = w / 2 - 1;
++        self.shots.clear();
++        self.bombs.clear();
++        self.ufo = None;
++        self.booms.clear();
++        self.banner = (wave > 1).then(|| Banner {
++            text: format!("WAVE {wave}"),
++            ttl: 30,
++        });
++        self.frame = 0;
++        self.wave = wave;
++        self.hit = 0;
++        self.dir = 1;
++        self.wait = 0;
++        self.cool = 0;
++        self.ticks = 0;
++    }
++
++    /// Fits the field to a new size. A game in progress restarts its current
++    /// wave at that size, keeping the score, lives and a game over; a game
++    /// with nothing to lose starts fresh.
++    pub(crate) fn resize(&mut self, w: i32, h: i32) {
++        let (w, h) = (w.max(MIN_W), h.max(MIN_H));
++        if (w, h) == (self.w, self.h) {
++            return;
++        }
++        let over = self.over;
++        let played = self.ticks > 0 || self.score > 0 || self.wave > 1 || over;
++        self.start_wave(w, h, if played { self.wave } else { 1 });
++        self.over = over;
++    }
++
++    pub(crate) fn restart(&mut self) {
++        let best = self.best.max(self.score);
++        *self = Self::new(self.w, self.h, self.rng.clone());
++        self.best = best;
++    }
++
++    pub(crate) fn toggle_pause(&mut self) {
++        if !self.over {
++            self.paused = !self.paused;
++        }
++    }
++
++    /// Moves the ship a step left (`-1`) or right (`1`).
++    pub(crate) fn steer(&mut self, dx: i32) {
++        if self.paused || self.over || self.hit > 0 {
++            return;
++        }
++        let step = (self.w / 30).max(2);
++        self.ship = (self.ship + dx * step).clamp(0, self.w - SHIP.chars().count() as i32);
++    }
++
++    /// Space: fires, or resumes a paused game, or starts a finished one again.
++    pub(crate) fn fire(&mut self) {
++        if self.over {
++            return self.restart();
++        }
++        if self.paused {
++            self.paused = false;
++            return;
++        }
++        if self.hit > 0 || self.cool > 0 || self.shots.len() >= MAX_SHOTS {
++            return;
++        }
++        self.shots.push(Point {
++            x: self.ship + 1,
++            y: self.h - 1,
++        });
++        self.cool = COOLDOWN;
++    }
++
++    pub(crate) fn running(&self) -> bool {
++        !self.paused && !self.over
++    }
++
++    pub(crate) fn tick(&mut self) {
++        if !self.running() {
++            return;
++        }
++        self.ticks += 1;
++        self.cool = self.cool.saturating_sub(1);
++        self.booms.retain_mut(|b| {
++            b.ttl -= 1;
++            b.ttl > 0
++        });
++        if let Some(banner) = &mut self.banner {
++            banner.ttl -= 1;
++            if banner.ttl == 0 {
++                self.banner = None;
++            }
++        }
++        if self.hit > 0 {
++            self.hit -= 1;
++            return;
++        }
++
++        // Shots climb fast, checked a row at a time so nothing is skipped.
++        let mut shots = std::mem::take(&mut self.shots);
++        shots.retain_mut(|s| (0..SHOT_SPEED).all(|_| !self.advance(s)));
++        self.shots = shots;
++
++        if self.aliens.iter().all(|a| !a.alive) {
++            self.best = self.best.max(self.score);
++            self.start_wave(self.w, self.h, self.wave + 1);
++            return;
++        }
++        self.march();
++        self.drop_bombs();
++        self.fly_ufo();
++        if self.over {
++            self.best = self.best.max(self.score);
++        }
++    }
++
++    /// Moves one shot a row; true when it hit something and is spent.
++    fn advance(&mut self, s: &mut Point) -> bool {
++        s.y -= 1;
++        if s.y < 0 {
++            return true;
++        }
++        if let Some(alien) = self
++            .aliens
++            .iter_mut()
++            .find(|a| a.alive && a.y == s.y && s.x >= a.x && s.x < a.x + ALIEN_W)
++        {
++            alien.alive = false;
++            let (x, y, points) = (alien.x, alien.y, POINTS[alien.kind]);
++            self.award(points);
++            self.boom(x, y, "*#*".to_string());
++            return true;
++        }
++        if let Some(ufo) = self.ufo
++            && s.y == 0
++            && s.x >= ufo.x
++            && s.x < ufo.x + UFO.len() as i32
++        {
++            let bonus = UFO_POINTS[self.rng.below(UFO_POINTS.len())];
++            self.award(bonus);
++            self.boom(ufo.x, 0, bonus.to_string());
++            self.ufo = None;
++            return true;
++        }
++        if let Some(i) = self
++            .bombs
++            .iter()
++            .position(|b| b.x == s.x && (b.y == s.y || b.y == s.y + 1))
++        {
++            self.bombs.remove(i);
++            return true;
++        }
++        false
++    }
++
++    /// The formation steps sideways, faster as it thins out, and drops a row
++    /// at each edge.
++    fn march(&mut self) {
++        self.wait -= 1;
++        if self.wait > 0 {
++            return;
++        }
++        let alive = self.aliens.iter().filter(|a| a.alive).count() as f64;
++        let pace = (2.0 + 14.0 * alive / self.total as f64).round() as i32;
++        self.wait = (pace - (self.wave as i32 - 1).min(3)).max(1);
++        self.frame = 1 - self.frame;
++        let (min_x, max_x) = self
++            .aliens
++            .iter()
++            .filter(|a| a.alive)
++            .fold((i32::MAX, i32::MIN), |(lo, hi), a| {
++                (lo.min(a.x), hi.max(a.x + ALIEN_W))
++            });
++        let at_edge = (self.dir == 1 && max_x + 1 > self.w) || (self.dir == -1 && min_x - 1 < 0);
++        for a in self.aliens.iter_mut().filter(|a| a.alive) {
++            if at_edge {
++                a.y += 1;
++            } else {
++                a.x += self.dir;
++            }
++        }
++        if at_edge {
++            self.dir = -self.dir;
++        }
++        if self.aliens.iter().any(|a| a.alive && a.y >= self.h - 1) {
++            self.over = true;
++        }
++    }
++
++    /// The lowest alien of a random column drops a bomb now and then; bombs
++    /// fall a row every other tick.
++    fn drop_bombs(&mut self) {
++        let limit = (1 + self.wave as usize).min(5);
++        let odds = (0.02 + 0.008 * f64::from(self.wave)).min(0.08);
++        if self.bombs.len() < limit && self.rng.chance(odds) {
++            let mut lowest: Vec<Alien> = Vec::new();
++            for a in self.aliens.iter().filter(|a| a.alive) {
++                match lowest.iter_mut().find(|l| l.x == a.x) {
++                    Some(l) if l.y < a.y => *l = *a,
++                    Some(_) => {}
++                    None => lowest.push(*a),
++                }
++            }
++            if !lowest.is_empty() {
++                let a = lowest[self.rng.below(lowest.len())];
++                self.bombs.push(Point {
++                    x: a.x + 1,
++                    y: a.y + 1,
++                });
++            }
++        }
++        if !self.ticks.is_multiple_of(2) {
++            return;
++        }
++        let ship_w = SHIP.chars().count() as i32;
++        let mut hit = false;
++        self.bombs.retain_mut(|b| {
++            b.y += 1;
++            if b.y == self.h - 1 && b.x >= self.ship && b.x < self.ship + ship_w {
++                hit = true;
++                return false;
++            }
++            b.y < self.h
++        });
++        if hit {
++            self.lives -= 1;
++            self.hit = 30;
++            self.bombs.clear();
++            self.shots.clear();
++            self.boom(self.ship, self.h - 1, SHIP_HIT.to_string());
++            if self.lives == 0 {
++                self.over = true;
++            }
++        }
++    }
++
++    /// Now and then a mystery ship crosses the top.
++    fn fly_ufo(&mut self) {
++        let top = self.aliens.iter().filter(|a| a.alive).map(|a| a.y).min();
++        if self.ufo.is_none() && top.is_some_and(|y| y > 1) && self.rng.chance(0.003) {
++            let dir = if self.rng.chance(0.5) { 1 } else { -1 };
++            let x = if dir == 1 {
++                -(UFO.len() as i32)
++            } else {
++                self.w
++            };
++            self.ufo = Some(Ufo { x, dir });
++        }
++        if self.ticks.is_multiple_of(2)
++            && let Some(ufo) = &mut self.ufo
++        {
++            ufo.x += ufo.dir;
++            if ufo.x < -(UFO.len() as i32) || ufo.x > self.w {
++                self.ufo = None;
++            }
++        }
++    }
++
++    fn award(&mut self, points: u32) {
++        self.score += points;
++        if self.score >= self.next_life {
++            self.next_life += EXTRA_LIFE;
++            if self.lives < MAX_LIVES {
++                self.lives += 1;
++                self.banner = Some(Banner {
++                    text: "EXTRA LIFE".to_string(),
++                    ttl: 25,
++                });
++            }
++        }
++    }
++
++    fn boom(&mut self, x: i32, y: i32, text: String) {
++        self.booms.push(Boom { x, y, text, ttl: 6 });
++    }
++}
+diff --git a/codex-rs/tui/src/bottom_pane/invaders_tests.rs b/codex-rs/tui/src/bottom_pane/invaders_tests.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..ba78ff26e9fc12c205fe9240a2765edb52259da0
+--- /dev/null
++++ b/codex-rs/tui/src/bottom_pane/invaders_tests.rs
+@@ -0,0 +1,183 @@
++use super::*;
++use crate::app_event::AppEvent;
++use crate::app_event_sender::AppEventSender;
++use crate::bottom_pane::invaders_game::Point;
++use pretty_assertions::assert_eq;
++
++fn game(w: i32, h: i32) -> Game {
++    Game::new(w, h, Rng::new(/*seed*/ 7))
++}
++
++fn alive(game: &Game) -> usize {
++    game.aliens.iter().filter(|a| a.alive).count()
++}
++
++fn render(view: &InvadersView, width: u16) -> String {
++    let area = Rect::new(0, 0, width, view.desired_height(width));
++    let mut buf = Buffer::empty(area);
++    view.render(area, &mut buf);
++    (0..area.height)
++        .map(|y| {
++            (0..area.width)
++                .map(|x| buf[(x, y)].symbol())
++                .collect::<String>()
++                .trim_end()
++                .to_string()
++        })
++        .collect::<Vec<_>>()
++        .join("\n")
++}
++
++fn key(code: KeyCode) -> KeyEvent {
++    KeyEvent::from(code)
++}
++
++#[test]
++fn opens_with_the_formation_the_ship_and_the_keys() {
++    let view = InvadersView::with_game(game(MIN_W, MIN_H));
++    insta::assert_snapshot!(render(&view, 80));
++}
++
++#[test]
++fn a_narrow_pane_keeps_the_header_and_help_short() {
++    let view = InvadersView::with_game(game(MIN_W, MIN_H));
++    insta::assert_snapshot!(render(&view, 44));
++}
++
++#[test]
++fn a_shot_climbs_and_destroys_the_alien_above_the_ship() {
++    let mut g = game(40, 14);
++    let before = alive(&g);
++    g.fire();
++    for _ in 0..10 {
++        g.tick();
++    }
++    assert_eq!((g.score, alive(&g)), (10, before - 1));
++}
++
++#[test]
++fn at_most_three_shots_fly_and_each_waits_for_the_cooldown() {
++    let mut g = game(40, 14);
++    g.fire();
++    g.fire();
++    assert_eq!(g.shots.len(), 1);
++    for _ in 0..3 {
++        g.tick();
++        g.fire();
++    }
++    assert_eq!(g.shots.len(), 2);
++    for _ in 0..3 {
++        g.tick();
++    }
++    g.fire();
++    g.fire();
++    assert!(g.shots.len() <= 3);
++}
++
++#[test]
++fn a_bomb_on_the_ship_costs_a_life_and_the_last_one_ends_the_game() {
++    let mut g = game(40, 14);
++    let hit_ship = |g: &mut Game| {
++        g.bombs = vec![Point {
++            x: g.ship + 1,
++            y: g.h - 2,
++        }];
++        g.hit = 0;
++        g.tick();
++        g.tick();
++    };
++    hit_ship(&mut g);
++    assert_eq!((g.lives, g.hit > 0, g.over), (2, true, false));
++    g.lives = 1;
++    g.score = 420;
++    hit_ship(&mut g);
++    assert_eq!((g.lives, g.over, g.best), (0, true, 420));
++}
++
++#[test]
++fn clearing_a_wave_starts_the_next_and_keeps_the_score() {
++    let mut g = game(40, 14);
++    g.score = 990;
++    for a in &mut g.aliens {
++        a.alive = false;
++    }
++    g.tick();
++    let banner = g.banner.as_ref().map(|b| b.text.as_str());
++    assert_eq!(
++        (g.wave, g.score, banner, alive(&g)),
++        (2, 990, Some("WAVE 2"), 35)
++    );
++}
++
++#[test]
++fn later_waves_start_with_room_to_play_on_the_smallest_field() {
++    let mut g = game(MIN_W, MIN_H);
++    for _ in 0..5 {
++        for a in &mut g.aliens {
++            a.alive = false;
++        }
++        g.tick();
++    }
++    let lowest = g.aliens.iter().map(|a| a.y).max();
++    for _ in 0..40 {
++        g.tick();
++    }
++    assert_eq!((g.wave, lowest, g.over), (6, Some(MIN_H - 5), false));
++}
++
++#[test]
++fn a_resize_keeps_the_score_lives_wave_and_a_game_over() {
++    let mut g = game(40, 14);
++    g.tick();
++    (g.score, g.lives, g.wave, g.over) = (120, 2, 3, true);
++    g.resize(60, 14);
++    assert_eq!(
++        (g.w, g.score, g.lives, g.wave, g.over),
++        (60, 120, 2, 3, true)
++    );
++}
++
++#[test]
++fn p_pauses_space_resumes_and_the_arrows_move_the_ship() {
++    let mut view = InvadersView::with_game(game(60, 14));
++    let start = view.game.borrow().ship;
++    view.handle_key_event(key(KeyCode::Right));
++    assert_eq!(view.game.borrow().ship, start + 2);
++    view.handle_key_event(key(KeyCode::Char('p')));
++    assert!(view.game.borrow().paused);
++    view.handle_key_event(key(KeyCode::Left));
++    assert_eq!(view.game.borrow().ship, start + 2);
++    view.handle_key_event(key(KeyCode::Char(' ')));
++    assert!(view.game.borrow().running());
++}
++
++#[test]
++fn closing_keeps_the_game_and_reopening_resumes_it_paused() {
++    let mut g = game(40, 14);
++    g.score = 50;
++    let mut view = InvadersView::with_game(g);
++    assert!(matches!(view.on_ctrl_c(), CancellationEvent::Handled));
++    assert!(view.is_complete());
++    let reopened = InvadersView::new();
++    let g = reopened.game.borrow();
++    assert_eq!((g.score, g.paused), (50, true));
++}
++
++#[test]
++fn the_status_line_stays_above_the_game_while_codex_works() {
++    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<AppEvent>();
++    let mut pane = crate::bottom_pane::tests::test_pane(AppEventSender::new(tx));
++    pane.set_task_running(/*running*/ true);
++    pane.show_view(Box::new(InvadersView::with_game(game(MIN_W, MIN_H))));
++    let area = Rect::new(0, 0, 80, pane.desired_height(80));
++    let mut buf = Buffer::empty(area);
++    pane.render(area, &mut buf);
++    let row = |y: u16| {
++        (0..area.width)
++            .map(|x| buf[(x, y)].symbol())
++            .collect::<String>()
++    };
++    let working = (0..area.height).position(|y| row(y).contains("Working"));
++    let game = (0..area.height).position(|y| row(y).contains("Space Invaders"));
++    assert!(matches!((working, game), (Some(w), Some(g)) if w < g));
++}
+diff --git a/codex-rs/tui/src/bottom_pane/invaders_view.rs b/codex-rs/tui/src/bottom_pane/invaders_view.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..f7c6b7e8e8a3dcd453ca8cebe074b0ee1ee8d064
+--- /dev/null
++++ b/codex-rs/tui/src/bottom_pane/invaders_view.rs
+@@ -0,0 +1,266 @@
++//! `/invaders`: Space Invaders in the bottom pane, in place of the composer,
++//! while Codex keeps working above it with its status line still in view.
++//! The arrow keys, space and p belong to the game; Esc or Ctrl-C closes it.
++//! The game is kept for as long as Codex runs, so `/invaders` reopens it
++//! where it left off, paused, in this conversation or a new one.
++
++use std::cell::RefCell;
++use std::sync::Mutex;
++use std::time::Duration;
++use std::time::Instant;
++
++use crossterm::event::KeyCode;
++use crossterm::event::KeyEvent;
++use ratatui::buffer::Buffer;
++use ratatui::layout::Rect;
++use ratatui::style::Style;
++use ratatui::style::Stylize;
++use ratatui::text::Line;
++use ratatui::text::Span;
++use ratatui::widgets::Block;
++use ratatui::widgets::BorderType;
++use ratatui::widgets::Paragraph;
++use ratatui::widgets::Widget;
++
++use super::CancellationEvent;
++use super::bottom_pane_view::BottomPaneView;
++use super::invaders_game::Game;
++use super::invaders_game::MIN_H;
++use super::invaders_game::MIN_W;
++use super::invaders_game::Rng;
++use super::invaders_game::SHIP;
++use super::invaders_game::SHIP_HIT;
++use super::invaders_game::SPRITES;
++use super::invaders_game::UFO;
++use crate::render::renderable::Renderable;
++
++const TICK: Duration = Duration::from_millis(50);
++/// Ticks run at most per frame, so a stalled frame does not fast-forward.
++const MAX_CATCH_UP: u32 = 4;
++const MAX_WIDTH: u16 = 80;
++/// Border, header, a field of 14 rows, help line, border.
++const HEIGHT: u16 = 18;
++
++/// The game between `/invaders` openings: kept for as long as Codex runs,
++/// across conversations, like a game left paused on the side.
++static SAVED: Mutex<Option<Game>> = Mutex::new(None);
++
++pub(crate) struct InvadersView {
++    /// Fitted to the area it is drawn in, which `render` learns.
++    game: RefCell<Game>,
++    last_tick: Instant,
++    complete: bool,
++}
++
++impl InvadersView {
++    /// Reopens the session's game, paused, or starts one.
++    pub(crate) fn new() -> Self {
++        let saved = SAVED.lock().ok().and_then(|mut saved| saved.take());
++        Self::with_game(saved.unwrap_or_else(|| Game::new(MIN_W, MIN_H, Rng::from_clock())))
++    }
++
++    pub(crate) fn with_game(game: Game) -> Self {
++        Self {
++            game: RefCell::new(game),
++            last_tick: Instant::now(),
++            complete: false,
++        }
++    }
++
++    fn close(&mut self) {
++        let mut game = self.game.borrow().clone();
++        game.paused = !game.over;
++        if let Ok(mut saved) = SAVED.lock() {
++            *saved = Some(game);
++        }
++        self.complete = true;
++    }
++
++    fn header(game: &Game, width: u16) -> Line<'static> {
++        let narrow = width < 60;
++        let mut stats: Vec<Span<'static>> = vec![
++            (if narrow { "" } else { "score " }).dim(),
++            format!("{:05}", game.score).into(),
++        ];
++        if !narrow {
++            stats.extend([
++                " · best ".dim(),
++                format!("{:05}", game.best.max(game.score)).into(),
++            ]);
++        }
++        stats.extend([
++            (if narrow { " · w" } else { " · wave " }).dim(),
++            game.wave.to_string().into(),
++            " · ".dim(),
++            "♥".repeat(game.lives as usize).red(),
++        ]);
++        let title = if narrow { "Invaders" } else { "Space Invaders" };
++        let used = title.len() + stats.iter().map(Span::width).sum::<usize>();
++        let gap = usize::from(width).saturating_sub(used).max(1);
++        let mut spans = vec![title.bold(), " ".repeat(gap).into()];
++        spans.extend(stats);
++        Line::from(spans)
++    }
++
++    fn help(game: &Game, width: u16) -> Line<'static> {
++        let narrow = width < 60;
++        if game.over {
++            return (if narrow {
++                "game over · space again"
++            } else {
++                "game over · space plays again · esc closes"
++            })
++            .red()
++            .into();
++        }
++        let text = match (game.paused, narrow) {
++            (true, true) => "paused · p resumes · esc",
++            (true, false) => "paused · p or space resumes · esc closes",
++            (false, true) => "←→ · space fire · p · esc",
++            (false, false) => "←→ move · space fire (hold to keep firing) · p pause · esc closes",
++        };
++        text.dim().into()
++    }
++
++    /// Draws the field's contents at `(x, y)`, clipped to `w` by `h`.
++    fn draw_field(game: &Game, x: u16, y: u16, buf: &mut Buffer) {
++        let mut put = |cx: i32, cy: i32, text: &str, style: Style| {
++            if cy < 0 || cy >= game.h {
++                return;
++            }
++            for (i, ch) in text.chars().enumerate() {
++                let col = cx + i as i32;
++                if (0..game.w).contains(&col)
++                    && let Some(cell) = buf.cell_mut((x + col as u16, y + cy as u16))
++                {
++                    cell.set_char(ch).set_style(style);
++                }
++            }
++        };
++        let alien_styles = [
++            Style::new().magenta(),
++            Style::new().cyan(),
++            Style::new().green(),
++        ];
++        for a in game.aliens.iter().filter(|a| a.alive) {
++            put(a.x, a.y, SPRITES[a.kind][game.frame], alien_styles[a.kind]);
++        }
++        if let Some(ufo) = game.ufo {
++            put(ufo.x, 0, UFO, Style::new().red().bold());
++        }
++        for b in &game.bombs {
++            put(b.x, b.y, "¦", Style::new().red());
++        }
++        for s in &game.shots {
++            put(s.x, s.y, "│", Style::new());
++        }
++        if game.hit == 0 {
++            put(game.ship, game.h - 1, SHIP, Style::new().bold());
++        } else if (game.hit / 3).is_multiple_of(2) {
++            put(game.ship, game.h - 1, SHIP_HIT, Style::new().red());
++        }
++        for b in &game.booms {
++            put(b.x, b.y, &b.text, Style::new().bold());
++        }
++        if let Some(banner) = &game.banner {
++            let bx = (game.w - banner.text.len() as i32) / 2;
++            put(bx, game.h / 2, &banner.text, Style::new().magenta().bold());
++        }
++    }
++}
++
++impl BottomPaneView for InvadersView {
++    fn handle_key_event(&mut self, key_event: KeyEvent) {
++        let game = self.game.get_mut();
++        let was_running = game.running();
++        match key_event.code {
++            KeyCode::Left => game.steer(-1),
++            KeyCode::Right => game.steer(1),
++            KeyCode::Char(' ') => game.fire(),
++            KeyCode::Char('p') => game.toggle_pause(),
++            _ => {}
++        }
++        // Resuming starts the clock from now, not from when it stopped.
++        if !was_running && game.running() {
++            self.last_tick = Instant::now();
++        }
++    }
++
++    fn on_ctrl_c(&mut self) -> CancellationEvent {
++        self.close();
++        CancellationEvent::Handled
++    }
++
++    fn is_complete(&self) -> bool {
++        self.complete
++    }
++
++    fn keeps_status_visible(&self) -> bool {
++        true
++    }
++
++    fn pre_draw_tick(&mut self, now: Instant) -> bool {
++        let game = self.game.get_mut();
++        if !game.running() {
++            self.last_tick = now;
++            return false;
++        }
++        let mut ticks = 0;
++        while now.saturating_duration_since(self.last_tick) >= TICK && ticks < MAX_CATCH_UP {
++            game.tick();
++            self.last_tick += TICK;
++            ticks += 1;
++        }
++        if ticks == MAX_CATCH_UP {
++            self.last_tick = now;
++        }
++        ticks > 0
++    }
++
++    fn next_frame_delay(&self) -> Option<Duration> {
++        self.game.borrow().running().then(|| {
++            TICK.saturating_sub(self.last_tick.elapsed())
++                .max(Duration::from_millis(1))
++        })
++    }
++}
++
++impl Renderable for InvadersView {
++    fn desired_height(&self, _width: u16) -> u16 {
++        HEIGHT
++    }
++
++    fn render(&self, area: Rect, buf: &mut Buffer) {
++        let panel = Rect {
++            width: area.width.min(MAX_WIDTH),
++            height: area.height.min(HEIGHT),
++            ..area
++        };
++        let block = Block::bordered().border_type(BorderType::Rounded).dim();
++        let inner = block.inner(panel);
++        // One column of padding each side, and the header and help rows.
++        let (w, h) = (i32::from(inner.width) - 2, i32::from(inner.height) - 2);
++        if w < MIN_W || h < MIN_H {
++            Paragraph::new("Space Invaders needs a bigger terminal. Esc closes.")
++                .dim()
++                .render(area, buf);
++            return;
++        }
++        block.render(panel, buf);
++        let mut game = self.game.borrow_mut();
++        game.resize(w, h);
++        let row = |dy: u16| Rect {
++            x: inner.x + 1,
++            y: inner.y + dy,
++            width: inner.width - 2,
++            height: 1,
++        };
++        Self::header(&game, inner.width - 2).render(row(0), buf);
++        Self::draw_field(&game, inner.x + 1, inner.y + 1, buf);
++        Self::help(&game, inner.width - 2).render(row(inner.height - 1), buf);
++    }
++}
++
++#[cfg(test)]
++#[path = "invaders_tests.rs"]
++mod tests;
+diff --git a/codex-rs/tui/src/bottom_pane/mod.rs b/codex-rs/tui/src/bottom_pane/mod.rs
+index 3f16d118e16b5b6f7e6fe641ce8fadd9455602e4..973dbbeb3de69c6e171c7c0cf19de456b072f692 100644
+--- a/codex-rs/tui/src/bottom_pane/mod.rs
++++ b/codex-rs/tui/src/bottom_pane/mod.rs
+@@ -72,6 +72,9 @@ mod actionable_banner;
+ mod app_link_view;
+ mod apply_patch_header;
+ mod approval_overlay;
++mod invaders_game;
++mod invaders_view;
++pub(crate) use invaders_view::InvadersView;
+ mod async_questions;
+ mod empty_state_policy;
+ mod hook_status;
+@@ -2126,6 +2129,19 @@ impl BottomPane {
+             banner.visible.set(false);
+         }
+         if let Some(view) = self.active_view() {
++            // A view beside the agent's work, such as a game, keeps the status
++            // line above it.
++            if view.keeps_status_visible()
++                && let Some(status) = self.status_widget()
++            {
++                let mut flex = FlexRenderable::new();
++                flex.push(
++                    /*flex*/ 0,
++                    RenderableItem::Owned(Box::new(status.with_timer(&self.status_timer))),
++                );
++                flex.push(/*flex*/ 1, RenderableItem::Borrowed(view));
++                return RenderableItem::Owned(flex.into());
++            }
+             RenderableItem::Borrowed(view)
+         } else {
+             let mut flex = FlexRenderable::new();
+diff --git a/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__command_popup__tests__command_popup_default_items.snap b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__command_popup__tests__command_popup_default_items.snap
+index a46aed6b7c6d0ac942f62521b46d34616f04905e..689bf764c9bb02ec6a226c67877f8ead348c0357 100644
+--- a/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__command_popup__tests__command_popup_default_items.snap
++++ b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__command_popup__tests__command_popup_default_items.snap
+@@ -41,6 +41,7 @@ expression: commands
+ /statusline - configure which items appear in the status line
+ /theme - choose a syntax highlighting theme
+ /pets - choose or hide the terminal pet
++/invaders - play Space Invaders while Codex works
+ /mcp - list configured MCP tools; use /mcp verbose for details
+ /logout - log out of Codex
+ /exit - exit Codex
+diff --git a/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__invaders_view__tests__a_narrow_pane_keeps_the_header_and_help_short.snap b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__invaders_view__tests__a_narrow_pane_keeps_the_header_and_help_short.snap
+new file mode 100644
+index 0000000000000000000000000000000000000000..b5d1b226aff2735aaa03e4d8a07421ff2e6cf468
+--- /dev/null
++++ b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__invaders_view__tests__a_narrow_pane_keeps_the_header_and_help_short.snap
+@@ -0,0 +1,22 @@
++---
++source: tui/src/bottom_pane/invaders_tests.rs
++expression: "render(&view, 44)"
++---
++╭──────────────────────────────────────────╮
++│ Invaders                00000 · w1 · ♥♥♥ │
++│                                          │
++│                                          │
++│    /o\  /o\  /o\  /o\  /o\  /o\  /o\     │
++│    {@}  {@}  {@}  {@}  {@}  {@}  {@}     │
++│    {@}  {@}  {@}  {@}  {@}  {@}  {@}     │
++│    <=>  <=>  <=>  <=>  <=>  <=>  <=>     │
++│    <=>  <=>  <=>  <=>  <=>  <=>  <=>     │
++│                                          │
++│                                          │
++│                                          │
++│                                          │
++│                                          │
++│                                          │
++│                    ▟█▙                   │
++│ ←→ · space fire · p · esc                │
++╰──────────────────────────────────────────╯
+diff --git a/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__invaders_view__tests__opens_with_the_formation_the_ship_and_the_keys.snap b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__invaders_view__tests__opens_with_the_formation_the_ship_and_the_keys.snap
+new file mode 100644
+index 0000000000000000000000000000000000000000..34bd1e506318587a49feae63b61e9980adf7e976
+--- /dev/null
++++ b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__invaders_view__tests__opens_with_the_formation_the_ship_and_the_keys.snap
+@@ -0,0 +1,22 @@
++---
++source: tui/src/bottom_pane/invaders_tests.rs
++expression: "render(&view, 80)"
++---
++╭──────────────────────────────────────────────────────────────────────────────╮
++│ Space Invaders                       score 00000 · best 00000 · wave 1 · ♥♥♥ │
++│                                                                              │
++│                                                                              │
++│            /o\  /o\  /o\  /o\  /o\  /o\  /o\  /o\  /o\  /o\  /o\             │
++│            {@}  {@}  {@}  {@}  {@}  {@}  {@}  {@}  {@}  {@}  {@}             │
++│            {@}  {@}  {@}  {@}  {@}  {@}  {@}  {@}  {@}  {@}  {@}             │
++│            <=>  <=>  <=>  <=>  <=>  <=>  <=>  <=>  <=>  <=>  <=>             │
++│            <=>  <=>  <=>  <=>  <=>  <=>  <=>  <=>  <=>  <=>  <=>             │
++│                                                                              │
++│                                                                              │
++│                                                                              │
++│                                                                              │
++│                                                                              │
++│                                                                              │
++│                                      ▟█▙                                     │
++│ ←→ move · space fire (hold to keep firing) · p pause · esc closes            │
++╰──────────────────────────────────────────────────────────────────────────────╯
+diff --git a/codex-rs/tui/src/chatwidget/slash_dispatch.rs b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
+index 4fe2ed057b968d68d793fdf6bdfb97fbf6fa64e6..6901fc6bbcc3b1977b7fb718854f5d8f043b7808 100644
+--- a/codex-rs/tui/src/chatwidget/slash_dispatch.rs
++++ b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
+@@ -553,6 +553,10 @@ impl ChatWidget {
+             SlashCommand::Pets => {
+                 self.open_pets_picker();
+             }
++            SlashCommand::Invaders => {
++                self.bottom_pane
++                    .show_view(Box::new(crate::bottom_pane::InvadersView::new()));
++            }
+             SlashCommand::Ps => {
+                 self.add_ps_output();
+             }
+@@ -1278,7 +1282,8 @@ impl ChatWidget {
+             | SlashCommand::Statusline
+             | SlashCommand::Theme
+             | SlashCommand::Tui
+-            | SlashCommand::Pets => QueueDrain::Stop,
++            | SlashCommand::Pets
++            | SlashCommand::Invaders => QueueDrain::Stop,
+         }
+     }
+ 
+diff --git a/codex-rs/tui/src/slash_command.rs b/codex-rs/tui/src/slash_command.rs
+index 301de2e05469cbc79d760ecc2abfe53d6ad96261..373c60ed6f59fcba05f8127a58cebcc103855e40 100644
+--- a/codex-rs/tui/src/slash_command.rs
++++ b/codex-rs/tui/src/slash_command.rs
+@@ -63,6 +63,8 @@ pub enum SlashCommand {
+     Theme,
+     #[strum(to_string = "pets", serialize = "pet")]
+     Pets,
++    #[strum(to_string = "invaders", serialize = "space-invaders")]
++    Invaders,
+     Mcp,
+     Apps,
+     Plugins,
+@@ -124,6 +126,7 @@ impl SlashCommand {
+             SlashCommand::Statusline => "configure which items appear in the status line",
+             SlashCommand::Theme => "choose a syntax highlighting theme",
+             SlashCommand::Pets => "choose or hide the terminal pet",
++            SlashCommand::Invaders => "play Space Invaders while Codex works",
+             SlashCommand::Ps => "list background terminals",
+             SlashCommand::Stop => "stop all background terminals",
+             SlashCommand::MemoryDrop => "DO NOT USE",
+@@ -298,6 +301,7 @@ impl SlashCommand {
+             SlashCommand::TestApproval => true,
+             SlashCommand::Agents | SlashCommand::MultiAgents => true,
+             SlashCommand::Theme | SlashCommand::Pets => false,
++            SlashCommand::Invaders => true,
+         }
+     }
+ 

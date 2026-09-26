@@ -2,6 +2,17 @@
   "$schema": "../../../../schema/support.schema.json",
   "versions": [
     {
+      "ref": "rust-v0.157.1",
+      "commit": "36650394c5b38c2990ccf2a3457165ca3e9d9726",
+      "patches": [
+        "rust-v0.157.1/0001-openmods-point-feedback-in-modded-builds-to-OpenMods.patch",
+        "rust-v0.157.1/0002-openmods-leave-a-modded-build-s-updates-to-OpenMods.patch",
+        "rust-v0.157.1/0003-openmods-run-modded-builds-without-Codex-s-shared-ba.patch"
+      ],
+      "update": 2,
+      "note": "Codex's own update notice is off, and modded builds run without its shared background server"
+    },
+    {
       "ref": "rust-v0.157.0",
       "commit": "00c972ed5d6ff6499317fd41b7f23605b8e6850d",
       "patches": [
