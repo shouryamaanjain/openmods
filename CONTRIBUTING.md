@@ -136,6 +136,7 @@ The definition needs:
 - `binary`: the command users run.
 - `installer`: the one-line install command from the harness's own docs, and the folders it puts the binary in (`paths`), so OpenMods can find a stock install a new shell has not picked up yet. OpenMods offers it to users who install a mod for a harness they do not have.
 - `install`, `typecheck` and `build`: the commands that prepare, check and build a release, and `artifact`, the path of the built executable.
+- `buildInstall`, optional: the install a build needs, when it is less than `install`, such as only the packages the build uses. Builds run it; a typecheck and `openmods dev` run `install`.
 - `recipe`: the files, or lines of files, those commands depend on, such as the build script and toolchain pin. The release watch compares them on every release and holds the harness's mods when they change.
 - `releaseTagPattern`: which tags are releases.
 
