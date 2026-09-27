@@ -335,9 +335,7 @@ async function uncheckedIssue(id: string, name: string, ref: string, error: stri
   const title = uncheckedTitle(id, name, ref)
   const owner = repo.split("/")[0]
   const body = [
-    `@${owner} The hourly release watch has not been able to check \`${id}\` against ${name} ${rel(ref)} (tag \`${ref}\`) for ${UNCHECKED_RUNS} runs in a row. This is not a verdict on the mod: the check could not run to the end, for example because the release or its dependencies could not be fetched, or the check crashed.`,
-    "",
-    "Nothing is recorded against the mod, and the watch keeps trying every hour. This issue closes itself once a check gets through.",
+    `@${owner} \`${id}\` could not be checked on ${name} ${rel(ref)} for ${UNCHECKED_RUNS} runs in a row. This is not a verdict on the mod; the watch keeps trying hourly and closes this once a check gets through.`,
     "",
     "What the last run saw:",
     "",
