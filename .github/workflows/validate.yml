@@ -112,6 +112,15 @@ jobs:
           AT: ${{ matrix.at }}
           HARNESS: ${{ steps.harness.outputs.id }}
         run: bun cli/src/index.ts check "$MOD" --at "$AT" --typecheck --workspace "work/$HARNESS"
+      # An OpenCode build installs only what the build needs (buildInstall),
+      # so it builds too, in a workspace of its own: that install must be
+      # enough. It takes seconds; a Codex build takes too long for CI.
+      - name: Build ${{ matrix.mod }} at ${{ matrix.at }}
+        if: ${{ endsWith(matrix.mod, '/opencode') }}
+        env:
+          MOD: ${{ matrix.mod }}
+          AT: ${{ matrix.at }}
+        run: bun cli/src/index.ts check "$MOD" --at "$AT" --build --workspace "$RUNNER_TEMP/build"
 
   # One result for the branch rules to require, whichever mods a change
   # touches: every check passed, or none was needed.

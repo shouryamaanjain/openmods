@@ -25,6 +25,7 @@ for (const id of harnesses) {
   for (const k of ["name", "repo", "binary", "install", "typecheck", "build", "artifact"]) {
     if (typeof h[k] !== "string" || !h[k]) errors.push(`harnesses/${id}.json: missing "${k}"`)
   }
+  if (h.buildInstall !== undefined && (typeof h.buildInstall !== "string" || !h.buildInstall)) errors.push(`harnesses/${id}.json: buildInstall, when given, is the build's install command`)
   // Offered to users who install a mod without having the harness.
   if (h.installer !== undefined) {
     if (typeof h.installer?.command !== "string" || !h.installer.command) errors.push(`harnesses/${id}.json: installer needs a "command"`)

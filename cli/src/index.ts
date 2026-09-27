@@ -29,6 +29,8 @@ type Harness = {
   // requirements.ts for how the missing ones are installed.
   requirements?: Requirement[]
   install: string
+  /** The install a build needs, when it is less than `install`, which a typecheck and `openmods dev` run. */
+  buildInstall?: string
   typecheck?: string
   build: string
   artifact: string
@@ -813,14 +815,14 @@ async function ensureToolchain(root: string): Promise<string | null> {
 // A dependency install downloads thousands of packages, and on a slow or
 // flaky connection some fail. A second try usually finishes the job from
 // what the first one got.
-async function installDeps(h: Harness, root: string, what = "dependencies") {
-  log(`Installing ${what}: ${h.install}`)
+async function installDeps(h: Harness, root: string, what = "dependencies", cmd = h.install) {
+  log(`Installing ${what}: ${cmd}`)
   try {
-    await shell(h.install, root)
+    await shell(cmd, root)
   } catch (e) {
     if (!(e instanceof CommandFailed)) throw e
     log("Some downloads failed. Trying once more.")
-    await shell(h.install, root)
+    await shell(cmd, root)
   }
 }
 
@@ -840,7 +842,9 @@ async function build(h: Harness, root: string) {
   await step("Dependencies", async () => {
     const toolchain = await ensureToolchain(root)
     if (toolchain) buildEnv = { ...buildEnv, PATH: `${toolchain}${path.delimiter}${process.env.PATH ?? ""}` }
-    await installDeps(h, root)
+    // Only what the build needs, when the harness says what that is; a
+    // typecheck and `openmods dev` install everything.
+    await installDeps(h, root, "dependencies", h.buildInstall ?? h.install)
   })
   const artifact = artifactPath(h, root)
   await step("Build", async () => {

@@ -51,6 +51,23 @@ describe("check", () => {
     expect(j).toMatchObject({ harness: "fake", stock: true, builds: true })
     expect(j.mod).toBeUndefined()
   })
+  test("a build runs the harness's build install when it has one; a typecheck runs the full install", async () => {
+    const file = path.join(sb.reg, "harnesses", "fake.json")
+    const h = readFileSync(file, "utf8")
+    writeFileSync(file, JSON.stringify({ ...JSON.parse(h), buildInstall: "echo installing what the build needs" }))
+    try {
+      const built = await cli(sb, "check", modDir(), "--ref", "v1.1.0", "--build", "--workspace", path.join(sb.T, "check"))
+      expect(built.code, built.all).toBe(0)
+      expect(built.all).toContain("installing what the build needs")
+      expect(built.all).not.toContain("installing dependencies")
+      const checked = await cli(sb, "check", modDir(), "--ref", "v1.1.0", "--typecheck", "--workspace", path.join(sb.T, "check"))
+      expect(checked.code, checked.all).toBe(0)
+      expect(checked.all).toContain("installing dependencies")
+      expect(checked.all).not.toContain("installing what the build needs")
+    } finally {
+      writeFileSync(file, h)
+    }
+  })
   test("--harness --build reports a failing stock build as JSON", async () => {
     const file = path.join(sb.reg, "harnesses", "fake.json")
     const h = JSON.parse(readFileSync(file, "utf8"))
