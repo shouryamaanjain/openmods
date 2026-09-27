@@ -54,7 +54,7 @@ mods/<owner>/<mod>/
   README.md             what it does, and a Permissions section
   opencode/
     support.json        the releases it supports
-    v1.18.32/0001-….patch
+    v2.0.18/0001-….patch
   codex/
     support.json
     rust-v0.157.0/0001-….patch
@@ -72,7 +72,7 @@ Patches rather than forks: a patch series is small enough to read and review, an
 
 ```sh
 git clone https://github.com/anomalyco/opencode && cd opencode
-git checkout v1.18.32                     # a release, not the default branch
+git checkout v2.0.18                      # a release, not the default branch
 # change anything, and commit
 openmods dev                              # `opencode` now runs this clone from source
 openmods install .                        # build it as users will get it
