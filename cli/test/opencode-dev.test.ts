@@ -50,11 +50,13 @@ describe("OpenCode 2 dev mode", () => {
     const runs = await run()
     expect(runs.at(-1)).toEqual({ args: [], version: "1.0.0+my-mod-dev", channel: "openmods-dev", preloaded: true })
   })
-  test("a start stops the previous dev server first, so every edit shows", async () => {
+  test("opening the interface stops the previous dev server first, so every edit shows", async () => {
     expect((await run()).map((r) => r.args)).toEqual([["service", "stop"], []])
     expect((await run("--model", "x")).map((r) => r.args)).toEqual([["service", "stop"], ["--model", "x"]])
+    expect((await run(sb.T)).map((r) => r.args)).toEqual([["service", "stop"], [sb.T]])
   })
-  test("service commands and --version leave the server alone", async () => {
+  test("subcommands and --version leave the server running, for a session open elsewhere", async () => {
+    expect((await run("run", "hello")).map((r) => r.args)).toEqual([["run", "hello"]])
     expect((await run("service", "status")).map((r) => r.args)).toEqual([["service", "status"]])
     expect((await run("--version")).map((r) => r.args)).toEqual([["--version"]])
   })
