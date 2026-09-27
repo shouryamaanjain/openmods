@@ -155,6 +155,22 @@ async function closeFixed() {
     const closed = await $`gh issue close ${String(issue.number)} --repo ${repo} --comment ${why}`.nothrow().quiet()
     console.error(closed.exitCode === 0 ? `closed #${issue.number}: ${why}` : `could not close #${issue.number}: ${closed.stderr.toString().trim()}`)
   }
+  // And the "could not check" ones, once a check of that mod has told or the
+  // mod is gone. Every hour, so a close that failed is tried again.
+  const watch = (await $`gh issue list --repo ${repo} --state open --label ${"release watch"} --json number,title`.nothrow().text()).trim()
+  for (const issue of watch ? (JSON.parse(watch) as { number: number; title: string }[]) : []) {
+    const m = /^The release watch could not check ([a-z0-9-]+\/[a-z0-9-]+) on (.+) (\d\S*)$/.exec(issue.title)
+    if (!m) continue
+    const [, id, name, release] = m as unknown as [string, string, string, string]
+    const h = harnesses().find((x) => x.name === name)
+    if (!h) continue
+    const dir = path.join(root, "mods", ...id.split("/"), h.id)
+    const status = readJson(path.join(dir, "status.json"))
+    if (existsSync(dir) && status?.unchecked && rel(status.unchecked.ref) === release) continue
+    const why = existsSync(dir) ? "A check got through, so this is settled." : `${id} is no longer in the registry.`
+    const closed = await $`gh issue close ${String(issue.number)} --repo ${repo} --comment ${why}`.nothrow().quiet()
+    console.error(closed.exitCode === 0 ? `closed #${issue.number}: ${why}` : `could not close #${issue.number}: ${closed.stderr.toString().trim()}`)
+  }
 }
 
 async function plan() {
@@ -264,13 +280,17 @@ async function recipeIssue(r: RecipeCheck) {
   await $`gh issue create --repo ${repo} --title ${title} --body ${body} --label "build recipe"`.nothrow()
 }
 
-// Closes open issues with one of these titles.
-async function closeIssues(titles: string[], comment: string, label?: string) {
+// Closes open issues with one of these titles, or starting with `prefix`. A
+// close that fails is tried again by the next plan (closeFixed).
+async function closeIssues(titles: string[], comment: string, label?: string, prefix?: string) {
   const repo = process.env.GITHUB_REPOSITORY
-  if (!has("issues") || !repo || !titles.length) return
+  if (!has("issues") || !repo || (!titles.length && !prefix)) return
   const list = (await $`gh issue list --repo ${repo} --state open ${label ? ["--label", label] : []} --json number,title --limit 200`.nothrow().text()).trim()
-  for (const issue of list ? (JSON.parse(list) as { number: number; title: string }[]) : [])
-    if (titles.includes(issue.title)) await $`gh issue close ${String(issue.number)} --repo ${repo} --comment ${comment}`.nothrow()
+  for (const issue of list ? (JSON.parse(list) as { number: number; title: string }[]) : []) {
+    if (!titles.includes(issue.title) && !(prefix && issue.title.startsWith(prefix))) continue
+    const closed = await $`gh issue close ${String(issue.number)} --repo ${repo} --comment ${comment}`.nothrow().quiet()
+    if (closed.exitCode !== 0) console.error(`could not close #${issue.number}, tried again next run: ${closed.stderr.toString().trim()}`)
+  }
 }
 
 // Recipe issues for other releases of this harness: a newer release's check
@@ -287,9 +307,10 @@ async function closeOtherRecipeIssues(name: string, ref: string) {
 
 const uncheckedTitle = (id: string, name: string, ref: string) => `The release watch could not check ${id} on ${name} ${rel(ref)}`
 
+// Whether the issue is open now, found or created.
 async function uncheckedIssue(id: string, name: string, ref: string, error: string) {
   const repo = process.env.GITHUB_REPOSITORY
-  if (!repo) return
+  if (!repo) return false
   const title = uncheckedTitle(id, name, ref)
   const owner = repo.split("/")[0]
   const body = [
@@ -304,9 +325,11 @@ async function uncheckedIssue(id: string, name: string, ref: string, error: stri
     "```",
   ].join("\n")
   await $`gh label create ${"release watch"} --repo ${repo} --color ededed --description ${"The release watch needs a person"} --force`.nothrow().quiet()
-  const existing = (await $`gh issue list --repo ${repo} --state open --search ${JSON.stringify(title) + " in:title"} --json number,title`.nothrow().text()).trim()
-  if (existing && (JSON.parse(existing) as { title: string }[]).some((i) => i.title === title)) return
-  await $`gh issue create --repo ${repo} --title ${title} --body ${body} --label ${"release watch"}`.nothrow()
+  const existing = await $`gh issue list --repo ${repo} --state open --search ${JSON.stringify(title) + " in:title"} --json number,title`.nothrow().quiet()
+  if (existing.exitCode !== 0) return false
+  const found = existing.stdout.toString().trim()
+  if (found && (JSON.parse(found) as { title: string }[]).some((i) => i.title === title)) return true
+  return (await $`gh issue create --repo ${repo} --title ${title} --body ${body} --label ${"release watch"}`.nothrow().quiet()).exitCode === 0
 }
 
 async function apply() {
@@ -333,11 +356,21 @@ async function apply() {
   const results = planned.length
     ? planned.map((p) => ({ mod: p.mod, harness: p.harness, ref: p.ref, r: readResult(path.join(dir, `${p.mod.replaceAll("/", "_")}.json`)) }))
     : files.map((f) => {
+        // Without the plan, an unreadable result is known by its file name:
+        // mods_<owner>_<name>_<harness>.json.
         const r = readResult(path.join(dir, f))
-        return { mod: r?.mod ? `mods/${r.mod}/${r.harness}` : "", harness: r?.harness, ref: r?.ref, r }
+        const named = f.replace(/\.json$/, "").split("_")
+        const guess = named.length === 4 && named[0] === "mods" ? named.join("/") : ""
+        return { mod: r?.mod ? `mods/${r.mod}/${r.harness}` : guess, harness: r?.harness ?? named[3], ref: r?.ref, r }
       })
+  let lost = 0
   for (const { mod: modPath, harness, ref: plannedRef, r } of results) {
-    if (!modPath || r?.stock) continue
+    if (!modPath) {
+      console.error("a result could not be read, and its file name does not say which mod it is for")
+      lost++
+      continue
+    }
+    if (r?.stock) continue
     const modDir = path.join(root, modPath)
     const modFile = path.join(modDir, "support.json")
     if (!existsSync(modFile)) continue
@@ -346,7 +379,7 @@ async function apply() {
     const meta = readJson(path.join(modDir, "..", "mod.json")) ?? {}
     const h = readJson(path.join(root, "harnesses", `${harness}.json`))
     const harnessName = h?.name ?? harness
-    const ref = (r?.ref as string) ?? plannedRef
+    const ref = (r?.ref as string | undefined) ?? plannedRef ?? ""
     const line = of(harnessName, ref)
     const statusPath = path.join(modDir, "status.json")
     const checked = new Date().toISOString()
@@ -354,16 +387,25 @@ async function apply() {
     // tries again. The runs are counted, and after a few, a person is asked.
     if (!r || r.unchecked || r.applies === undefined) {
       const error = String(r?.error ?? r?.unchecked ?? "the check left no result: it crashed or was stopped before it wrote one")
-      const prev = readJson(statusPath) ?? {}
-      const runs = prev.unchecked?.ref === ref ? (prev.unchecked.runs ?? 0) : 0
-      if (runs < UNCHECKED_RUNS) {
-        writeJson(statusPath, { ...prev, unchecked: { ref, runs: runs + 1, error: error.split("\n").slice(0, 40).join("\n"), checked } })
-        if (runs + 1 === UNCHECKED_RUNS && has("issues")) await uncheckedIssue(id, harnessName, ref, error)
+      // Without the plan, a result that cannot be read does not say which
+      // release it was for: it is only reported.
+      if (!ref) {
+        line.unchecked.push(`${id} (its result could not be read)`)
+        continue
       }
+      const prev = readJson(statusPath) ?? {}
+      const before = prev.unchecked?.ref === ref ? prev.unchecked : undefined
+      const runs = Math.min((before?.runs ?? 0) + 1, UNCHECKED_RUNS)
+      // Asked until the issue is there; once it is, nothing more is written,
+      // so a mod that keeps failing to check does not commit every hour.
+      const issued = before?.issued === true || (runs === UNCHECKED_RUNS && has("issues") && (await uncheckedIssue(id, harnessName, ref, error)))
+      if (!before || before.runs !== runs || (before.issued === true) !== issued)
+        writeJson(statusPath, { ...prev, unchecked: { ref, runs, error: error.split("\n").slice(0, 40).join("\n"), checked, ...(issued ? { issued } : {}) } })
       line.unchecked.push(id)
       continue
     }
-    await closeIssues([uncheckedTitle(id, harnessName, ref)], "A check got through, so this is settled.", "release watch")
+    // A verdict: the mod's "could not check" issues, for any release, are settled.
+    await closeIssues([], "A check got through, so this is settled.", "release watch", `The release watch could not check ${id} on ${harnessName} `)
     // Nothing the bot commits changes a mod's code: the new release's patches
     // must change exactly the lines a person reviewed. If a rebase changed
     // them, the mod is held like one that failed, for its maintainer.
@@ -418,6 +460,8 @@ async function apply() {
   mkdirSync(dir, { recursive: true })
   writeFileSync(path.join(dir, "COMMIT_MSG"), `${title}\n\n${body.join("\n")}\n`)
   if (process.env.GITHUB_STEP_SUMMARY) writeFileSync(process.env.GITHUB_STEP_SUMMARY, "```\n" + summary + "\n```\n", { flag: "a" })
+  // What was recorded stands; the run still fails, so a lost check is seen.
+  if (lost) process.exit(1)
 }
 
 // A person ran the harness build at `ref` and it worked: the recipe is

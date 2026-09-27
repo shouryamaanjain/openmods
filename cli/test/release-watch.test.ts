@@ -4,9 +4,9 @@
 // against the mod and is tried again; and a release after one that changed
 // the build recipe is compared with the release the recipe last worked at.
 import { beforeAll, describe, expect, test } from "bun:test"
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { addFile, cli, createHarness, createMod, release, sandbox, script, setGreeting, versions, WATCH } from "./harness"
+import { addFile, cli, createHarness, createMod, git, release, sandbox, script, setGreeting, versions, WATCH } from "./harness"
 
 const sb = sandbox("release-watch")
 const dirOf = (name: string) => path.join(sb.reg, "mods", "t", name, "fake")
@@ -14,11 +14,33 @@ const statusOf = (name: string) => JSON.parse(readFileSync(path.join(dirOf(name)
 const results = () => path.join(sb.T, "results")
 const plan = (names: string[]) => JSON.stringify(names.map((n) => ({ mod: `mods/t/${n}/fake`, harness: "fake", ref: "v1.1.0" })))
 const apply = (names: string[]) => script(sb, WATCH, "apply", results(), "--matrix", plan(names), "--registry", sb.reg)
+
+// A stand-in for the GitHub CLI: it records every call, answers \`issue list\`
+// with issues.json, and fails every call while fail-gh exists.
+const ghLog = () => path.join(sb.T, "gh.log")
+const ghIssues = () => path.join(sb.T, "issues.json")
+const ghFails = () => path.join(sb.T, "fail-gh")
+async function applyWithIssues(names: string[]) {
+  const p = Bun.spawn(["bun", WATCH, "apply", results(), "--matrix", plan(names), "--registry", sb.reg, "--issues"], {
+    cwd: sb.reg,
+    env: { ...process.env, PATH: `${path.join(sb.T, "bin")}:${process.env.PATH}`, GITHUB_REPOSITORY: "t/registry", GH_LOG: ghLog(), GH_ISSUES: ghIssues(), GH_FAILS: ghFails() },
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  await p.exited
+  return existsSync(ghLog()) ? readFileSync(ghLog(), "utf8").split("\n---\n").filter(Boolean) : []
+}
 const commitTitle = () => readFileSync(path.join(results(), "COMMIT_MSG"), "utf8").split("\n")[0]
 
 beforeAll(async () => {
   await createHarness(sb)
-  for (const name of ["good", "crashed", "garbled", "offline"]) await createMod(sb, name, addFile(`${name}.txt`, `${name}\n`))
+  for (const name of ["good", "crashed", "garbled", "offline", "counted"]) await createMod(sb, name, addFile(`${name}.txt`, `${name}\n`))
+  mkdirSync(path.join(sb.T, "bin"), { recursive: true })
+  writeFileSync(
+    path.join(sb.T, "bin", "gh"),
+    `#!/bin/sh\nprintf '%s\\n---\\n' "$*" >> "$GH_LOG"\n[ -e "$GH_FAILS" ] && exit 1\ncase "$1 $2" in\n  "issue list") cat "$GH_ISSUES" 2>/dev/null || echo "[]" ;;\n  "issue create") echo "https://github.com/t/registry/issues/9" ;;\nesac\n`,
+  )
+  chmodSync(path.join(sb.T, "bin", "gh"), 0o755)
   await createMod(sb, "friendly", setGreeting("hello from friendly"))
   await release(sb, "v1.1.0", addFile("CHANGELOG.md", "1.1.0\n"))
 })
@@ -48,6 +70,26 @@ describe("a check that could not tell", () => {
   })
 })
 
+describe("the check's workspace", () => {
+  test("one left from another repository is pointed at the harness's own, and its tags dropped", async () => {
+    const ws = path.join(sb.T, "ws-moved")
+    const other = path.join(sb.T, "other-harness")
+    mkdirSync(other, { recursive: true })
+    await git(other, "init", "-q")
+    writeFileSync(path.join(other, "greet.sh"), "echo other\n")
+    await git(other, "add", "-A")
+    await git(other, "commit", "-q", "-m", "other")
+    await git(other, "tag", "v1.1.0")
+    await git(other, "init", "-q", ws)
+    await git(ws, "remote", "add", "origin", other)
+    await git(ws, "fetch", "-q", "origin", "tag", "v1.1.0")
+    const r = await cli(sb, "check", dirOf("good"), "--ref", "v1.1.0", "--json", "--workspace", ws)
+    expect(r.code, r.all).toBe(0)
+    expect(JSON.parse(r.out)).toMatchObject({ applies: true, commit: (await git(sb.harness, "rev-parse", "v1.1.0^{commit}")).stdout.toString().trim() })
+    expect((await git(ws, "remote", "get-url", "origin")).stdout.toString().trim()).toEndWith(sb.harness)
+  })
+})
+
 describe("apply", () => {
   test("records the checks that told, and nothing against the ones that could not", async () => {
     mkdirSync(results(), { recursive: true })
@@ -69,13 +111,58 @@ describe("apply", () => {
     expect(statusOf("offline").unchecked.error).toContain("network is down")
     expect(commitTitle()).toBe("Fake 1.1.0: 1 mod now supports it, 0 do not; 3 mods not checked yet")
   })
-  test("counts the runs a mod could not be checked, up to three, and stops writing then", async () => {
-    await apply(["crashed"])
-    await apply(["crashed"])
-    const third = readFileSync(path.join(dirOf("crashed"), "status.json"), "utf8")
-    expect(JSON.parse(third).unchecked.runs).toBe(3)
-    await apply(["crashed"])
-    expect(readFileSync(path.join(dirOf("crashed"), "status.json"), "utf8")).toBe(third)
+  test("counts the runs a mod could not be checked; on the third, asks the maintainers once, then writes nothing more", async () => {
+    rmSync(ghLog(), { force: true })
+    expect((await applyWithIssues(["counted"])).some((c) => c.startsWith("issue create"))).toBe(false)
+    await applyWithIssues(["counted"])
+    const third = await applyWithIssues(["counted"])
+    const created = third.find((c) => c.startsWith("issue create"))
+    expect(created).toContain("The release watch could not check t/counted on Fake 1.1.0")
+    expect(created).toContain("--label release watch")
+    expect(JSON.parse(readFileSync(path.join(dirOf("counted"), "status.json"), "utf8")).unchecked).toMatchObject({ runs: 3, issued: true })
+    const after = readFileSync(path.join(dirOf("counted"), "status.json"), "utf8")
+    rmSync(ghLog(), { force: true })
+    await applyWithIssues(["counted"])
+    expect(readFileSync(path.join(dirOf("counted"), "status.json"), "utf8")).toBe(after)
+    expect((existsSync(ghLog()) ? readFileSync(ghLog(), "utf8") : "").includes("issue create")).toBe(false)
+  })
+  test("an issue GitHub would not take is asked for again on the next run; one already open is not opened twice", async () => {
+    const status = path.join(dirOf("counted"), "status.json")
+    const st = JSON.parse(readFileSync(status, "utf8"))
+    delete st.unchecked.issued
+    writeFileSync(status, JSON.stringify(st))
+    writeFileSync(ghFails(), "")
+    await applyWithIssues(["counted"])
+    rmSync(ghFails())
+    expect(JSON.parse(readFileSync(status, "utf8")).unchecked.issued).toBeUndefined()
+    // Now it is open already: found, not created again.
+    writeFileSync(ghIssues(), JSON.stringify([{ number: 9, title: "The release watch could not check t/counted on Fake 1.1.0" }]))
+    rmSync(ghLog(), { force: true })
+    const calls = await applyWithIssues(["counted"])
+    expect(calls.some((c) => c.startsWith("issue create"))).toBe(false)
+    expect(JSON.parse(readFileSync(status, "utf8")).unchecked.issued).toBe(true)
+  })
+  test("a verdict closes the mod's could-not-check issues, for any release", async () => {
+    writeFileSync(ghIssues(), JSON.stringify([
+      { number: 9, title: "The release watch could not check t/counted on Fake 1.1.0" },
+      { number: 8, title: "The release watch could not check t/counted on Fake 1.0.5" },
+      { number: 7, title: "The release watch could not check t/other on Fake 1.1.0" },
+    ]))
+    writeFileSync(path.join(results(), "mods_t_counted_fake.json"), JSON.stringify({ mod: "t/counted", harness: "fake", ref: "v1.1.0", commit: "x", applies: false, error: "patch does not apply" }))
+    rmSync(ghLog(), { force: true })
+    const calls = await applyWithIssues(["counted"])
+    expect(calls.filter((c) => c.startsWith("issue close")).map((c) => c.split(" ")[2]).sort()).toEqual(["8", "9"])
+    rmSync(ghIssues())
+  })
+  test("without the plan, a result that cannot be read or named fails the run, after recording the rest", async () => {
+    const lone = path.join(sb.T, "lone")
+    mkdirSync(lone, { recursive: true })
+    writeFileSync(path.join(lone, "mods_t_garbled_fake.json"), "{")
+    writeFileSync(path.join(lone, "results.json"), "{")
+    const r = await script(sb, WATCH, "apply", lone, "--registry", sb.reg)
+    expect(r.code).toBe(1)
+    expect(r.err).toContain("does not say which mod it is for")
+    expect(statusOf("garbled").unchecked.ref).toBe("v1.1.0")
   })
   test("a check that does tell replaces the count with its verdict", async () => {
     writeFileSync(path.join(results(), "mods_t_crashed_fake.json"), JSON.stringify({ mod: "t/crashed", harness: "fake", ref: "v1.1.0", commit: "x", applies: false, error: "patch does not apply" }))
