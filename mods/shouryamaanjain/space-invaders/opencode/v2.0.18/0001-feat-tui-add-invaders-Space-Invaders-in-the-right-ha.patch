@@ -493,7 +493,7 @@ index 0000000000000000000000000000000000000000..aa6c8352d2aa879af5f4a0efbc29fa39
 +  )
 +}
 diff --git a/packages/tui/src/component/session-frame.tsx b/packages/tui/src/component/session-frame.tsx
-index d8bac292afe00a5acd80f6cf7820e60006a1a191..ee1a9953b67907376b4ba6403be8ab6fcc54164d 100644
+index d8bac292afe00a5acd80f6cf7820e60006a1a191..e6da38a07adef1bcf18db5cd22afebca2faf97e5 100644
 --- a/packages/tui/src/component/session-frame.tsx
 +++ b/packages/tui/src/component/session-frame.tsx
 @@ -14,6 +14,7 @@ import { Keymap } from "../context/keymap"
@@ -643,7 +643,7 @@ index d8bac292afe00a5acd80f6cf7820e60006a1a191..ee1a9953b67907376b4ba6403be8ab6f
              }
            >
 -            <Sidebar sessionID={props.sessionID} />
-+            <InvadersPanel width={invadersWidth()} />
++            <InvadersPanel width={fullscreen() ? availableWidth() : invadersWidth()} />
            </Show>
          </box>
        </Show>
