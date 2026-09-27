@@ -261,9 +261,10 @@ async function issueFor(id: string, harnessId: string, meta: any, support: any, 
   return url
 }
 
+// Whether the issue is open now, found or created.
 async function recipeIssue(r: RecipeCheck) {
   const repo = process.env.GITHUB_REPOSITORY
-  if (!repo) return
+  if (!repo) return false
   const title = `${r.name} ${rel(r.to)} changed the OpenMods build recipe`
   const body = [
     `${r.name} ${rel(r.to)} (tag \`${r.to}\`) changed lines our build recipe for it depends on, since ${rel(r.from)}. Mods for ${r.name} are held on the releases they are on until someone confirms the recipe still works.`,
@@ -276,9 +277,11 @@ async function recipeIssue(r: RecipeCheck) {
     "",
     `To confirm, run the **harness build** workflow with harness \`${r.harness}\` and ref \`${r.to}\`. If it builds, it records that and the next hourly check picks the mods up. If not, fix \`harnesses/${r.harness}.json\` first.`,
   ].join("\n")
-  const existing = (await $`gh issue list --repo ${repo} --state open --search ${JSON.stringify(title) + " in:title"} --json number,title`.nothrow().text()).trim()
-  if (existing && (JSON.parse(existing) as { title: string }[]).some((i) => i.title === title)) return
-  await $`gh issue create --repo ${repo} --title ${title} --body ${body} --label "build recipe"`.nothrow()
+  const existing = await $`gh issue list --repo ${repo} --state open --search ${JSON.stringify(title) + " in:title"} --json number,title`.nothrow().quiet()
+  if (existing.exitCode !== 0) return false
+  const found = existing.stdout.toString().trim()
+  if (found && (JSON.parse(found) as { title: string }[]).some((i) => i.title === title)) return true
+  return (await $`gh issue create --repo ${repo} --title ${title} --body ${body} --label "build recipe"`.nothrow().quiet()).exitCode === 0
 }
 
 // Closes open issues with one of these titles, or starting with `prefix`. A
@@ -295,15 +298,16 @@ async function closeIssues(titles: string[], comment: string, label?: string, pr
 }
 
 // Recipe issues for other releases of this harness: a newer release's check
-// now says whether the recipe works, so they are settled.
-async function closeOtherRecipeIssues(name: string, ref: string) {
+// now says whether the recipe works, or a newer release's issue, whose diff
+// covers theirs, asks the same question.
+async function closeOtherRecipeIssues(name: string, ref: string, comment: string) {
   const repo = process.env.GITHUB_REPOSITORY
   if (!has("issues") || !repo) return
   const list = (await $`gh issue list --repo ${repo} --state open --label "build recipe" --json number,title`.nothrow().text()).trim()
   const mine = `${name} ${rel(ref)} changed the OpenMods build recipe`
   for (const issue of list ? (JSON.parse(list) as { number: number; title: string }[]) : [])
     if (issue.title.startsWith(`${name} `) && issue.title.endsWith(" changed the OpenMods build recipe") && issue.title !== mine)
-      await $`gh issue close ${String(issue.number)} --repo ${repo} --comment ${`${name} ${rel(ref)} is out and was checked; this release's recipe question is settled by that one.`}`.nothrow()
+      await $`gh issue close ${String(issue.number)} --repo ${repo} --comment ${comment}`.nothrow()
 }
 
 const uncheckedTitle = (id: string, name: string, ref: string) => `The release watch could not check ${id} on ${name} ${rel(ref)}`
@@ -346,12 +350,14 @@ async function apply() {
     const checked = new Date().toISOString()
     if (r.state === "changed") {
       writeJson(statusFile(r.harness), { tested: r.to, from: r.from, recipe: "changed", changes: r.changes, checked })
-      if (has("issues")) await recipeIssue(r)
+      // Older releases' issues close only once this one is open to replace them.
+      if (has("issues") && (await recipeIssue(r)))
+        await closeOtherRecipeIssues(r.name, r.to, `${r.name} ${rel(r.to)} is out and changed the recipe too; its issue, which covers this one's changes, replaces this one.`)
       of(r.name, r.to).recipe = `${r.name} ${rel(r.to)} changed the build recipe; its mods are held until someone runs the harness build`
     } else if (r.state === "unchanged") {
       writeJson(statusFile(r.harness), { tested: r.to, from: r.from, recipe: "unchanged", checked })
     }
-    if (r.state !== "held") await closeOtherRecipeIssues(r.name, r.to)
+    if (r.state === "unchanged") await closeOtherRecipeIssues(r.name, r.to, `${r.name} ${rel(r.to)} is out and was checked; this release's recipe question is settled by that one.`)
   }
   const files = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".json")) : []
   const results = planned.length

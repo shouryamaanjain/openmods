@@ -187,6 +187,25 @@ describe("apply", () => {
   })
 })
 
+describe("recipe alerts", () => {
+  const changed = (to: string) => JSON.stringify([{ harness: "fake", name: "Fake", from: "v1.1.0", to, state: "changed", changes: ["-compiler=1", "+compiler=2"] }])
+  test("an older release's recipe issue closes only once the newer release's issue is open to replace it", async () => {
+    writeFileSync(ghIssues(), JSON.stringify([{ number: 5, title: "Fake 1.2.0 changed the OpenMods build recipe" }]))
+    const empty = path.join(sb.T, "no-results")
+    mkdirSync(empty, { recursive: true })
+    writeFileSync(ghFails(), "issue create")
+    rmSync(ghLog(), { force: true })
+    let calls = await watchWithIssues("apply", empty, "--recipe", changed("v1.3.0"))
+    expect(calls.some((c) => c.startsWith("issue create"))).toBe(true)
+    expect(calls.some((c) => c.startsWith("issue close"))).toBe(false)
+    rmSync(ghFails())
+    rmSync(ghLog(), { force: true })
+    calls = await watchWithIssues("apply", empty, "--recipe", changed("v1.3.0"))
+    expect(calls.find((c) => c.startsWith("issue close"))).toStartWith("issue close 5")
+    rmSync(ghIssues())
+  })
+})
+
 describe("releases that come quickly", () => {
   test("a release after one that changed the recipe is compared with where the recipe last worked", async () => {
     await release(sb, "v1.2.0", addFile("build.cfg", "compiler=2\n"))
