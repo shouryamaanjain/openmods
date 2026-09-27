@@ -73,6 +73,19 @@ describe("after a build", () => {
     writeFileSync(lock, "999999")
     expect((await cli(sb, "update", "fake", "--force")).code).toBe(0)
     expect(existsSync(lock)).toBe(false)
+    // A killed build's lock whose process id another process has taken since:
+    // that process started after the lock was written, so it is not the owner.
+    writeFileSync(lock, "")
+    const before = Date.now() / 1000 - 60
+    utimesSync(lock, before, before)
+    const other = Bun.spawn(["sleep", "30"])
+    writeFileSync(lock, String(other.pid))
+    utimesSync(lock, before, before)
+    try {
+      expect((await cli(sb, "update", "fake", "--force")).code).toBe(0)
+    } finally {
+      other.kill()
+    }
   })
   test("the cleanup never fails a build that worked", async () => {
     const state = path.join(sb.om, "state.json")

@@ -7,7 +7,7 @@
 // The stock install of the harness is never touched.
 
 import { $ } from "bun"
-import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
+import { cpSync, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
 import { cpus, homedir, tmpdir, totalmem } from "node:os"
 import path from "node:path"
 import { footprint, incompatibility as whyNot, type Footprint } from "./overlap"
@@ -1392,33 +1392,70 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
 }
 
 // One build of a harness at a time: two would check out and patch the same
-// checkout at once. Held until this process exits; a lock whose process is
-// gone, or that is older than any build, is taken over.
+// checkout at once. Held until this process exits. A lock is someone else's
+// only while its process runs and started before the lock was written, so a
+// lock left by a killed build is taken over even if its process id has been
+// reused since.
 function holdBuildLock(harnessId: string, h: Harness) {
   const lock = path.join(HOME, "harnesses", harnessId, "build.lock")
   mkdirSync(path.dirname(lock), { recursive: true })
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
     try {
       writeFileSync(lock, String(process.pid), { flag: "wx" })
-      process.on("exit", () => rmSync(lock, { force: true }))
+      process.on("exit", () => {
+        try {
+          if (readFileSync(lock, "utf8") === String(process.pid)) rmSync(lock, { force: true })
+        } catch {}
+      })
       return
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e
-      const pid = Number(readFileSync(lock, "utf8"))
-      const alive = (() => {
-        try {
-          return pid > 0 && pid !== process.pid && (process.kill(pid, 0), true)
-        } catch (e) {
-          return (e as NodeJS.ErrnoException).code === "EPERM"
-        }
-      })()
-      // A process id can be reused after a crash; no build takes 12 hours.
-      if (alive && Date.now() - lstatSync(lock).mtimeMs < 12 * 3_600_000)
-        fail(`another openmods is building ${h.name} right now (process ${pid}). Try again when it finishes.`)
-      rmSync(lock, { force: true })
     }
+    let held: string
+    let written: number
+    try {
+      held = readFileSync(lock, "utf8")
+      written = lstatSync(lock).mtimeMs
+    } catch {
+      continue
+    }
+    const pid = Number(held)
+    if (lockOwnerRuns(pid, written)) fail(`another openmods is building ${h.name} right now (process ${pid}). Try again when it finishes.`)
+    // Moved aside, not removed: if another openmods took the lock over first,
+    // what was moved is its lock, and it goes back.
+    const aside = `${lock}.${process.pid}`
+    try {
+      renameSync(lock, aside)
+    } catch {
+      continue
+    }
+    if (readFileSync(aside, "utf8") !== held) {
+      try {
+        linkSync(aside, lock)
+      } catch {}
+      rmSync(aside, { force: true })
+      fail(`another openmods is building ${h.name} right now. Try again when it finishes.`)
+    }
+    rmSync(aside, { force: true })
   }
   fail(`could not take the ${h.name} build lock at ${pretty(lock)}`)
+}
+
+// Whether a lock's process still runs and is the one that wrote it: it
+// started before the lock was written. Without ps to ask, a lock is trusted
+// for 12 hours, longer than any build.
+function lockOwnerRuns(pid: number, written: number) {
+  if (!(pid > 0) || pid === process.pid) return false
+  try {
+    process.kill(pid, 0)
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "EPERM") return false
+  }
+  const r = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)])
+  const started = Date.parse(r.stdout.toString().trim())
+  if (r.exitCode !== 0 || Number.isNaN(started)) return Date.now() - written < 12 * 3_600_000
+  // ps gives the second, and on Linux can be a second early.
+  return started <= written + 2000
 }
 
 // After a build, what this machine no longer needs goes, so disk use stays
