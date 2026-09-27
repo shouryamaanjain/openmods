@@ -57,6 +57,12 @@ describe("OpenCode 2 dev mode", () => {
   })
   test("subcommands and --version leave the server running, for a session open elsewhere", async () => {
     expect((await run("run", "hello")).map((r) => r.args)).toEqual([["run", "hello"]])
+    // A folder named like a subcommand is not taken for a project path.
+    mkdirSync(path.join(sb.T, "service"), { recursive: true })
+    rmSync(log, { force: true })
+    const inProject = await $`sh ${launcher()} service status`.cwd(sb.T).env({ ...process.env, LOG: log }).nothrow().quiet()
+    expect(inProject.exitCode).toBe(0)
+    expect(readFileSync(log, "utf8").trim().split("\n").map((l) => JSON.parse(l).args)).toEqual([["service", "status"]])
     expect((await run("service", "status")).map((r) => r.args)).toEqual([["service", "status"]])
     expect((await run("--version")).map((r) => r.args)).toEqual([["--version"]])
   })

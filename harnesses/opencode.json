@@ -33,7 +33,7 @@
   "typecheck": "bun turbo typecheck --filter=\"...[${OPENMODS_REF}]\" --concurrency=2",
   "build": "OPENCODE_VERSION=\"${OPENMODS_VERSION}+${OPENMODS_MODS}\" OPENCODE_CHANNEL=openmods bun run packages/cli/script/build.ts --single --skip-install",
   "artifact": "packages/cli/dist/cli-{os}-{arch}/bin/opencode",
-  "dev": "R={root}; E=\"$R/node_modules/.openmods-dev.ts\"; printf 'Object.assign(globalThis, { OPENCODE_VERSION: \"%s\", OPENCODE_CHANNEL: \"openmods-dev\" })\\nawait import(\"../packages/cli/node_modules/@opentui/solid/scripts/preload.js\")\\nawait import(\"../packages/cli/src/index.ts\")\\n' '{version}' > \"$E.$$\" && mv -f \"$E.$$\" \"$E\" || { echo \"openmods dev: could not write $E\" >&2; exit 1; }; S=; case \"$1\" in \"\") S=1 ;; --version|-v|--help|-h) ;; -*) S=1 ;; *) [ -d \"$1\" ] && S=1 ;; esac; [ -z \"$S\" ] || bun \"$E\" service stop >/dev/null 2>&1; exec bun \"$E\"",
+  "dev": "R={root}; E=\"$R/node_modules/.openmods-dev.ts\"; printf 'Object.assign(globalThis, { OPENCODE_VERSION: \"%s\", OPENCODE_CHANNEL: \"openmods-dev\" })\\nawait import(\"../packages/cli/node_modules/@opentui/solid/scripts/preload.js\")\\nawait import(\"../packages/cli/src/index.ts\")\\n' '{version}' > \"$E.$$\" && mv -f \"$E.$$\" \"$E\" || { echo \"openmods dev: could not write $E\" >&2; exit 1; }; S=; case \"$1\" in \"\") S=1 ;; --version|-v|--help|-h) ;; -*) S=1 ;; .|..|*/*) S=1 ;; esac; [ -z \"$S\" ] || bun \"$E\" service stop >/dev/null 2>&1; exec bun \"$E\"",
   "env": {
     "OPENCODE_DISABLE_AUTOUPDATE": "1"
   },
