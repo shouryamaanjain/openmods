@@ -812,6 +812,11 @@ async function ensureToolchain(root: string): Promise<string | null> {
   return bin
 }
 
+// A failure that is not the code's: the release could not be fetched or its
+// dependencies installed. `check` reports these as not checked, so the
+// release watch tries again instead of blaming the mod.
+class Unchecked extends Error {}
+
 // A dependency install downloads thousands of packages, and on a slow or
 // flaky connection some fail. A second try usually finishes the job from
 // what the first one got.
@@ -832,7 +837,9 @@ async function typecheck(h: Harness, root: string) {
   const cmd = h.typecheck ?? fail(`${h.name} has no typecheck command in its harness definition`)
   const toolchain = await ensureToolchain(root)
   if (toolchain) buildEnv = { ...buildEnv, PATH: `${toolchain}${path.delimiter}${process.env.PATH ?? ""}` }
-  await installDeps(h, root)
+  await installDeps(h, root).catch((e: unknown) => {
+    throw new Unchecked(`could not install the dependencies: ${e instanceof Error ? e.message : String(e)}`)
+  })
   log(`Typechecking: ${cmd}`)
   await shell(cmd, root)
 }
@@ -844,7 +851,9 @@ async function build(h: Harness, root: string) {
     if (toolchain) buildEnv = { ...buildEnv, PATH: `${toolchain}${path.delimiter}${process.env.PATH ?? ""}` }
     // Only what the build needs, when the harness says what that is; a
     // typecheck and `openmods dev` install everything.
-    await installDeps(h, root, "dependencies", h.buildInstall ?? h.install)
+    await installDeps(h, root, "dependencies", h.buildInstall ?? h.install).catch((e: unknown) => {
+      throw new Unchecked(`could not install the dependencies: ${e instanceof Error ? e.message : String(e)}`)
+    })
   })
   const artifact = artifactPath(h, root)
   await step("Build", async () => {
@@ -2099,23 +2108,29 @@ async function cmdCheck() {
           await typecheck(h, root)
           result.typechecks = true
         } catch (e) {
-          result.typechecks = false
+          if (e instanceof Unchecked) result.unchecked = e.message
+          else result.typechecks = false
           result.error = e instanceof Error ? e.message : String(e)
         }
       }
-      if (has("build") && result.typechecks !== false) {
+      if (has("build") && result.typechecks !== false && !result.unchecked) {
         try {
           result.artifact = await build(h, root)
           result.builds = true
         } catch (e) {
-          result.builds = false
+          if (e instanceof Unchecked) result.unchecked = e.message
+          else result.builds = false
           result.error = e instanceof Error ? e.message : String(e)
         }
       }
     }
   } catch (e) {
-    result.applies ??= false
-    result.error = e instanceof Error ? e.message : String(e)
+    const message = e instanceof Error ? e.message : String(e)
+    // Before the patches were tried, nothing about the mod is known: the
+    // release could not be fetched or checked out.
+    if (result.applies === undefined) result.unchecked = `could not get ${ref}: ${message}`
+    else result.applies = false
+    result.error = message
   }
   if (has("json")) console.log(JSON.stringify(result, null, 2))
   else {
@@ -2123,6 +2138,7 @@ async function cmdCheck() {
     log(`  applies:    ${result.applies ? "yes" : "NO"}${result.base ? " (with the OpenMods base patch)" : ""}`)
     if (has("typecheck")) log(`  typechecks: ${result.typechecks ? "yes" : "NO"}`)
     if (has("build")) log(`  builds:     ${result.builds ? "yes" : "NO"}`)
+    if (result.unchecked) log("  not checked: the failure is not the mod's")
     if (result.error) log(`  ${String(result.error).split("\n").join("\n  ")}`)
   }
   if (result.applies !== true || (has("typecheck") && result.typechecks !== true) || (has("build") && result.builds !== true)) process.exit(1)

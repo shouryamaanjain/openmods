@@ -83,11 +83,17 @@ jobs:
           key: typecheck-${{ matrix.harness }}-${{ matrix.ref }}
           restore-keys: |
             typecheck-${{ matrix.harness }}-
+      # A check that could not run to the end still leaves what it knows; one
+      # that crashed leaves nothing, and apply counts it as not checked.
       - name: Apply and typecheck ${{ matrix.mod }} on ${{ matrix.ref }}
+        env:
+          MOD: ${{ matrix.mod }}
+          REF: ${{ matrix.ref }}
+          HARNESS: ${{ matrix.harness }}
         run: |
           mkdir -p results
-          bun cli/src/index.ts check ${{ matrix.mod }} --ref ${{ matrix.ref }} --typecheck --json --workspace work/${{ matrix.harness }} \
-            > "results/$(echo '${{ matrix.mod }}' | tr / _).json" || true
+          bun cli/src/index.ts check "$MOD" --ref "$REF" --typecheck --json --workspace "work/$HARNESS" \
+            > "results/$(echo "$MOD" | tr / _).json" || true
           cat results/*.json
       - uses: actions/upload-artifact@v4
         with:
@@ -118,6 +124,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RECIPE: ${{ needs.plan.outputs.recipe }}
+          MATRIX: ${{ needs.plan.outputs.matrix }}
         run: bun script/release-watch.ts apply results --issues
       - name: Commit
         run: |
