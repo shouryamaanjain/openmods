@@ -13,6 +13,7 @@ import path from "node:path"
 import { footprint, incompatibility as whyNot, type Footprint } from "./overlap"
 import { lastRebuild, Progress, roughly } from "./progress"
 import { managerHere, missingMessage, type Requirement } from "./requirements"
+import { sameRepo } from "./same-repo"
 
 type Harness = {
   id: string
@@ -655,21 +656,6 @@ async function checkRequirements(h: Harness) {
 async function clearApplyState(root: string) {
   await $`git -C ${root} am --abort`.nothrow().quiet()
   for (const d of ["rebase-apply", "rebase-merge"]) rmSync(path.join(root, ".git", d), { recursive: true, force: true })
-}
-
-// Two addresses of one repository: https, ssh and scp-style ones, with or
-// without .git or a default port, compare equal.
-const sameRepo = (a: string, b: string) => {
-  const norm = (u: string) =>
-    u
-      .trim()
-      .toLowerCase()
-      .replace(/^[a-z+]+:\/\/(?:[^@/]+@)?/, "")
-      .replace(/^[^@/]+@([^:/]+):/, "$1/")
-      .replace(/^([^/:]+):(?:443|22|80)\//, "$1/")
-      .replace(/\/+$/, "")
-      .replace(/\.git$/, "")
-  return norm(a) === norm(b)
 }
 
 // Makes `root` a blobless git checkout of the harness. The folder may
