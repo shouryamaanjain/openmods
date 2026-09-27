@@ -3,14 +3,15 @@
 // carry tags for prereleases or a next major nobody is meant to install yet.
 // A harness that publishes elsewhere names its own channel (latestRelease in
 // its definition): a URL answering JSON with a "version", and the tag that
-// version is released as. Anything else falls back to the newest tag.
+// version is released as. Anything else falls back to the newest release tag,
+// leaving out prereleases such as 1.2.0-rc.1.
 import { $ } from "bun"
 
 export type ReleaseSource = { repo: string; releaseTagPattern?: string; latestRelease?: { url: string; tag: string } }
 
 export async function latestRelease(h: ReleaseSource, newer: (a: string, b: string) => boolean): Promise<string> {
   if (h.latestRelease) {
-    const res = await fetch(h.latestRelease.url, { headers: { accept: "application/json" } })
+    const res = await fetch(h.latestRelease.url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(30_000) })
     if (!res.ok) throw new Error(`${h.latestRelease.url} answered ${res.status}`)
     const version = ((await res.json()) as { version?: unknown }).version
     if (typeof version !== "string" || !/^[\w.+-]+$/.test(version)) throw new Error(`${h.latestRelease.url} gave no version`)
@@ -30,6 +31,6 @@ export async function latestRelease(h: ReleaseSource, newer: (a: string, b: stri
   const tags = out
     .split("\n")
     .map((l) => l.split("\t")[1]?.replace("refs/tags/", ""))
-    .filter((t): t is string => !!t && /\d/.test(t))
+    .filter((t): t is string => !!t && /\d/.test(t) && !/\d-/.test(t))
   return tags.reduce((a, b) => (newer(b, a) ? b : a), tags[0] ?? "")
 }

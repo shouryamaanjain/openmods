@@ -148,7 +148,14 @@ async function plan() {
   const matrix: { mod: string; harness: string; ref: string }[] = []
   const recipe: RecipeCheck[] = []
   for (const h of harnesses()) {
-    const ref = flag("ref") ?? (await latestRelease(h, newer))
+    // A harness whose release channel cannot be reached this time is skipped;
+    // the others are still checked, and it is tried again next hour.
+    const ref =
+      flag("ref") ??
+      (await latestRelease(h, newer).catch((e) => {
+        console.error(`${h.id}: could not tell its newest release: ${e instanceof Error ? e.message : e}`)
+        return ""
+      }))
     if (!ref) continue
     latest[h.id] = ref
     const mods = modDirs(h.id).map((dir) => ({ dir, mod: readJson(path.join(dir, "support.json")), status: readJson(path.join(dir, "status.json")) }))
