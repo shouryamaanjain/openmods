@@ -10,7 +10,7 @@ copies a report, with the version, which names the mods, for them to read
 and paste into an OpenMods issue.
 
 diff --git a/packages/tui/src/component/error-component.tsx b/packages/tui/src/component/error-component.tsx
-index 48ad4b107d755a296266c89ceb7479b6bd771b18..4c109db8248520247f0a41d0a72cf8f440b8e83f 100644
+index 48ad4b107d755a296266c89ceb7479b6bd771b18..dedff679aac2d7f5b1430f53eb2f10469ae26835 100644
 --- a/packages/tui/src/component/error-component.tsx
 +++ b/packages/tui/src/component/error-component.tsx
 @@ -43,11 +43,11 @@ export function ErrorComponent(props: { error: Error; reset: () => void; mode?:
@@ -32,7 +32,7 @@ index 48ad4b107d755a296266c89ceb7479b6bd771b18..4c109db8248520247f0a41d0a72cf8f4
              <text fg={colors.muted}>
                {copyState() === "copied"
 -                ? "Report copied — paste it into a new GitHub issue."
-+                ? "Report copied — read it, then paste it into a new issue at github.com/shouryamaanjain/openmods/issues/new"
++                ? "Report copied — read it, then open a new issue at github.com/shouryamaanjain/openmods/issues/new: its first line is the title, the rest the body."
                  : copyState() === "failed"
                    ? "Clipboard write failed. Try again or report the crash manually."
 -                  : "Copy the report and open a GitHub issue to help us fix this."}
