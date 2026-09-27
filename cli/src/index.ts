@@ -7,7 +7,7 @@
 // The stock install of the harness is never touched.
 
 import { $ } from "bun"
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
+import { cpSync, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
 import { cpus, homedir, tmpdir, totalmem } from "node:os"
 import path from "node:path"
 import { footprint, incompatibility as whyNot, type Footprint } from "./overlap"
@@ -1354,6 +1354,7 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
   // Only now that there is something to build: turning mods off or removing
   // them needs none of it.
   await checkRequirements(h)
+  holdBuildLock(harnessId, h)
   const base = mods[0]!.upstream
   const builds = path.join(HOME, "harnesses", harnessId, "builds")
   const first = !existsSync(builds) || readdirSync(builds).length === 0
@@ -1369,6 +1370,7 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     OPENMODS_MODS: stampOf(mods.filter((m) => m.id !== BASE_ID)),
   }
   await build(h, root).catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)))
+  const was = state[harnessId]?.ref
   const artifact = keepBuild(h, harnessId, root, `${rel(base.ref)}+${stampOf(mods.filter((m) => m.id !== BASE_ID))}`)
   progress = undefined
   switchOn(h, artifact)
@@ -1385,7 +1387,120 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
   saveState(state)
   // The launcher's note described the build this replaces.
   rmSync(path.join(HOME, "updates", harnessId), { force: true })
+  await tidy(root, base.ref, !!was && was !== base.ref)
   await explainSwitch(h, state[harnessId]!)
+}
+
+// One build of a harness at a time: two would check out and patch the same
+// checkout at once. Held until this process exits. A lock is someone else's
+// only while its process runs and started before the lock was written, so a
+// lock left by a killed build is taken over even if its process id has been
+// reused since.
+function holdBuildLock(harnessId: string, h: Harness) {
+  const lock = path.join(HOME, "harnesses", harnessId, "build.lock")
+  mkdirSync(path.dirname(lock), { recursive: true })
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      writeFileSync(lock, String(process.pid), { flag: "wx" })
+      process.on("exit", () => {
+        try {
+          if (readFileSync(lock, "utf8") === String(process.pid)) rmSync(lock, { force: true })
+        } catch {}
+      })
+      return
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e
+    }
+    let held: string
+    let written: number
+    try {
+      held = readFileSync(lock, "utf8")
+      written = lstatSync(lock).mtimeMs
+    } catch {
+      continue
+    }
+    const pid = Number(held)
+    if (lockOwnerRuns(pid, written)) fail(`another openmods is building ${h.name} right now (process ${pid}). Try again when it finishes.`)
+    // Moved aside, not removed: if another openmods took the lock over first,
+    // what was moved is its lock, and it goes back.
+    const aside = `${lock}.${process.pid}`
+    try {
+      renameSync(lock, aside)
+    } catch {
+      continue
+    }
+    if (readFileSync(aside, "utf8") !== held) {
+      try {
+        linkSync(aside, lock)
+      } catch {}
+      rmSync(aside, { force: true })
+      fail(`another openmods is building ${h.name} right now. Try again when it finishes.`)
+    }
+    rmSync(aside, { force: true })
+  }
+  fail(`could not take the ${h.name} build lock at ${pretty(lock)}`)
+}
+
+// Whether a lock's process still runs and is the one that wrote it: it
+// started before the lock was written. Without ps to ask, a lock is trusted
+// for 12 hours, longer than any build.
+function lockOwnerRuns(pid: number, written: number) {
+  if (!(pid > 0) || pid === process.pid) return false
+  try {
+    process.kill(pid, 0)
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "EPERM") return false
+  }
+  const r = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)])
+  const started = Date.parse(r.stdout.toString().trim())
+  if (r.exitCode !== 0 || Number.isNaN(started)) return Date.now() - written < 12 * 3_600_000
+  // ps gives the second, and on Linux can be a second early.
+  return started <= written + 2000
+}
+
+// After a build, what this machine no longer needs goes, so disk use stays
+// about where one build of each harness puts it, however many updates come.
+// `moved` is the release a harness just moved to from another one. A harness's
+// own build folder keeps itself in check in its recipe (Codex's does). All of
+// it is best-effort: a build that worked never fails for it.
+async function tidy(root: string, ref: string, moved: boolean) {
+  try {
+    // The old releases' tags, and what only they reached. Checked on every
+    // build, so a cleanup that failed is tried again; a later build of an
+    // older release fetches it again.
+    const tags = (await $`git -C ${root} tag`.nothrow().quiet().text()).split("\n").filter((t) => t && t !== ref)
+    if (tags.length) {
+      await $`git -C ${root} tag -d ${tags}`.nothrow().quiet()
+      await $`git -C ${root} reflog expire --expire=now --all`.nothrow().quiet()
+      await $`git -C ${root} gc --prune=now --quiet`.nothrow().quiet()
+    }
+    // Bun's download cache holds the old release's packages too; what the new
+    // one uses is installed in the checkout already.
+    if (moved && existsSync(path.join(root, "bun.lock"))) rmSync(path.join(HOME, "cache", "bun"), { recursive: true, force: true })
+    // Bun versions nothing uses now: kept are the one openmods itself runs on,
+    // those the harnesses' releases pin, those a dev clone runs with, and any
+    // put there in the last hour, which another openmods may be setting up.
+    const dir = path.join(HOME, "toolchains")
+    if (!existsSync(dir)) return
+    const keep = new Set([`bun-${process.versions.bun}`])
+    const own = existsSync(path.join(BIN, "openmods")) ? readFileSync(path.join(BIN, "openmods"), "utf8").match(/toolchains\/(bun-[^/\s]+)\//) : null
+    if (own) keep.add(own[1]!)
+    // A harness whose pin cannot be read might need any of them: none go.
+    for (const id of Object.keys(loadState())) {
+      const pkg = path.join(HOME, "harnesses", id, "src", "package.json")
+      if (!existsSync(pkg)) continue
+      const pin = String(JSON.parse(readFileSync(pkg, "utf8")).packageManager ?? "").match(/^bun@(\d+\.\d+\.\d+)/)
+      if (pin) keep.add(`bun-${pin[1]}`)
+    }
+    for (const d of Object.values(loadDev())) if (d.toolchain) keep.add(path.basename(path.dirname(d.toolchain)))
+    for (const name of readdirSync(dir)) {
+      if (!name.startsWith("bun-") || keep.has(name)) continue
+      try {
+        if (Date.now() - lstatSync(path.join(dir, name)).mtimeMs < 3_600_000) continue
+        rmSync(path.join(dir, name), { recursive: true, force: true })
+      } catch {}
+    }
+  } catch {}
 }
 
 // ---------------------------------------------------------------- commands
