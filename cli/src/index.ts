@@ -658,7 +658,7 @@ async function clearApplyState(root: string) {
 }
 
 // Two addresses of one repository: https, ssh and scp-style ones, with or
-// without .git, compare equal.
+// without .git or a default port, compare equal.
 const sameRepo = (a: string, b: string) => {
   const norm = (u: string) =>
     u
@@ -666,6 +666,7 @@ const sameRepo = (a: string, b: string) => {
       .toLowerCase()
       .replace(/^[a-z+]+:\/\/(?:[^@/]+@)?/, "")
       .replace(/^[^@/]+@([^:/]+):/, "$1/")
+      .replace(/^([^/:]+):(?:443|22|80)\//, "$1/")
       .replace(/\/+$/, "")
       .replace(/\.git$/, "")
   return norm(a) === norm(b)

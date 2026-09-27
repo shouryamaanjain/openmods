@@ -171,6 +171,11 @@ describe("apply", () => {
     writeFileSync(status, JSON.stringify({ tested: "v1.0.5", ok: true, unchecked: { ref: "v1.1.0", runs: 1, error: "x", checked: "t" } }))
     rmSync(ghLog(), { force: true })
     expect((await watchWithIssues("plan", "--ref", "v1.1.0")).find((c) => c.startsWith("issue close"))).toStartWith("issue close 8")
+    // An alert for the release that still cannot be checked stands, whatever told before.
+    writeFileSync(status, JSON.stringify({ tested: "v1.2.0", ok: true, unchecked: { ref: "v1.1.0", runs: 3, issued: true, error: "x", checked: "t" } }))
+    writeFileSync(ghIssues(), JSON.stringify([{ number: 9, title: "The release watch could not check t/counted on Fake 1.1.0" }]))
+    rmSync(ghLog(), { force: true })
+    expect((await watchWithIssues("plan", "--ref", "v1.1.0")).some((c) => c.startsWith("issue close"))).toBe(false)
     writeFileSync(status, before)
   })
   test("a verdict closes the mod's could-not-check issues, for any release", async () => {
@@ -207,7 +212,7 @@ describe("apply", () => {
 describe("recipe alerts", () => {
   const changed = (to: string) => JSON.stringify([{ harness: "fake", name: "Fake", from: "v1.1.0", to, state: "changed", changes: ["-compiler=1", "+compiler=2"] }])
   test("an older release's recipe issue closes only once the newer release's issue is open to replace it", async () => {
-    writeFileSync(ghIssues(), JSON.stringify([{ number: 5, title: "Fake 1.2.0 changed the OpenMods build recipe" }]))
+    writeFileSync(ghIssues(), JSON.stringify([{ number: 5, title: "Fake 1.2.0 changed the OpenMods build recipe" }, { number: 4, title: "Fake 1.3.0-rc1 changed the OpenMods build recipe" }]))
     const empty = path.join(sb.T, "no-results")
     mkdirSync(empty, { recursive: true })
     writeFileSync(ghFails(), "issue create")
@@ -218,7 +223,7 @@ describe("recipe alerts", () => {
     rmSync(ghFails())
     rmSync(ghLog(), { force: true })
     calls = await watchWithIssues("apply", empty, "--recipe", changed("v1.3.0"))
-    expect(calls.find((c) => c.startsWith("issue close"))).toStartWith("issue close 5")
+    expect(calls.filter((c) => c.startsWith("issue close")).map((c) => c.split(" ")[2]).sort()).toEqual(["4", "5"])
     rmSync(ghIssues())
   })
   test("while a harness is held, each hourly plan makes sure its recipe issue is open", async () => {

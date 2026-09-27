@@ -166,10 +166,10 @@ async function closeFixed() {
     if (!h) continue
     const dir = path.join(root, "mods", ...id.split("/"), h.id)
     const status = readJson(path.join(dir, "status.json"))
-    // Still unchecked and no verdict since this release: the alert stands.
-    // A check that told at this release or a later one settles it.
+    // It stands while this release is the one that cannot be checked, or,
+    // when a newer one is, until a check told at this release or later.
     const told = status?.tested && !newer(release, status.tested)
-    if (existsSync(dir) && status?.unchecked && !told) continue
+    if (existsSync(dir) && status?.unchecked && (rel(status.unchecked.ref) === release || !told)) continue
     const why = existsSync(dir) ? "A check got through, so this is settled." : `${id} is no longer in the registry.`
     const closed = await $`gh issue close ${String(issue.number)} --repo ${repo} --comment ${why}`.nothrow().quiet()
     console.error(closed.exitCode === 0 ? `closed #${issue.number}: ${why}` : `could not close #${issue.number}: ${closed.stderr.toString().trim()}`)
@@ -319,8 +319,10 @@ async function closeOtherRecipeIssues(name: string, ref: string, comment: string
   const list = (await $`gh issue list --repo ${repo} --state open --label "build recipe" --json number,title`.nothrow().text()).trim()
   // Only older releases': a manual run at an older release leaves newer ones.
   const suffix = " changed the OpenMods build recipe"
+  // A prerelease (1.2.0-rc1) is older than its release (1.2.0).
+  const older = (t: string) => newer(ref, t) || (!newer(t, ref) && t.includes("-") && !rel(ref).includes("-"))
   for (const issue of list ? (JSON.parse(list) as { number: number; title: string }[]) : [])
-    if (issue.title.startsWith(`${name} `) && issue.title.endsWith(suffix) && newer(ref, issue.title.slice(name.length + 1, -suffix.length)))
+    if (issue.title.startsWith(`${name} `) && issue.title.endsWith(suffix) && older(issue.title.slice(name.length + 1, -suffix.length)))
       await $`gh issue close ${String(issue.number)} --repo ${repo} --comment ${comment}`.nothrow()
 }
 
