@@ -1369,6 +1369,7 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     OPENMODS_MODS: stampOf(mods.filter((m) => m.id !== BASE_ID)),
   }
   await build(h, root).catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)))
+  const was = state[harnessId]?.ref
   const artifact = keepBuild(h, harnessId, root, `${rel(base.ref)}+${stampOf(mods.filter((m) => m.id !== BASE_ID))}`)
   progress = undefined
   switchOn(h, artifact)
@@ -1385,7 +1386,42 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
   saveState(state)
   // The launcher's note described the build this replaces.
   rmSync(path.join(HOME, "updates", harnessId), { force: true })
+  await tidy(root, was && was !== base.ref ? base.ref : undefined)
   await explainSwitch(h, state[harnessId]!)
+}
+
+// After a build, what this machine no longer needs goes, so disk use stays
+// about where one build of each harness puts it, however many updates come.
+// `moved` is the release a harness just moved to from another one. A harness's
+// own build folder keeps itself in check in its recipe (Codex's does).
+async function tidy(root: string, moved?: string) {
+  if (moved) {
+    // The old releases' tags, and what only they reached. A later build of an
+    // older release fetches it again.
+    const tags = (await $`git -C ${root} tag`.nothrow().quiet().text()).split("\n").filter((t) => t && t !== moved)
+    if (tags.length) {
+      await $`git -C ${root} tag -d ${tags}`.nothrow().quiet()
+      await $`git -C ${root} reflog expire --expire=now --all`.nothrow().quiet()
+      await $`git -C ${root} gc --prune=now --quiet`.nothrow().quiet()
+    }
+    // Bun's download cache holds the old release's packages too; what the new
+    // one uses is installed in the checkout already.
+    if (existsSync(path.join(root, "bun.lock"))) rmSync(path.join(HOME, "cache", "bun"), { recursive: true, force: true })
+  }
+  // Bun versions nothing uses now: kept are the one openmods itself runs on,
+  // those the harnesses' releases pin, and those a dev clone runs with.
+  const dir = path.join(HOME, "toolchains")
+  if (!existsSync(dir)) return
+  const keep = new Set([`bun-${process.versions.bun}`])
+  const own = existsSync(path.join(BIN, "openmods")) ? readFileSync(path.join(BIN, "openmods"), "utf8").match(/toolchains\/(bun-[^/\s]+)\//) : null
+  if (own) keep.add(own[1]!)
+  for (const id of Object.keys(loadState())) {
+    const pkg = path.join(HOME, "harnesses", id, "src", "package.json")
+    const pin = existsSync(pkg) ? String(JSON.parse(readFileSync(pkg, "utf8")).packageManager ?? "").match(/^bun@(\d+\.\d+\.\d+)/) : null
+    if (pin) keep.add(`bun-${pin[1]}`)
+  }
+  for (const d of Object.values(loadDev())) if (d.toolchain) keep.add(path.basename(path.dirname(d.toolchain)))
+  for (const name of readdirSync(dir)) if (name.startsWith("bun-") && !keep.has(name)) rmSync(path.join(dir, name), { recursive: true, force: true })
 }
 
 // ---------------------------------------------------------------- commands
