@@ -32,7 +32,8 @@ beforeAll(async () => {
   const preload = path.join(clone, "packages", "cli", "node_modules", "@opentui", "solid", "scripts")
   mkdirSync(preload, { recursive: true })
   mkdirSync(path.join(clone, "node_modules"), { recursive: true })
-  mkdirSync(path.join(clone, "packages", "cli", "src"), { recursive: true })
+  mkdirSync(path.join(clone, "packages", "cli", "src", "commands"), { recursive: true })
+  writeFileSync(path.join(clone, "packages", "cli", "src", "commands", "commands.ts"), 'Spec.make("run", {})\nSpec.make("service", {})\n')
   writeFileSync(path.join(preload, "preload.js"), "globalThis.PRELOADED = true\n")
   writeFileSync(
     path.join(clone, "packages", "cli", "src", "index.ts"),
@@ -54,6 +55,12 @@ describe("OpenCode 2 dev mode", () => {
     expect((await run()).map((r) => r.args)).toEqual([["service", "stop"], []])
     expect((await run("--model", "x")).map((r) => r.args)).toEqual([["service", "stop"], ["--model", "x"]])
     expect((await run(sb.T)).map((r) => r.args)).toEqual([["service", "stop"], [sb.T]])
+    // A bare folder name, when it is not one of the clone's commands.
+    mkdirSync(path.join(sb.T, "my-project"), { recursive: true })
+    rmSync(log, { force: true })
+    const bare = await $`sh ${launcher()} my-project`.cwd(sb.T).env({ ...process.env, LOG: log }).nothrow().quiet()
+    expect(bare.exitCode).toBe(0)
+    expect(readFileSync(log, "utf8").trim().split("\n").map((l) => JSON.parse(l).args)).toEqual([["service", "stop"], ["my-project"]])
   })
   test("subcommands and --version leave the server running, for a session open elsewhere", async () => {
     expect((await run("run", "hello")).map((r) => r.args)).toEqual([["run", "hello"]])
