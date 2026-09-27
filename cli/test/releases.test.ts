@@ -70,6 +70,22 @@ describe("check", () => {
 
 describe("release watch", () => {
   let recipe = "[]"
+  test("follows a harness's own release channel when its definition names one, not its newest tag", async () => {
+    const server = Bun.serve({ port: 0, fetch: () => Response.json({ version: "1.0.0" }) })
+    const file = path.join(sb.reg, "harnesses", "fake.json")
+    const h = readFileSync(file, "utf8")
+    writeFileSync(file, JSON.stringify({ ...JSON.parse(h), latestRelease: { url: `http://127.0.0.1:${server.port}/latest`, tag: "v{version}" } }))
+    try {
+      const r = await script(sb, WATCH, "plan", "--registry", sb.reg)
+      expect(r.code, r.err).toBe(0)
+      const j = JSON.parse(r.out)
+      expect(j.matrix).toEqual([])
+      expect(j.recipe).toEqual([])
+    } finally {
+      writeFileSync(file, h)
+      server.stop(true)
+    }
+  })
   test("plan lists mods not yet on the release, after finding the recipe unchanged", async () => {
     const r = await script(sb, WATCH, "plan", "--ref", "v1.1.0", "--registry", sb.reg)
     expect(r.code).toBe(0)

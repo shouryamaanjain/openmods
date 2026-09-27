@@ -185,6 +185,27 @@
       "type": "string",
       "description": "Glob for release tags, used by the compatibility checker."
     },
+    "latestRelease": {
+      "type": "object",
+      "description": "Where the harness's own release channel says which release is newest, for a harness that does not publish its releases on GitHub. The URL answers JSON with a \"version\"; the release watch builds the tag from it. Without this, the newest GitHub release is used.",
+      "required": [
+        "url",
+        "tag"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "type": "string",
+          "pattern": "^https://",
+          "description": "URL answering JSON with a \"version\" field."
+        },
+        "tag": {
+          "type": "string",
+          "pattern": "\\{version\\}",
+          "description": "The release tag, with {version} in place of the version, e.g. v{version}."
+        }
+      }
+    },
     "typecheck": {
       "type": "string",
       "description": "Shell command run in the checkout root that type-checks the harness without producing a binary, e.g. cargo check or tsc. The release watch uses it to verify mods against a new release; the full build runs once per harness release and on a mod's pull request."
