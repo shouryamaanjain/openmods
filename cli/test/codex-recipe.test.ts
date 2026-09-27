@@ -22,11 +22,13 @@ writeFileSync(
 chmodSync(path.join(bin, "rustc"), 0o755)
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
-// The --target a command passes, worked out in the folder it runs that part from.
+// The --target a command passes, worked out in the folder it runs that part
+// from: the command inside its "$(...)" is run by a fixed shell program, as
+// its argument.
 async function target(command: string, cwd: string) {
-  const sub = command.match(/--target "(\$\([^"]*\))"/)?.[1]
-  expect(sub, command).toBeDefined()
-  const r = await $`sh -c ${`printf '%s' "${sub}"`}`.cwd(cwd).env({ ...process.env, PATH: `${bin}:${process.env.PATH}` }).nothrow().quiet()
+  const inner = command.match(/--target "\$\(([^"]*)\)"/)?.[1]
+  expect(inner, command).toBeDefined()
+  const r = await $`sh -c ${'printf "%s" "$(eval "$1")"'} sh ${inner!}`.cwd(cwd).env({ ...process.env, PATH: `${bin}:${process.env.PATH}` }).nothrow().quiet()
   return r.stdout.toString()
 }
 
