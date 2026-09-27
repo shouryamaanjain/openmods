@@ -9,7 +9,7 @@ now asks people to check with `openmods off` and opens an OpenMods
 issue, with the version, which names the mods.
 
 diff --git a/packages/tui/src/component/error-component.tsx b/packages/tui/src/component/error-component.tsx
-index 48ad4b107d755a296266c89ceb7479b6bd771b18..937445d86ac50f55ec9bb30907d04ad6b2a939f8 100644
+index 48ad4b107d755a296266c89ceb7479b6bd771b18..ad905e895e5abf7f1a7685389f8ce0f1dbf16d81 100644
 --- a/packages/tui/src/component/error-component.tsx
 +++ b/packages/tui/src/component/error-component.tsx
 @@ -205,10 +205,10 @@ export function ErrorComponent(props: { error: Error; reset: () => void; mode?:
@@ -21,7 +21,7 @@ index 48ad4b107d755a296266c89ceb7479b6bd771b18..937445d86ac50f55ec9bb30907d04ad6
                  : copyState() === "failed"
                    ? "Clipboard write failed. Try again or report the crash manually."
 -                  : "Copy the report and open a GitHub issue to help us fix this."}
-+                  : "This is a modded OpenCode. Check it with `openmods off`, then report it to OpenMods."}
++                  : "A modded OpenCode: if stock OpenCode (`openmods off`) crashes too, report it to OpenCode; if not, copy the report for OpenMods."}
              </text>
              <text fg={colors.muted}>OpenCode {app.version}</text>
            </box>
