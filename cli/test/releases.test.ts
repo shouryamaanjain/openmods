@@ -70,6 +70,64 @@ describe("check", () => {
 
 describe("release watch", () => {
   let recipe = "[]"
+  test("a release channel that cannot be reached skips that harness, and the run goes on", async () => {
+    const server = Bun.serve({ port: 0, fetch: () => new Response("down", { status: 503 }) })
+    const file = path.join(sb.reg, "harnesses", "fake.json")
+    const h = readFileSync(file, "utf8")
+    writeFileSync(file, JSON.stringify({ ...JSON.parse(h), latestRelease: { url: `http://127.0.0.1:${server.port}/latest`, tag: "v{version}" } }))
+    try {
+      const r = await script(sb, WATCH, "plan", "--registry", sb.reg)
+      expect(r.code, r.err).toBe(0)
+      expect(r.err).toContain("fake: could not tell its newest release")
+      expect(JSON.parse(r.out).matrix).toEqual([])
+    } finally {
+      writeFileSync(file, h)
+      server.stop(true)
+    }
+  })
+  test("the registry check refuses a release channel without an https URL and a tag with {version}", async () => {
+    const file = path.join(sb.reg, "harnesses", "fake.json")
+    const h = readFileSync(file, "utf8")
+    writeFileSync(file, JSON.stringify({ ...JSON.parse(h), latestRelease: { url: "https://example.invalid/latest", tag: ["v{version}"] } }))
+    try {
+      const r = await Bun.$`bun ${path.resolve(import.meta.dir, "../../script/validate.ts")} --registry ${sb.reg}`.nothrow().quiet()
+      expect(r.stderr.toString()).toContain('latestRelease needs an https "url" and a "tag" with {version} in it')
+    } finally {
+      writeFileSync(file, h)
+    }
+  })
+  test("the site shows the release a harness's channel names", async () => {
+    const server = Bun.serve({ port: 0, fetch: () => Response.json({ version: "9.9.9" }) })
+    const file = path.join(sb.reg, "harnesses", "fake.json")
+    const h = readFileSync(file, "utf8")
+    writeFileSync(file, JSON.stringify({ ...JSON.parse(h), latestRelease: { url: `http://127.0.0.1:${server.port}/latest`, tag: "v{version}" } }))
+    try {
+      const out = path.join(sb.T, "site-channel")
+      const r = await script(sb, SITE, "--registry", sb.reg, "--out", out)
+      expect(r.code, r.err).toBe(0)
+      const index = JSON.parse(readFileSync(path.join(out, "index.json"), "utf8"))
+      expect(index.harnesses.find((x: { id: string }) => x.id === "fake")).toMatchObject({ tag: "v9.9.9" })
+    } finally {
+      writeFileSync(file, h)
+      server.stop(true)
+    }
+  })
+  test("follows a harness's own release channel when its definition names one, not its newest tag", async () => {
+    const server = Bun.serve({ port: 0, fetch: () => Response.json({ version: "1.0.0" }) })
+    const file = path.join(sb.reg, "harnesses", "fake.json")
+    const h = readFileSync(file, "utf8")
+    writeFileSync(file, JSON.stringify({ ...JSON.parse(h), latestRelease: { url: `http://127.0.0.1:${server.port}/latest`, tag: "v{version}" } }))
+    try {
+      const r = await script(sb, WATCH, "plan", "--registry", sb.reg)
+      expect(r.code, r.err).toBe(0)
+      const j = JSON.parse(r.out)
+      expect(j.matrix).toEqual([])
+      expect(j.recipe).toEqual([])
+    } finally {
+      writeFileSync(file, h)
+      server.stop(true)
+    }
+  })
   test("plan lists mods not yet on the release, after finding the recipe unchanged", async () => {
     const r = await script(sb, WATCH, "plan", "--ref", "v1.1.0", "--registry", sb.reg)
     expect(r.code).toBe(0)

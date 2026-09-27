@@ -21,6 +21,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { $ } from "bun"
+import { latestRelease } from "../cli/src/latest-release"
 
 const args = process.argv.slice(2)
 const flag = (k: string) => {
@@ -73,28 +74,6 @@ const codeOf = (texts: string[]) =>
 
 const readJson = (file: string) => (existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : undefined)
 const writeJson = (file: string, data: unknown) => writeFileSync(file, JSON.stringify(data, null, 2) + "\n")
-
-// The newest release, not the newest tag: a repo can carry tags for
-// prereleases or a next major that nobody is meant to install yet. On GitHub
-// the releases API answers that directly; elsewhere fall back to tags.
-async function latestTag(h: { repo: string; releaseTagPattern?: string }) {
-  const gh = h.repo.match(/github\.com\/([^/]+)\/([^/.]+)/)
-  if (gh) {
-    const res = await fetch(`https://api.github.com/repos/${gh[1]}/${gh[2]}/releases/latest`, {
-      headers: { accept: "application/vnd.github+json", ...(process.env.GH_TOKEN ? { authorization: `Bearer ${process.env.GH_TOKEN}` } : {}) },
-    })
-    if (res.ok) {
-      const tag = ((await res.json()) as { tag_name?: string }).tag_name
-      if (tag) return tag
-    }
-  }
-  const out = await $`git ls-remote --tags --refs ${h.repo} ${"refs/tags/" + (h.releaseTagPattern ?? "*")}`.text()
-  const tags = out
-    .split("\n")
-    .map((l) => l.split("\t")[1]?.replace("refs/tags/", ""))
-    .filter((t): t is string => !!t && /\d/.test(t))
-  return tags.reduce((a, b) => (newer(b, a) ? b : a), tags[0] ?? "")
-}
 
 type RecipeEntry = { file: string; lines?: string }
 type RecipeCheck = { harness: string; name: string; from: string; to: string; state: "unchanged" | "changed" | "held"; changes: string[] }
@@ -169,7 +148,14 @@ async function plan() {
   const matrix: { mod: string; harness: string; ref: string }[] = []
   const recipe: RecipeCheck[] = []
   for (const h of harnesses()) {
-    const ref = flag("ref") ?? (await latestTag(h))
+    // A harness whose release channel cannot be reached this time is skipped;
+    // the others are still checked, and it is tried again next hour.
+    const ref =
+      flag("ref") ??
+      (await latestRelease(h, newer).catch((e) => {
+        console.error(`${h.id}: could not tell its newest release: ${e instanceof Error ? e.message : e}`)
+        return ""
+      }))
     if (!ref) continue
     latest[h.id] = ref
     const mods = modDirs(h.id).map((dir) => ({ dir, mod: readJson(path.join(dir, "support.json")), status: readJson(path.join(dir, "status.json")) }))

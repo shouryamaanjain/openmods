@@ -31,6 +31,9 @@ for (const id of harnesses) {
     if (h.installer?.paths !== undefined && (!Array.isArray(h.installer.paths) || h.installer.paths.some((p: unknown) => typeof p !== "string")))
       errors.push(`harnesses/${id}.json: installer.paths must be a list of folders`)
   }
+  const channel = h.latestRelease
+  if (channel !== undefined && (typeof channel?.url !== "string" || !/^https:\/\//.test(channel.url) || typeof channel.tag !== "string" || !channel.tag.includes("{version}")))
+    errors.push(`harnesses/${id}.json: latestRelease needs an https "url" and a "tag" with {version} in it`)
   if (h.keep !== undefined && (typeof h.keep !== "string" || !String(h.artifact).startsWith(`${h.keep.replace(/\/+$/, "")}/`)))
     errors.push(`harnesses/${id}.json: keep must be a folder that contains the artifact`)
   for (const r of h.requirements ?? []) {

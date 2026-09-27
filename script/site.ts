@@ -13,6 +13,7 @@ import { homedir } from "node:os"
 import path from "node:path"
 import { marked } from "marked"
 import { footprint, incompatibility, type Footprint } from "../cli/src/overlap"
+import { latestRelease as releaseOf } from "../cli/src/latest-release"
 import { COMMANDS, ENVIRONMENT, FILES, GLOBAL_FLAGS, INTRO } from "../cli/src/reference"
 
 const args = process.argv.slice(2)
@@ -26,7 +27,7 @@ const REPO = process.env.SITE_REPO ?? "shouryamaanjain/openmods"
 const SITE_NAME = "OpenMods"
 const SITE_URL = (process.env.SITE_URL ?? "").replace(/\/$/, "")
 
-type Harness = { id: string; name: string; repo: string; homepage?: string; language?: string; binary: string; releaseTagPattern?: string; latest?: string }
+type Harness = { id: string; name: string; repo: string; homepage?: string; language?: string; binary: string; releaseTagPattern?: string; latestRelease?: { url: string; tag: string }; latest?: string }
 // One mod on one harness: mods/<owner>/<name>/<harness>/, with the shared
 // mod.json fields. An Entry groups a mod's harnesses under its owner/name.
 type Mod = {
@@ -68,15 +69,11 @@ const newer = (a: string, b: string) => {
 async function latestRelease(h: Harness, mods: Mod[]) {
   const fallback = mods.map((m) => m.upstream.ref).reduce((a, b) => (newer(b, a) ? b : a), "")
   if (args.includes("--offline")) return fallback
-  const gh = h.repo.match(/github\.com\/([^/]+)\/([^/.]+)/)
-  if (!gh) return fallback
   try {
-    const res = await fetch(`https://api.github.com/repos/${gh[1]}/${gh[2]}/releases/latest`, {
-      headers: { accept: "application/vnd.github+json", ...(process.env.GH_TOKEN ? { authorization: `Bearer ${process.env.GH_TOKEN}` } : {}) },
-    })
-    if (res.ok) return ((await res.json()) as { tag_name?: string }).tag_name ?? fallback
-  } catch {}
-  return fallback
+    return (await releaseOf(h, newer)) || fallback
+  } catch {
+    return fallback
+  }
 }
 
 function parsePatches(dir: string, patches: string[]) {

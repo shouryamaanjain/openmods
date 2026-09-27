@@ -8,7 +8,7 @@
   "language": "TypeScript (Bun, SolidJS, opentui)",
   "binary": "opencode",
   "installer": {
-    "command": "curl -fsSL https://opencode.ai/install | bash",
+    "command": "curl -fsSL https://opencode.ai/v2/install | bash",
     "paths": [
       "~/.opencode/bin"
     ]
@@ -31,15 +31,18 @@
   ],
   "install": "bun install --ignore-scripts",
   "typecheck": "bun turbo typecheck --filter=\"...[${OPENMODS_REF}]\" --concurrency=2",
-  "build": "OPENCODE_VERSION=\"${OPENMODS_VERSION}+${OPENMODS_MODS}\" OPENCODE_CHANNEL=openmods bun run packages/opencode/script/build.ts --single --skip-install",
-  "artifact": "packages/opencode/dist/opencode-{os}-{arch}/bin/opencode",
-  "dev": "exec bun --preload={root}/packages/opencode/node_modules/@opentui/solid/scripts/preload.js --define 'OPENCODE_VERSION=\"{version}\"' --define 'OPENCODE_CHANNEL=\"openmods\"' {root}/packages/opencode/src/index.ts",
+  "build": "OPENCODE_VERSION=\"${OPENMODS_VERSION}+${OPENMODS_MODS}\" OPENCODE_CHANNEL=openmods bun run packages/cli/script/build.ts --single --skip-install",
+  "artifact": "packages/cli/dist/cli-{os}-{arch}/bin/opencode",
+  "dev": "exec bun --preload={root}/packages/cli/node_modules/@opentui/solid/scripts/preload.js --define 'OPENCODE_VERSION=\"{version}\"' --define 'OPENCODE_CHANNEL=\"openmods\"' {root}/packages/cli/src/index.ts",
   "env": {
     "OPENCODE_DISABLE_AUTOUPDATE": "1"
   },
   "recipe": [
     {
-      "file": "packages/opencode/script/build.ts"
+      "file": "packages/cli/script/build.ts"
+    },
+    {
+      "file": "packages/cli/script/app-assets.ts"
     },
     {
       "file": "packages/script/src/index.ts"
@@ -52,5 +55,9 @@
       "file": "turbo.json"
     }
   ],
-  "releaseTagPattern": "v*"
+  "releaseTagPattern": "v*",
+  "latestRelease": {
+    "url": "https://opencode.ai/update/api/latest/cli/npm",
+    "tag": "v{version}"
+  }
 }

@@ -4,12 +4,12 @@
 
 ```sh
 git clone https://github.com/anomalyco/opencode && cd opencode
-git checkout v1.18.31
+git checkout v2.0.18
 ```
 
 Pick the latest release tag, not the default branch. Mods are pinned to releases because that is what users have installed and what CI can reproduce.
 
-Use the Bun version the release pins in its `package.json` `packageManager` field; `openmods` does this for you when it builds, but for your own dev runs install it with `curl -fsSL https://bun.sh/install | bash -s bun-v1.3.14`. Change whatever you want. Commit as you go; each commit becomes one patch, so keep them meaningful (`feat(tui): add vim keys to the session list`). Keep the harness's own tests and typecheck passing:
+Use the Bun version the release pins in its `package.json` `packageManager` field; `openmods` does this for you when it builds, but for your own dev runs install it with `curl -fsSL https://bun.sh/install | bash -s bun-v1.4.2`. Change whatever you want. Commit as you go; each commit becomes one patch, so keep them meaningful (`feat(tui): add vim keys to the session list`). Keep the harness's own tests and typecheck passing:
 
 ```sh
 cd packages/tui && bun run typecheck
@@ -43,7 +43,7 @@ openmods pack . --name my-mod --registry ../openmods
 
 A mod is named `<owner>/<name>`, where the owner is your GitHub handle, in lowercase. `pack` reads it from `git config github.user`, else from the GitHub CLI; pass `--owner` to set it.
 
-`--local` writes the mod under `~/.openmods/local`, where it is installable but not part of the registry. Without it, `pack` finds the release tag below your commits, runs `git format-patch`, and writes `mods/<owner>/my-mod/` with a `mod.json`, a README stub, and an `opencode/` folder holding `support.json` and a folder of patches named after the release, such as `v1.18.31/`. Fill in the description, tags, and license. Describe what the mod changes and why in the README; that page is what people read before they build it.
+`--local` writes the mod under `~/.openmods/local`, where it is installable but not part of the registry. Without it, `pack` finds the release tag below your commits, runs `git format-patch`, and writes `mods/<owner>/my-mod/` with a `mod.json`, a README stub, and an `opencode/` folder holding `support.json` and a folder of patches named after the release, such as `v2.0.18/`. Fill in the description, tags, and license. Describe what the mod changes and why in the README; that page is what people read before they build it.
 
 The same mod can support more than one harness. Make the change in a Codex checkout too and run `openmods pack ../codex --name my-mod --registry ../openmods`: it adds `codex/` next to `opencode/` and keeps the shared files as you edited them. Users pick the harness with `--opencode` or `--codex`, or from a list when they leave the flag out.
 
@@ -114,14 +114,14 @@ When a new release breaks your mod, CI opens an issue that mentions you, labelle
 
 ```sh
 cd opencode && git fetch --tags
-git checkout -b my-mod v1.18.31                                    # the last release the mod supports
-git am ../openmods/mods/<you>/my-mod/opencode/v1.18.31/*.patch    # the mod as it last worked
-git rebase --onto v1.19.0 v1.18.31 my-mod                         # resolve conflicts, then git rebase --continue
-openmods install . --owner <you>                                   # try it on 1.19.0
-openmods pack . --name my-mod --owner <you> --registry ../openmods --note "works on OpenCode 1.19.0"
+git checkout -b my-mod v2.0.18                                     # the last release the mod supports
+git am ../openmods/mods/<you>/my-mod/opencode/v2.0.18/*.patch     # the mod as it last worked
+git rebase --onto v2.1.0 v2.0.18 my-mod                           # resolve conflicts, then git rebase --continue
+openmods install . --owner <you>                                   # try it on 2.1.0
+openmods pack . --name my-mod --owner <you> --registry ../openmods --note "works on OpenCode 2.1.0"
 ```
 
-`pack` adds a version for 1.19.0 and keeps the older ones. The issue closes itself once that version is merged. If the code is the same and only rebased, it stays the same update; if you changed the code, it becomes the next update. Open a PR. Mods have no version number of their own: a mod is "for OpenCode 1.19.0", and CI adds that version automatically when the newest one still applies and typechecks on the new release, without changing different lines. CI checks each harness's newest release, so a release that is skipped over gets no version of its own. You only need to do this by hand when CI opens an issue saying the mod no longer supports a release.
+`pack` adds a version for 2.1.0 and keeps the older ones. The issue closes itself once that version is merged. If the code is the same and only rebased, it stays the same update; if you changed the code, it becomes the next update. Open a PR. Mods have no version number of their own: a mod is "for OpenCode 2.1.0", and CI adds that version automatically when the newest one still applies and typechecks on the new release, without changing different lines. CI checks each harness's newest release, so a release that is skipped over gets no version of its own. You only need to do this by hand when CI opens an issue saying the mod no longer supports a release.
 
 To ship an update, change your commits and pack again, with `--force` if that release already has a version, and say what changed with `--note`. `pack` numbers the update itself: one more than the latest when the changed lines differ, the same number when they do not. Users of your mod are asked once whether to rebuild with it, and see your note. `openmods check <mod-folder> --at <tag>` checks an older version.
 
