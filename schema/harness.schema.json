@@ -144,6 +144,11 @@
       "type": "string",
       "description": "Shell command run in the checkout root before building."
     },
+    "buildInstall": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional. The dependency install a build needs, when it is less than `install` (e.g. only the packages the build uses). Builds run it; a typecheck and `openmods dev` run `install`."
+    },
     "build": {
       "type": "string",
       "description": "Shell command run in the checkout root that produces the artifact."

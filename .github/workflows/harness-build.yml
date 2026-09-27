@@ -1,10 +1,12 @@
 name: harness build
 
-# Builds a harness from source on a GitHub runner, with no mod applied. This
-# is the only place CI builds a harness, and it only runs by hand:
-#   - after adding a harness or changing how it builds, to prove the definition;
+# Builds a harness from source on a GitHub runner, with no mod applied, or
+# with one mod as users build it. This is the only place CI builds a harness,
+# and it only runs by hand:
+#   - after adding a harness or changing how it builds, to prove the definition,
+#     on each kind of machine users have (the runner input);
 #   - when the release watch holds a harness because a release changed lines
-#     its build recipe depends on. With "record" on, a successful build
+#     its build recipe depends on. With "record" on, a successful stock build
 #     records that the recipe works at that release, which lifts the hold.
 
 on:
@@ -17,21 +19,32 @@ on:
         description: "Release tag to build, e.g. v1.18.31 or rust-v0.155.1"
         required: true
       record:
-        description: "On success, record the recipe as verified at this release"
+        description: "On success, record the recipe as verified at this release (stock builds only)"
         type: boolean
         default: true
+      runner:
+        description: "The machine to build on"
+        type: choice
+        default: ubuntu-latest
+        options: [ubuntu-latest, ubuntu-24.04-arm, macos-15, macos-15-intel]
+      mod:
+        description: "Build this mod folder instead of the stock harness, e.g. mods/<owner>/<name>/<harness>"
+        required: false
+        default: ""
 
 permissions:
   contents: write
   issues: write
 
+# Recording pushes to main, so it waits its turn with the release watch;
+# a build that records nothing runs at once.
 concurrency:
-  group: release-watch
+  group: ${{ inputs.record && inputs.mod == '' && 'release-watch' || format('harness-build-{0}', github.run_id) }}
   cancel-in-progress: false
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 150
     steps:
       # The release bot's deploy key, so recording the result can push to main.
@@ -42,22 +55,41 @@ jobs:
         with:
           bun-version: latest
       - name: Free disk space
+        if: ${{ runner.os == 'Linux' }}
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup || true
       # What a Codex build needs on Linux, as Codex's own release installs.
       - name: pkg-config and libcap for Codex
-        if: ${{ inputs.harness == 'codex' }}
+        if: ${{ inputs.harness == 'codex' && runner.os == 'Linux' }}
         run: sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends pkg-config libcap-dev >/dev/null
-      - name: Build ${{ inputs.harness }} at ${{ inputs.ref }}
-        run: bun cli/src/index.ts check --harness ${{ inputs.harness }} --ref ${{ inputs.ref }} --build --json
+      - name: Rust for Codex, where the runner has none
+        if: ${{ inputs.harness == 'codex' }}
+        run: |
+          command -v rustup >/dev/null && exit 0
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      # The harness, the release, the runner and the mod reach the shell as values.
+      - name: Build ${{ inputs.harness }} at ${{ inputs.ref }}${{ inputs.mod && format(' with {0}', inputs.mod) || '' }} on ${{ inputs.runner }}
+        env:
+          HARNESS: ${{ inputs.harness }}
+          REF: ${{ inputs.ref }}
+          MOD: ${{ inputs.mod }}
+        run: |
+          if [ -n "$MOD" ]; then
+            time bun cli/src/index.ts check "$MOD" --at "$REF" --build --json
+          else
+            time bun cli/src/index.ts check --harness "$HARNESS" --ref "$REF" --build --json
+          fi
       - name: Record the recipe as verified
-        if: ${{ inputs.record }}
+        if: ${{ inputs.record && inputs.mod == '' }}
         env:
           GH_TOKEN: ${{ github.token }}
+          HARNESS: ${{ inputs.harness }}
+          REF: ${{ inputs.ref }}
         run: |
-          bun script/release-watch.ts verify ${{ inputs.harness }} ${{ inputs.ref }} --issues
+          bun script/release-watch.ts verify "$HARNESS" "$REF" --issues
           git config user.name "openmods bot"
           git config user.email "bot@openmods"
           git add status
           git diff --cached --quiet && exit 0
-          git commit -m "${{ inputs.harness }} ${{ inputs.ref }}: build recipe verified by a harness build"
+          git commit -m "$HARNESS $REF: build recipe verified by a harness build"
           git push

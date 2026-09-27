@@ -30,6 +30,7 @@
     }
   ],
   "install": "bun install --ignore-scripts",
+  "buildInstall": "bun install --ignore-scripts --filter ./packages/cli --filter ./packages/app",
   "typecheck": "bun turbo typecheck --filter=\"...[${OPENMODS_REF}]\" --concurrency=2",
   "build": "OPENCODE_VERSION=\"${OPENMODS_VERSION}+${OPENMODS_MODS}\" OPENCODE_CHANNEL=openmods bun run packages/cli/script/build.ts --single --skip-install",
   "artifact": "packages/cli/dist/cli-{os}-{arch}/bin/opencode",
