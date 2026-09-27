@@ -13,6 +13,7 @@ import path from "node:path"
 import { footprint, incompatibility as whyNot, type Footprint } from "./overlap"
 import { lastRebuild, Progress, roughly } from "./progress"
 import { managerHere, missingMessage, type Requirement } from "./requirements"
+import { sameRepo } from "./same-repo"
 
 type Harness = {
   id: string
@@ -697,14 +698,24 @@ async function ensureCheckout(h: Harness, root: string, commit: string, ref: str
 // patch, so it would report a conflict for any nearby upstream change. This
 // fetches the mod's base commit and reads each touched file from it, which
 // makes git fetch exactly those versions.
+// Whether all of them could be fetched: a file the patches add has none, but
+// one the release has that could not be read means a merge may fail for
+// that, not for the mod.
 async function fetchBases(root: string, mod: Mod) {
-  if (!mod.upstream.commit) return
+  if (!mod.upstream.commit) return true
   // Usually the release being built, found by its tag. Otherwise it is
   // fetched on its own: looking the commit up would download it with all
-  // its history (see ensureCheckout).
+  // its history (see ensureCheckout). What counts is what is here after,
+  // not whether that fetch worked: the commit may be here already.
   const tagged = await $`git -C ${root} rev-parse -q --verify ${`refs/tags/${mod.upstream.ref}^{commit}`}`.nothrow().quiet()
-  if (tagged.stdout.toString().trim() !== mod.upstream.commit) await $`git -C ${root} fetch --no-tags --depth 1 --filter=blob:none origin ${mod.upstream.commit}`.nothrow().quiet()
-  for (const file of touchedFiles(mod)) await $`git -C ${root} cat-file -p ${mod.upstream.commit + ":" + file}`.nothrow().quiet()
+  if (tagged.stdout.toString().trim() !== mod.upstream.commit)
+    await $`git -C ${root} fetch --no-tags --depth 1 --filter=blob:none origin ${mod.upstream.commit}`.nothrow().quiet()
+  let fetched = (await $`git -C ${root} cat-file -e ${mod.upstream.commit + "^{tree}"}`.nothrow().quiet()).exitCode === 0
+  for (const file of fetched ? touchedFiles(mod) : []) {
+    const inTree = (await $`git -C ${root} ls-tree ${mod.upstream.commit} -- ${file}`.nothrow().quiet()).stdout.toString().trim()
+    if (inTree && (await $`git -C ${root} cat-file -p ${mod.upstream.commit + ":" + file}`.nothrow().quiet()).exitCode !== 0) fetched = false
+  }
+  return fetched
 }
 
 async function applyMods(root: string, mods: Mod[]) {
@@ -812,6 +823,11 @@ async function ensureToolchain(root: string): Promise<string | null> {
   return bin
 }
 
+// A failure that is not the code's: the release could not be fetched or its
+// dependencies installed. `check` reports these as not checked, so the
+// release watch tries again instead of blaming the mod.
+class Unchecked extends Error {}
+
 // A dependency install downloads thousands of packages, and on a slow or
 // flaky connection some fail. A second try usually finishes the job from
 // what the first one got.
@@ -832,7 +848,9 @@ async function typecheck(h: Harness, root: string) {
   const cmd = h.typecheck ?? fail(`${h.name} has no typecheck command in its harness definition`)
   const toolchain = await ensureToolchain(root)
   if (toolchain) buildEnv = { ...buildEnv, PATH: `${toolchain}${path.delimiter}${process.env.PATH ?? ""}` }
-  await installDeps(h, root)
+  await installDeps(h, root).catch((e: unknown) => {
+    throw new Unchecked(`could not install the dependencies: ${e instanceof Error ? e.message : String(e)}`)
+  })
   log(`Typechecking: ${cmd}`)
   await shell(cmd, root)
 }
@@ -844,7 +862,9 @@ async function build(h: Harness, root: string) {
     if (toolchain) buildEnv = { ...buildEnv, PATH: `${toolchain}${path.delimiter}${process.env.PATH ?? ""}` }
     // Only what the build needs, when the harness says what that is; a
     // typecheck and `openmods dev` install everything.
-    await installDeps(h, root, "dependencies", h.buildInstall ?? h.install)
+    await installDeps(h, root, "dependencies", h.buildInstall ?? h.install).catch((e: unknown) => {
+      throw new Unchecked(`could not install the dependencies: ${e instanceof Error ? e.message : String(e)}`)
+    })
   })
   const artifact = artifactPath(h, root)
   await step("Build", async () => {
@@ -2047,12 +2067,21 @@ async function cmdCheck() {
   if (has("build") || has("typecheck")) await checkRequirements(h)
   try {
     await initCheckout(h.repo, root)
-    await $`git -C ${root} fetch --no-tags --depth 1 --filter=blob:none origin tag ${ref}`.quiet()
+    // The default workspace is openmods' own: it follows the recipe if the
+    // harness moved to another repository. One given with --workspace is not
+    // changed, and must be a clone of the harness's repository. Either way
+    // the release's tag is taken as origin has it.
+    const origin = (await $`git -C ${root} remote get-url origin`.nothrow().text()).trim()
+    if (!sameRepo(origin, h.repo)) {
+      if (flag("workspace")) throw new Error(`the workspace ${root} is a clone of ${origin || "nothing"}, not of ${h.repo}`)
+      await $`git -C ${root} remote set-url origin ${h.repo}`.quiet()
+    }
+    await $`git -C ${root} fetch --no-tags --depth 1 --filter=blob:none origin ${`+refs/tags/${ref}:refs/tags/${ref}`}`.quiet()
     await clearApplyState(root)
     await $`git -C ${root} checkout -q --force --detach ${ref}`
     result.commit = (await $`git -C ${root} rev-parse HEAD`.text()).trim()
     const files = mod.patches.map((p) => path.join(mod.dir, p))
-    await fetchBases(root, mod)
+    const bases = await fetchBases(root, mod)
     const am = files.length
       ? await $`git -C ${root} am -3 --quiet ${files}`.env({ ...process.env, ...GIT_IDENTITY }).nothrow().quiet()
       : { exitCode: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) }
@@ -2073,6 +2102,10 @@ async function cmdCheck() {
     if (!result.applies) {
       result.error = (am.stderr.toString() + am.stdout.toString()).trim()
       await clearApplyState(root)
+      if (!bases) {
+        delete result.applies
+        result.unchecked = "could not fetch the release's files the patches were made against"
+      }
     }
     // Then as users build it: the OpenMods base patch first, as in every
     // install, when it has a version for this release. The patches above are
@@ -2081,11 +2114,18 @@ async function cmdCheck() {
     const baseVersion = base ? at(base, ref) : undefined
     if (result.applies && baseVersion && files.length) {
       await $`git -C ${root} checkout -q --force --detach ${result.commit as string}`
-      await fetchBases(root, baseVersion)
+      const baseFiles = await fetchBases(root, baseVersion)
       const identity = { ...process.env, ...GIT_IDENTITY }
       const b = await $`git -C ${root} am -3 --quiet ${baseVersion.patches.map((p) => path.join(baseVersion.dir, p))}`.env(identity).nothrow().quiet()
       const both = b.exitCode === 0 ? await $`git -C ${root} am -3 --quiet ${files}`.env(identity).nothrow().quiet() : b
-      if (both.exitCode !== 0) {
+      // Missing files explain a failure only where they were needed: the
+      // base patch's when it failed, the mod's when it failed on top.
+      if (both.exitCode !== 0 && (b.exitCode !== 0 ? !baseFiles : !bases)) {
+        delete result.applies
+        result.unchecked = "could not fetch the release's files the OpenMods base patch was made against"
+        result.error = (both.stderr.toString() + both.stdout.toString()).trim()
+        await clearApplyState(root)
+      } else if (both.exitCode !== 0) {
         result.applies = false
         result.error = `${b.exitCode === 0 ? "it does not apply on top of the OpenMods base patch" : "the OpenMods base patch does not apply"} at ${rel(ref)}:\n${(both.stderr.toString() + both.stdout.toString()).trim()}`
         await clearApplyState(root)
@@ -2099,33 +2139,41 @@ async function cmdCheck() {
           await typecheck(h, root)
           result.typechecks = true
         } catch (e) {
-          result.typechecks = false
+          if (e instanceof Unchecked) result.unchecked = e.message
+          else result.typechecks = false
           result.error = e instanceof Error ? e.message : String(e)
         }
       }
-      if (has("build") && result.typechecks !== false) {
+      if (has("build") && result.typechecks !== false && !result.unchecked) {
         try {
           result.artifact = await build(h, root)
           result.builds = true
         } catch (e) {
-          result.builds = false
+          if (e instanceof Unchecked) result.unchecked = e.message
+          else result.builds = false
           result.error = e instanceof Error ? e.message : String(e)
         }
       }
     }
   } catch (e) {
-    result.applies ??= false
-    result.error = e instanceof Error ? e.message : String(e)
+    // A verdict is only what the checks above found; anything that stopped
+    // them (the release could not be fetched, the disk filled up) says
+    // nothing about the mod.
+    const message = e instanceof Error ? e.message : String(e)
+    result.unchecked = result.applies === undefined ? `could not get ${ref}: ${message}` : `the check stopped: ${message}`
+    result.error = message
   }
   if (has("json")) console.log(JSON.stringify(result, null, 2))
   else {
     log(result.stock ? `stock ${mod.harness} at ${rel(ref)} (${String(result.commit ?? "?").slice(0, 12)})` : `${result.mod} (made for ${rel(String(result.madeFor))}) against ${rel(ref)} (${String(result.commit ?? "?").slice(0, 12)})`)
-    log(`  applies:    ${result.applies ? "yes" : "NO"}${result.base ? " (with the OpenMods base patch)" : ""}`)
-    if (has("typecheck")) log(`  typechecks: ${result.typechecks ? "yes" : "NO"}`)
-    if (has("build")) log(`  builds:     ${result.builds ? "yes" : "NO"}`)
+    // Only the verdicts the check reached.
+    if (result.applies !== undefined) log(`  applies:    ${result.applies ? "yes" : "NO"}${result.base ? " (with the OpenMods base patch)" : ""}`)
+    if (result.typechecks !== undefined) log(`  typechecks: ${result.typechecks ? "yes" : "NO"}`)
+    if (result.builds !== undefined) log(`  builds:     ${result.builds ? "yes" : "NO"}`)
+    if (result.unchecked) log(`  not checked: ${result.unchecked}. That says nothing about the mod.`)
     if (result.error) log(`  ${String(result.error).split("\n").join("\n  ")}`)
   }
-  if (result.applies !== true || (has("typecheck") && result.typechecks !== true) || (has("build") && result.builds !== true)) process.exit(1)
+  if (result.unchecked || result.applies !== true || (has("typecheck") && result.typechecks !== true) || (has("build") && result.builds !== true)) process.exit(1)
 }
 
 // Compare what is installed with what the registry now says, and leave a

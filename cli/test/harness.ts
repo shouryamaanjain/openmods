@@ -27,6 +27,8 @@ export function sandbox(name: string) {
     om: path.join(T, "om"),
     reg: path.join(T, "registry"),
     harness: path.join(T, "fake-harness"),
+    // Its own temporary folder, so the check's default workspace is its own too.
+    tmp: path.join(T, "tmp"),
   }
   for (const d of Object.values(dirs)) mkdirSync(d, { recursive: true })
   return dirs
@@ -48,6 +50,7 @@ export async function run(sb: Sandbox, opts: { answer?: string; env?: Record<str
       HOME: sb.home,
       OPENMODS_HOME: sb.om,
       OPENMODS_NO_CHECK: "1",
+      TMPDIR: sb.tmp,
       PATH: process.env.PATH ?? "",
       ...(opts.answer !== undefined ? { OPENMODS_ASSUME_TTY: "1" } : {}),
       ...opts.env,
