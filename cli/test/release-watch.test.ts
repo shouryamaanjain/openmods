@@ -204,6 +204,15 @@ describe("recipe alerts", () => {
     expect(calls.find((c) => c.startsWith("issue close"))).toStartWith("issue close 5")
     rmSync(ghIssues())
   })
+  test("while a harness is held, each hourly plan makes sure its recipe issue is open", async () => {
+    await createMod(sb, "waiting", addFile("waiting.txt", "waiting\n"))
+    mkdirSync(path.join(sb.reg, "status"), { recursive: true })
+    writeFileSync(path.join(sb.reg, "status", "fake.json"), JSON.stringify({ tested: "v1.1.0", from: "v1.0.0", recipe: "changed", changes: ["-compiler=1", "+compiler=2"] }))
+    rmSync(ghLog(), { force: true })
+    const calls = await watchWithIssues("plan", "--ref", "v1.1.0")
+    expect(calls.find((c) => c.startsWith("issue create"))).toContain("Fake 1.1.0 changed the OpenMods build recipe")
+    rmSync(path.join(sb.reg, "status", "fake.json"))
+  })
 })
 
 describe("releases that come quickly", () => {

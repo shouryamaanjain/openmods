@@ -199,7 +199,9 @@ async function plan() {
     // was checked at, else the newest release any of its mods is on.
     const st = readJson(statusFile(h.id))
     if (st?.tested === ref && st.recipe === "changed") {
-      recipe.push({ harness: h.id, name: h.name, from: st.from, to: ref, state: "held", changes: st.changes ?? [] })
+      const held: RecipeCheck = { harness: h.id, name: h.name, from: st.from, to: ref, state: "held", changes: st.changes ?? [] }
+      recipe.push(held)
+      await askAboutRecipe(held)
       continue
     }
     // While held, a newer release is compared with the release the recipe last
@@ -297,6 +299,15 @@ async function closeIssues(titles: string[], comment: string, label?: string, pr
   }
 }
 
+// Opens (or finds) the issue for a release that changed the recipe; older
+// releases' issues close only once it is open to replace them. The plan asks
+// again every hour while the harness is held, so an issue GitHub would not
+// take is tried again.
+async function askAboutRecipe(r: RecipeCheck) {
+  if (has("issues") && (await recipeIssue(r)))
+    await closeOtherRecipeIssues(r.name, r.to, `${r.name} ${rel(r.to)} is out and changed the recipe too; its issue, which covers this one's changes, replaces this one.`)
+}
+
 // Recipe issues for other releases of this harness: a newer release's check
 // now says whether the recipe works, or a newer release's issue, whose diff
 // covers theirs, asks the same question.
@@ -350,9 +361,7 @@ async function apply() {
     const checked = new Date().toISOString()
     if (r.state === "changed") {
       writeJson(statusFile(r.harness), { tested: r.to, from: r.from, recipe: "changed", changes: r.changes, checked })
-      // Older releases' issues close only once this one is open to replace them.
-      if (has("issues") && (await recipeIssue(r)))
-        await closeOtherRecipeIssues(r.name, r.to, `${r.name} ${rel(r.to)} is out and changed the recipe too; its issue, which covers this one's changes, replaces this one.`)
+      await askAboutRecipe(r)
       of(r.name, r.to).recipe = `${r.name} ${rel(r.to)} changed the build recipe; its mods are held until someone runs the harness build`
     } else if (r.state === "unchanged") {
       writeJson(statusFile(r.harness), { tested: r.to, from: r.from, recipe: "unchanged", checked })
