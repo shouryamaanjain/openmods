@@ -33,7 +33,7 @@
   "typecheck": "bun turbo typecheck --filter=\"...[${OPENMODS_REF}]\" --concurrency=2",
   "build": "OPENCODE_VERSION=\"${OPENMODS_VERSION}+${OPENMODS_MODS}\" OPENCODE_CHANNEL=openmods bun run packages/cli/script/build.ts --single --skip-install",
   "artifact": "packages/cli/dist/cli-{os}-{arch}/bin/opencode",
-  "dev": "exec bun --preload={root}/packages/cli/node_modules/@opentui/solid/scripts/preload.js --define 'OPENCODE_VERSION=\"{version}\"' --define 'OPENCODE_CHANNEL=\"openmods\"' {root}/packages/cli/src/index.ts",
+  "dev": "R={root}; printf 'Object.assign(globalThis, { OPENCODE_VERSION: \"%s\", OPENCODE_CHANNEL: \"openmods-dev\" })\\nawait import(\"%s/packages/cli/node_modules/@opentui/solid/scripts/preload.js\")\\nawait import(\"%s/packages/cli/src/index.ts\")\\n' '{version}' \"$R\" \"$R\" > \"$R/node_modules/.openmods-dev.ts\" && { [ $# -gt 0 ] || bun \"$R/node_modules/.openmods-dev.ts\" service stop >/dev/null 2>&1; }; exec bun \"$R/node_modules/.openmods-dev.ts\"",
   "env": {
     "OPENCODE_DISABLE_AUTOUPDATE": "1"
   },
