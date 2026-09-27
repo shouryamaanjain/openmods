@@ -4,7 +4,7 @@
 // harness moves to another release, and Bun versions nothing runs on.
 import { beforeAll, describe, expect, test } from "bun:test"
 import { $ } from "bun"
-import { existsSync, mkdirSync, utimesSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, symlinkSync, utimesSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { addFile, addVersion, cli, createHarness, createMod, release, sandbox, setGreeting } from "./harness"
 
@@ -56,14 +56,36 @@ describe("after a build", () => {
     expect((await cli(sb, "update", "fake", "--force")).code).toBe(0)
     expect(await tags()).toEqual(["v1.1.0"])
   })
+  test("a Bun folder that is a broken link does not stop the rest of the cleanup", async () => {
+    const old = Date.now() / 1000 - 2 * 3600
+    symlinkSync(path.join(sb.T, "nowhere"), path.join(toolchains(), "bun-0.0.3"))
+    mkdirSync(path.join(toolchains(), "bun-0.0.4", "bin"), { recursive: true })
+    utimesSync(path.join(toolchains(), "bun-0.0.4"), old, old)
+    expect((await cli(sb, "update", "fake", "--force")).code).toBe(0)
+    expect(existsSync(path.join(toolchains(), "bun-0.0.4"))).toBe(false)
+  })
+  test("one build of a harness at a time: a running one is said, a dead one's lock is taken over", async () => {
+    const lock = path.join(sb.om, "harnesses", "fake", "build.lock")
+    writeFileSync(lock, String(process.pid))
+    const busy = await cli(sb, "update", "fake", "--force")
+    expect(busy.code).toBe(1)
+    expect(busy.err).toContain(`another openmods is building Fake right now (process ${process.pid})`)
+    writeFileSync(lock, "999999")
+    expect((await cli(sb, "update", "fake", "--force")).code).toBe(0)
+    expect(existsSync(lock)).toBe(false)
+  })
   test("the cleanup never fails a build that worked", async () => {
     const state = path.join(sb.om, "state.json")
     const other = path.join(sb.om, "harnesses", "other", "src")
     mkdirSync(other, { recursive: true })
     writeFileSync(path.join(other, "package.json"), "{ not json")
+    // While a harness's pin cannot be read, no Bun version is taken for unused.
+    mkdirSync(path.join(toolchains(), "bun-0.0.5", "bin"), { recursive: true })
+    utimesSync(path.join(toolchains(), "bun-0.0.5"), Date.now() / 1000 - 7200, Date.now() / 1000 - 7200)
     writeFileSync(state, JSON.stringify({ ...JSON.parse(await Bun.file(state).text()), other: { ref: "v1", mods: [], off: [], hashes: {}, updates: {}, artifact: "", enabled: false } }))
     const r = await cli(sb, "update", "fake", "--force")
     expect(r.code, r.all).toBe(0)
     expect(r.out).toContain("now runs Fake 1.1.0")
+    expect(existsSync(path.join(toolchains(), "bun-0.0.5"))).toBe(true)
   })
 })

@@ -7,7 +7,7 @@
 // The stock install of the harness is never touched.
 
 import { $ } from "bun"
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs"
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
 import { cpus, homedir, tmpdir, totalmem } from "node:os"
 import path from "node:path"
 import { footprint, incompatibility as whyNot, type Footprint } from "./overlap"
@@ -1354,6 +1354,7 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
   // Only now that there is something to build: turning mods off or removing
   // them needs none of it.
   await checkRequirements(h)
+  holdBuildLock(harnessId, h)
   const base = mods[0]!.upstream
   const builds = path.join(HOME, "harnesses", harnessId, "builds")
   const first = !existsSync(builds) || readdirSync(builds).length === 0
@@ -1390,6 +1391,36 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
   await explainSwitch(h, state[harnessId]!)
 }
 
+// One build of a harness at a time: two would check out and patch the same
+// checkout at once. Held until this process exits; a lock whose process is
+// gone, or that is older than any build, is taken over.
+function holdBuildLock(harnessId: string, h: Harness) {
+  const lock = path.join(HOME, "harnesses", harnessId, "build.lock")
+  mkdirSync(path.dirname(lock), { recursive: true })
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      writeFileSync(lock, String(process.pid), { flag: "wx" })
+      process.on("exit", () => rmSync(lock, { force: true }))
+      return
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e
+      const pid = Number(readFileSync(lock, "utf8"))
+      const alive = (() => {
+        try {
+          return pid > 0 && pid !== process.pid && (process.kill(pid, 0), true)
+        } catch (e) {
+          return (e as NodeJS.ErrnoException).code === "EPERM"
+        }
+      })()
+      // A process id can be reused after a crash; no build takes 12 hours.
+      if (alive && Date.now() - lstatSync(lock).mtimeMs < 12 * 3_600_000)
+        fail(`another openmods is building ${h.name} right now (process ${pid}). Try again when it finishes.`)
+      rmSync(lock, { force: true })
+    }
+  }
+  fail(`could not take the ${h.name} build lock at ${pretty(lock)}`)
+}
+
 // After a build, what this machine no longer needs goes, so disk use stays
 // about where one build of each harness puts it, however many updates come.
 // `moved` is the release a harness just moved to from another one. A harness's
@@ -1417,17 +1448,20 @@ async function tidy(root: string, ref: string, moved: boolean) {
     const keep = new Set([`bun-${process.versions.bun}`])
     const own = existsSync(path.join(BIN, "openmods")) ? readFileSync(path.join(BIN, "openmods"), "utf8").match(/toolchains\/(bun-[^/\s]+)\//) : null
     if (own) keep.add(own[1]!)
+    // A harness whose pin cannot be read might need any of them: none go.
     for (const id of Object.keys(loadState())) {
-      try {
-        const pin = String(JSON.parse(readFileSync(path.join(HOME, "harnesses", id, "src", "package.json"), "utf8")).packageManager ?? "").match(/^bun@(\d+\.\d+\.\d+)/)
-        if (pin) keep.add(`bun-${pin[1]}`)
-      } catch {}
+      const pkg = path.join(HOME, "harnesses", id, "src", "package.json")
+      if (!existsSync(pkg)) continue
+      const pin = String(JSON.parse(readFileSync(pkg, "utf8")).packageManager ?? "").match(/^bun@(\d+\.\d+\.\d+)/)
+      if (pin) keep.add(`bun-${pin[1]}`)
     }
     for (const d of Object.values(loadDev())) if (d.toolchain) keep.add(path.basename(path.dirname(d.toolchain)))
     for (const name of readdirSync(dir)) {
       if (!name.startsWith("bun-") || keep.has(name)) continue
-      if (Date.now() - statSync(path.join(dir, name)).mtimeMs < 3_600_000) continue
-      rmSync(path.join(dir, name), { recursive: true, force: true })
+      try {
+        if (Date.now() - lstatSync(path.join(dir, name)).mtimeMs < 3_600_000) continue
+        rmSync(path.join(dir, name), { recursive: true, force: true })
+      } catch {}
     }
   } catch {}
 }
