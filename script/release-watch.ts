@@ -166,7 +166,8 @@ async function closeFixed() {
     if (!h) continue
     const dir = path.join(root, "mods", ...id.split("/"), h.id)
     const status = readJson(path.join(dir, "status.json"))
-    if (existsSync(dir) && status?.unchecked && rel(status.unchecked.ref) === release) continue
+    // Still unchecked, at this release or a newer one: the alert stands.
+    if (existsSync(dir) && status?.unchecked) continue
     const why = existsSync(dir) ? "A check got through, so this is settled." : `${id} is no longer in the registry.`
     const closed = await $`gh issue close ${String(issue.number)} --repo ${repo} --comment ${why}`.nothrow().quiet()
     console.error(closed.exitCode === 0 ? `closed #${issue.number}: ${why}` : `could not close #${issue.number}: ${closed.stderr.toString().trim()}`)

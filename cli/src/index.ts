@@ -663,15 +663,7 @@ async function clearApplyState(root: string) {
 // clone refuses a non-empty folder, so the repository is set up in place and
 // whatever is already there is kept.
 async function initCheckout(repo: string, root: string) {
-  if (existsSync(path.join(root, ".git"))) {
-    // A recipe that moved to another repository: its tags are not this one's.
-    const origin = (await $`git -C ${root} remote get-url origin`.nothrow().quiet()).stdout.toString().trim()
-    if (origin === repo) return
-    await $`git -C ${root} remote set-url origin ${repo}`.nothrow().quiet()
-    const tags = (await $`git -C ${root} tag -l`.nothrow().text()).split("\n").filter(Boolean)
-    if (tags.length) await $`git -C ${root} tag -d ${tags}`.nothrow().quiet()
-    return
-  }
+  if (existsSync(path.join(root, ".git"))) return
   mkdirSync(root, { recursive: true })
   await $`git -C ${root} init -q`
   await $`git -C ${root} remote add origin ${repo}`
@@ -2074,7 +2066,12 @@ async function cmdCheck() {
   if (has("build") || has("typecheck")) await checkRequirements(h)
   try {
     await initCheckout(h.repo, root)
-    await $`git -C ${root} fetch --no-tags --depth 1 --filter=blob:none origin tag ${ref}`.quiet()
+    // The default workspace is openmods' own: it follows the recipe if the
+    // harness moved to another repository. One given with --workspace is
+    // left as it is. Either way the release's tag is taken as origin has it.
+    if (!flag("workspace") && (await $`git -C ${root} remote get-url origin`.nothrow().text()).trim() !== h.repo)
+      await $`git -C ${root} remote set-url origin ${h.repo}`.quiet()
+    await $`git -C ${root} fetch --no-tags --depth 1 --filter=blob:none origin ${`+refs/tags/${ref}:refs/tags/${ref}`}`.quiet()
     await clearApplyState(root)
     await $`git -C ${root} checkout -q --force --detach ${ref}`
     result.commit = (await $`git -C ${root} rev-parse HEAD`.text()).trim()
@@ -2116,7 +2113,9 @@ async function cmdCheck() {
       const identity = { ...process.env, ...GIT_IDENTITY }
       const b = await $`git -C ${root} am -3 --quiet ${baseVersion.patches.map((p) => path.join(baseVersion.dir, p))}`.env(identity).nothrow().quiet()
       const both = b.exitCode === 0 ? await $`git -C ${root} am -3 --quiet ${files}`.env(identity).nothrow().quiet() : b
-      if (both.exitCode !== 0 && !baseFiles) {
+      // Missing files explain a failure only where they were needed: the
+      // base patch's when it failed, the mod's when it failed on top.
+      if (both.exitCode !== 0 && (b.exitCode !== 0 ? !baseFiles : !bases)) {
         delete result.applies
         result.unchecked = "could not fetch the release's files the OpenMods base patch was made against"
         result.error = (both.stderr.toString() + both.stdout.toString()).trim()
@@ -2169,7 +2168,7 @@ async function cmdCheck() {
     if (result.unchecked) log(`  not checked: ${result.unchecked}. That says nothing about the mod.`)
     if (result.error) log(`  ${String(result.error).split("\n").join("\n  ")}`)
   }
-  if (result.applies !== true || (has("typecheck") && result.typechecks !== true) || (has("build") && result.builds !== true)) process.exit(1)
+  if (result.unchecked || result.applies !== true || (has("typecheck") && result.typechecks !== true) || (has("build") && result.builds !== true)) process.exit(1)
 }
 
 // Compare what is installed with what the registry now says, and leave a
