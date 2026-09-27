@@ -657,6 +657,20 @@ async function clearApplyState(root: string) {
   for (const d of ["rebase-apply", "rebase-merge"]) rmSync(path.join(root, ".git", d), { recursive: true, force: true })
 }
 
+// Two addresses of one repository: https, ssh and scp-style ones, with or
+// without .git, compare equal.
+const sameRepo = (a: string, b: string) => {
+  const norm = (u: string) =>
+    u
+      .trim()
+      .toLowerCase()
+      .replace(/^[a-z+]+:\/\/(?:[^@/]+@)?/, "")
+      .replace(/^[^@/]+@([^:/]+):/, "$1/")
+      .replace(/\/+$/, "")
+      .replace(/\.git$/, "")
+  return norm(a) === norm(b)
+}
+
 // Makes `root` a blobless git checkout of the harness. The folder may
 // already exist without a repository, for example when CI restores cached
 // dependencies (node_modules, target/) into it before the check runs; git
@@ -2067,10 +2081,14 @@ async function cmdCheck() {
   try {
     await initCheckout(h.repo, root)
     // The default workspace is openmods' own: it follows the recipe if the
-    // harness moved to another repository. One given with --workspace is
-    // left as it is. Either way the release's tag is taken as origin has it.
-    if (!flag("workspace") && (await $`git -C ${root} remote get-url origin`.nothrow().text()).trim() !== h.repo)
+    // harness moved to another repository. One given with --workspace is not
+    // changed, and must be a clone of the harness's repository. Either way
+    // the release's tag is taken as origin has it.
+    const origin = (await $`git -C ${root} remote get-url origin`.nothrow().text()).trim()
+    if (!sameRepo(origin, h.repo)) {
+      if (flag("workspace")) throw new Error(`the workspace ${root} is a clone of ${origin || "nothing"}, not of ${h.repo}`)
       await $`git -C ${root} remote set-url origin ${h.repo}`.quiet()
+    }
     await $`git -C ${root} fetch --no-tags --depth 1 --filter=blob:none origin ${`+refs/tags/${ref}:refs/tags/${ref}`}`.quiet()
     await clearApplyState(root)
     await $`git -C ${root} checkout -q --force --detach ${ref}`

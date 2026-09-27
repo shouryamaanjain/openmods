@@ -166,8 +166,10 @@ async function closeFixed() {
     if (!h) continue
     const dir = path.join(root, "mods", ...id.split("/"), h.id)
     const status = readJson(path.join(dir, "status.json"))
-    // Still unchecked, at this release or a newer one: the alert stands.
-    if (existsSync(dir) && status?.unchecked) continue
+    // Still unchecked and no verdict since this release: the alert stands.
+    // A check that told at this release or a later one settles it.
+    const told = status?.tested && !newer(release, status.tested)
+    if (existsSync(dir) && status?.unchecked && !told) continue
     const why = existsSync(dir) ? "A check got through, so this is settled." : `${id} is no longer in the registry.`
     const closed = await $`gh issue close ${String(issue.number)} --repo ${repo} --comment ${why}`.nothrow().quiet()
     console.error(closed.exitCode === 0 ? `closed #${issue.number}: ${why}` : `could not close #${issue.number}: ${closed.stderr.toString().trim()}`)
@@ -315,9 +317,10 @@ async function closeOtherRecipeIssues(name: string, ref: string, comment: string
   const repo = process.env.GITHUB_REPOSITORY
   if (!has("issues") || !repo) return
   const list = (await $`gh issue list --repo ${repo} --state open --label "build recipe" --json number,title`.nothrow().text()).trim()
-  const mine = `${name} ${rel(ref)} changed the OpenMods build recipe`
+  // Only older releases': a manual run at an older release leaves newer ones.
+  const suffix = " changed the OpenMods build recipe"
   for (const issue of list ? (JSON.parse(list) as { number: number; title: string }[]) : [])
-    if (issue.title.startsWith(`${name} `) && issue.title.endsWith(" changed the OpenMods build recipe") && issue.title !== mine)
+    if (issue.title.startsWith(`${name} `) && issue.title.endsWith(suffix) && newer(ref, issue.title.slice(name.length + 1, -suffix.length)))
       await $`gh issue close ${String(issue.number)} --repo ${repo} --comment ${comment}`.nothrow()
 }
 

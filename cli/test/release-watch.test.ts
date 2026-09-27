@@ -88,6 +88,16 @@ describe("the check's workspace", () => {
     expect(r.code, r.all).toBe(0)
     expect(JSON.parse(r.out)).toMatchObject({ applies: true, commit: (await git(sb.harness, "rev-parse", "v1.1.0^{commit}")).stdout.toString().trim() })
     expect((await git(ws, "remote", "get-url", "origin")).stdout.toString().trim()).toEndWith(sb.harness)
+    // One given with --workspace is not changed; a clone of another repository is refused.
+    await git(ws, "remote", "set-url", "origin", other)
+    const refused = await cli(sb, "check", dirOf("good"), "--ref", "v1.1.0", "--json", "--workspace", ws)
+    expect(refused.code).toBe(1)
+    expect(JSON.parse(refused.out)).toMatchObject({ unchecked: expect.stringContaining("is a clone of") })
+    expect(JSON.parse(refused.out).applies).toBeUndefined()
+    expect((await git(ws, "remote", "get-url", "origin")).stdout.toString().trim()).toBe(other)
+    // The same repository at another address is fine.
+    await git(ws, "remote", "set-url", "origin", `${sb.harness}/`)
+    expect((await cli(sb, "check", dirOf("good"), "--ref", "v1.1.0", "--json", "--workspace", ws)).code).toBe(0)
   })
 })
 
@@ -150,11 +160,18 @@ describe("apply", () => {
     expect(calls.some((c) => c.startsWith("issue create"))).toBe(false)
     expect(JSON.parse(readFileSync(status, "utf8")).unchecked.issued).toBe(true)
   })
-  test("an alert for an older release stays open while the mod still cannot be checked at a newer one", async () => {
+  test("an alert for an older release stays open while the mod still cannot be checked at a newer one, and closes once one told since", async () => {
+    const status = path.join(dirOf("counted"), "status.json")
+    const before = readFileSync(status, "utf8")
+    writeFileSync(status, JSON.stringify({ tested: "v1.0.0", unchecked: { ref: "v1.1.0", runs: 3, issued: true, error: "x", checked: "t" } }))
     writeFileSync(ghIssues(), JSON.stringify([{ number: 8, title: "The release watch could not check t/counted on Fake 1.0.5" }]))
     rmSync(ghLog(), { force: true })
-    const calls = await watchWithIssues("plan", "--ref", "v1.1.0")
-    expect(calls.some((c) => c.startsWith("issue close"))).toBe(false)
+    expect((await watchWithIssues("plan", "--ref", "v1.1.0")).some((c) => c.startsWith("issue close"))).toBe(false)
+    // A verdict at 1.0.5 or later, then 1.1.0 could not be checked: 1.0.5's alert is settled.
+    writeFileSync(status, JSON.stringify({ tested: "v1.0.5", ok: true, unchecked: { ref: "v1.1.0", runs: 1, error: "x", checked: "t" } }))
+    rmSync(ghLog(), { force: true })
+    expect((await watchWithIssues("plan", "--ref", "v1.1.0")).find((c) => c.startsWith("issue close"))).toStartWith("issue close 8")
+    writeFileSync(status, before)
   })
   test("a verdict closes the mod's could-not-check issues, for any release", async () => {
     writeFileSync(ghIssues(), JSON.stringify([
@@ -211,6 +228,11 @@ describe("recipe alerts", () => {
     rmSync(ghLog(), { force: true })
     const calls = await watchWithIssues("plan", "--ref", "v1.1.0")
     expect(calls.find((c) => c.startsWith("issue create"))).toContain("Fake 1.1.0 changed the OpenMods build recipe")
+    // A newer release's issue is not closed by a run at an older one.
+    writeFileSync(ghIssues(), JSON.stringify([{ number: 6, title: "Fake 1.1.0 changed the OpenMods build recipe" }, { number: 7, title: "Fake 1.3.0 changed the OpenMods build recipe" }]))
+    rmSync(ghLog(), { force: true })
+    expect((await watchWithIssues("plan", "--ref", "v1.1.0")).some((c) => c.startsWith("issue close"))).toBe(false)
+    rmSync(ghIssues())
     rmSync(path.join(sb.reg, "status", "fake.json"))
   })
 })
