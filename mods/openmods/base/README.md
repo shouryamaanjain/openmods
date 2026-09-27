@@ -6,7 +6,7 @@ A modded harness still looks like the harness it came from, including the places
 
 ## What it changes
 
-- **OpenCode:** the system prompts' feedback line and the crash screen. Users are asked to check with `openmods off` whether the stock build has the same problem: if it does, they report it to OpenCode; if not, to OpenMods. The crash report opens an OpenMods issue, with the version, which names the mods.
+- **OpenCode:** the crash screen. It asks people to check with `openmods off` whether stock OpenCode crashes too: if it does, they report it to OpenCode; if not, to OpenMods. Its report opens an OpenMods issue, with the version, which names the mods. OpenCode 2's system prompts do not tell the agent where to send feedback, so they are left as they are.
 - **Codex CLI:** `/feedback` explains that this is a modded build and where to report instead of uploading logs to OpenAI. Codex's own update notice and prompt are off: they point to the stock install, while a modded build moves to a new release when OpenMods rebuilds it. From Codex 0.156.1, which added a shared background server, a modded build also runs without it, as `--no-daemon` does, so the server stays stock Codex's; only `codex agents` and `--remote`, which need a server, still use one.
 
 ## Permissions
@@ -14,4 +14,4 @@ A modded harness still looks like the harness it came from, including the places
 - Network: none added. The crash screen links to OpenMods' issue page instead of OpenCode's.
 - Files: none
 - Commands: none
-- Agent instructions: the feedback line in OpenCode's system prompts now points to OpenMods for problems that do not happen in stock OpenCode.
+- Agent instructions: unchanged

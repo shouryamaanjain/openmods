@@ -1,0 +1,66 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: OpenMods <openmods@localhost>
+Date: Sun, 27 Sep 2026 05:35:46 +0530
+Subject: [PATCH] openmods: send crash reports from modded builds to OpenMods
+
+A modded build still looks like OpenCode, so its crash screen would open
+a bug report on the OpenCode project, which did not ship the mods. It
+now asks people to check with `openmods off` and opens an OpenMods
+issue, with the version, which names the mods.
+
+diff --git a/packages/tui/src/component/error-component.tsx b/packages/tui/src/component/error-component.tsx
+index 48ad4b107d755a296266c89ceb7479b6bd771b18..937445d86ac50f55ec9bb30907d04ad6b2a939f8 100644
+--- a/packages/tui/src/component/error-component.tsx
++++ b/packages/tui/src/component/error-component.tsx
+@@ -205,10 +205,10 @@ export function ErrorComponent(props: { error: Error; reset: () => void; mode?:
+           <box flexDirection="column" alignItems="center" flexShrink={0}>
+             <text fg={colors.muted}>
+               {copyState() === "copied"
+-                ? "Report copied — paste it into a new GitHub issue."
++                ? "Report copied — paste it into a new OpenMods issue."
+                 : copyState() === "failed"
+                   ? "Clipboard write failed. Try again or report the crash manually."
+-                  : "Copy the report and open a GitHub issue to help us fix this."}
++                  : "This is a modded OpenCode. Check it with `openmods off`, then report it to OpenMods."}
+             </text>
+             <text fg={colors.muted}>OpenCode {app.version}</text>
+           </box>
+@@ -219,18 +219,11 @@ export function ErrorComponent(props: { error: Error; reset: () => void; mode?:
+ }
+ 
+ function buildIssueURL(message: string, stack: string, version: string) {
+-  // Field keys match the ids in .github/ISSUE_TEMPLATE/bug-report.yml so the issue
+-  // form opens pre-filled. Populating os/terminal/reproduce keeps the report past
+-  // the contributing-guidelines compliance check, which pushes for system info.
+-  const url = new URL("https://github.com/anomalyco/opencode/issues/new?template=bug-report.yml")
+-  url.searchParams.set("title", `TUI crash: ${message}`)
+-  url.searchParams.set("opencode-version", version)
+-  url.searchParams.set("os", describeOS())
+-  url.searchParams.set("terminal", describeTerminal())
+-  url.searchParams.set(
+-    "reproduce",
+-    "Reported automatically from the OpenCode crash screen. If you can, describe what you were doing when it crashed.",
+-  )
++  // A modded build, made with OpenMods: crashes are reported to OpenMods, not
++  // to the OpenCode project, which did not ship the mods. The version names
++  // the mods built in.
++  const url = new URL("https://github.com/shouryamaanjain/openmods/issues/new")
++  url.searchParams.set("title", `Crash in modded OpenCode: ${message}`)
+ 
+   // Budget the stack against the fully URL-encoded length (not the raw length) so
+   // the final link stays under GitHub's practical limit; flag truncation so a
+@@ -238,8 +231,12 @@ function buildIssueURL(message: string, stack: string, version: string) {
+   // so measuring url.toString() is both correct and safe on any input.
+   const MAX_URL_LENGTH = 6000
+   const marker = "\n… (truncated)"
+-  const head = `The OpenCode TUI crashed with an unexpected error.\n\n**Error:** ${message}\n\n**Stack trace:**\n`
+-  const setBody = (body: string) => url.searchParams.set("description", head + "```\n" + body + "\n```")
++  const head =
++    `The OpenCode TUI crashed in a modded build.\n\n` +
++    `**Version:** ${version}\n**OS:** ${describeOS()}\n**Terminal:** ${describeTerminal()}\n\n` +
++    `Does it also crash in stock OpenCode (\`openmods off\`)? If so, report it to OpenCode instead.\n\n` +
++    `**Error:** ${message}\n\n**Stack trace:**\n`
++  const setBody = (body: string) => url.searchParams.set("body", head + "```\n" + body + "\n```")
+ 
+   setBody(stack)
+   if (url.toString().length <= MAX_URL_LENGTH) return url
