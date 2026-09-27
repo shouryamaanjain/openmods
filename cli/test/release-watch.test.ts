@@ -130,6 +130,7 @@ describe("apply", () => {
     const created = third.find((c) => c.startsWith("issue create"))
     expect(created).toContain("The release watch could not check t/counted on Fake 1.1.0")
     expect(created).toContain("--label release watch")
+    expect(created).toContain("could not be checked on Fake 1.1.0 (tag `v1.1.0`) for 3 runs in a row")
     expect(JSON.parse(readFileSync(path.join(dirOf("counted"), "status.json"), "utf8")).unchecked).toMatchObject({ runs: 3, issued: true })
     const after = readFileSync(path.join(dirOf("counted"), "status.json"), "utf8")
     rmSync(ghLog(), { force: true })
