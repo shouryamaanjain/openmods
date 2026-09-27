@@ -32,9 +32,11 @@ on:
         required: false
         default: ""
 
+# The build runs the harness's (and a mod's) build scripts, so it gets only
+# read access; recording the result is a separate job, which runs no
+# harness or mod code and is the only one with the release bot's key.
 permissions:
-  contents: write
-  issues: write
+  contents: read
 
 # Recording pushes to main, so it waits its turn with the release watch;
 # a build that records nothing runs at once.
@@ -47,10 +49,17 @@ jobs:
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 150
     steps:
-      # The release bot's deploy key, so recording the result can push to main.
       - uses: actions/checkout@v4
         with:
-          ssh-key: ${{ secrets.RELEASE_BOT_KEY }}
+          persist-credentials: false
+      # A mod folder names its harness: the two must agree, so the right
+      # prerequisites are set up.
+      - name: Check the inputs
+        env:
+          HARNESS: ${{ inputs.harness }}
+          MOD: ${{ inputs.mod }}
+        run: |
+          [ -z "$MOD" ] || [ "$(echo "$MOD" | cut -d/ -f4)" = "$HARNESS" ] || { echo "$MOD is not a $HARNESS mod" >&2; exit 1; }
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
@@ -79,8 +88,23 @@ jobs:
           else
             time bun cli/src/index.ts check --harness "$HARNESS" --ref "$REF" --build --json
           fi
+
+  record:
+    needs: build
+    if: ${{ inputs.record && inputs.mod == '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+    steps:
+      # The release bot's deploy key, so recording the result can push to main.
+      - uses: actions/checkout@v4
+        with:
+          ssh-key: ${{ secrets.RELEASE_BOT_KEY }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
       - name: Record the recipe as verified
-        if: ${{ inputs.record && inputs.mod == '' }}
         env:
           GH_TOKEN: ${{ github.token }}
           HARNESS: ${{ inputs.harness }}

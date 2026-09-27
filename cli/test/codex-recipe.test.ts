@@ -95,14 +95,20 @@ describe("the Codex build's incremental compiling", () => {
     expect(await build({ CARGO_BUILD_JOBS: "12" })).toBe(`true ${host}`)
     expect(await build({ CARGO_BUILD_JOBS: "" })).toBe(`false ${host}`)
   })
-  test("keeps only the newest session of the codex crates, and the rest", async () => {
+  // The CLI package's crates (codex, codex_cli) get a new folder with each
+  // mod stamp, so their old ones are removed. Any other crate keeps one folder,
+  // which rustc cleans itself; one name can be two crates in use at once, a
+  // library and a program, so those are left alone.
+  test("keeps only the newest folder of the stamped crates, and every other crate's folders", async () => {
     session("codex-old", 300)
     session("codex-new", 10)
     session("codex_cli-old", 300)
     session("codex_cli-new", 10)
+    session("codex_code_mode_host-lib", 200)
+    session("codex_code_mode_host-bin", 20)
     session("codex_core-a", 300)
     await build({ CARGO_BUILD_JOBS: "8" })
-    expect(sessions()).toEqual(["codex-new", "codex_cli-new", "codex_core-a"])
+    expect(sessions()).toEqual(["codex-new", "codex_cli-new", "codex_code_mode_host-bin", "codex_code_mode_host-lib", "codex_core-a"])
   })
   test("clears what it kept on a new Codex release", async () => {
     await build({ CARGO_BUILD_JOBS: "8", OPENMODS_VERSION: "0.158.0" })
