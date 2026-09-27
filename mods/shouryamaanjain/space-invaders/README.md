@@ -2,7 +2,7 @@
 
 Adds a `/invaders` slash command (also `/space-invaders`) that opens Space Invaders while the agent keeps working.
 
-- **OpenCode:** the game takes the right half of the session screen, in place of the sidebar. The conversation keeps the left half, and its messages rewrap to fit.
+- **OpenCode:** the game takes the right half of the session screen, in place of the sidebar, panel or terminal on the right. The conversation keeps the left half, and its messages rewrap to fit.
 - **Codex CLI:** the game opens in the bottom pane, in place of the input box. The conversation keeps going above it, and the status line that shows what Codex is doing stays just above the game. Codex prints the conversation into your terminal's scrollback, so the game cannot sit beside it.
 
 ## How to play
@@ -33,7 +33,7 @@ OpenCode:
 | --- | --- |
 | `packages/tui/src/component/invaders.tsx` | New. The game and its panel. |
 | `packages/tui/src/app.tsx` | Registers the `/invaders` command. |
-| `packages/tui/src/routes/session/index.tsx` | Gives the right half of the session screen to the game while it is open. |
+| `packages/tui/src/component/session-frame.tsx` | Gives the right pane, half the width, to the game while it is open, and the keyboard with it. |
 
 Codex CLI:
 

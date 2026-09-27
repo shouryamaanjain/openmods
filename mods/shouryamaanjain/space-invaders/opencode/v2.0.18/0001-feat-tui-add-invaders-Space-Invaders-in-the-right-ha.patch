@@ -13,26 +13,25 @@ off. Up to three shots in the air, an extra life every 1500 points, a
 mystery ship, and a field that fits the panel.
 
 diff --git a/packages/tui/src/app.tsx b/packages/tui/src/app.tsx
-index 6852311f9e845639027804d8d18c7b3c23475b6e..fff5c16ef4b257de8a2a8ed216917abe1bb666ac 100644
+index efb195b8663487337c8a271839a531642785f87d..f38a103db40e20778fdf31c0ebf0272d2a977cf1 100644
 --- a/packages/tui/src/app.tsx
 +++ b/packages/tui/src/app.tsx
-@@ -86,6 +86,7 @@ import * as TuiAudio from "./audio"
- import { win32DisableProcessedInput, win32FlushInputBuffer } from "./terminal-win32"
- import { destroyRenderer } from "./util/renderer"
- import { cliErrorMessage, errorFormat } from "./util/error"
+@@ -103,6 +103,7 @@ import { SessionTerminalsProvider } from "./context/session-terminals"
+ import { PanelProvider, usePanel } from "./context/panel"
+ import { SessionFrame } from "./component/session-frame"
+ import { createTuiClipboard } from "./clipboard"
 +import { toggleInvaders } from "./component/invaders"
  
  registerOpencodeSpinner()
  
-@@ -826,6 +827,21 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
+@@ -1097,6 +1098,20 @@ function App() {
          },
          category: "System",
        },
 +      {
 +        name: "opencode.invaders",
 +        title: "Play Space Invaders",
-+        slashName: "invaders",
-+        slashAliases: ["space-invaders"],
++        slash: { name: "invaders", aliases: ["space-invaders"] },
 +        run: () => {
 +          dialog.clear()
 +          if (route.data.type !== "session") {
@@ -48,22 +47,21 @@ index 6852311f9e845639027804d8d18c7b3c23475b6e..fff5c16ef4b257de8a2a8ed216917abe
          title: "Exit the app",
 diff --git a/packages/tui/src/component/invaders.tsx b/packages/tui/src/component/invaders.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..13f6942f6355e2b5ea08283d00827fd84e93d2fd
+index 0000000000000000000000000000000000000000..aa6c8352d2aa879af5f4a0efbc29fa397f3f731e
 --- /dev/null
 +++ b/packages/tui/src/component/invaders.tsx
-@@ -0,0 +1,455 @@
+@@ -0,0 +1,441 @@
 +import { TextAttributes, type BoxRenderable, type RGBA } from "@opentui/core"
-+import { createEffect, createMemo, createRoot, createSignal, For, onCleanup, Show } from "solid-js"
-+import { usePromptRef } from "../context/prompt"
++import { createEffect, createMemo, createRoot, createSignal, For, Show } from "solid-js"
++import { Keymap } from "../context/keymap"
 +import { useTheme } from "../context/theme"
-+import { useBindings, useOpencodeModeStack } from "../keymap"
 +
 +// Space Invaders in the right half of the session screen. `/invaders` opens
 +// and closes it: while it is open the conversation takes the left half and the
-+// game the right, in place of the sidebar, and the agent keeps working. The
-+// arrow keys, space and p belong to the game while it is open; escape closes
-+// it. Game state lives at module level, so reopening resumes the same game,
-+// paused.
++// game the right pane, in place of the sidebar, and the agent keeps working.
++// The session frame gives it the keyboard: the arrow keys, space and p belong
++// to the game while it is open; escape closes it. Game state lives at module
++// level, so reopening resumes the same game, paused.
 +
 +const TICK_MS = 50
 +const SPRITES = [
@@ -353,44 +351,31 @@ index 0000000000000000000000000000000000000000..13f6942f6355e2b5ea08283d00827fd8
 +
 +/** The game, `width` columns wide beside the conversation; shown only while open. */
 +export function InvadersPanel(props: { width: number }) {
-+  const { theme } = useTheme()
-+  const modeStack = useOpencodeModeStack()
-+  const prompt = usePromptRef()
++  const theme = useTheme()
 +
-+  // While the game is open it has the keyboard: the prompt stays in view but
-+  // loses focus, so p and space do not type into it, and gets it back on close.
-+  createEffect(() => {
-+    if (!game.open()) return
-+    const pop = modeStack.push("invaders")
-+    prompt.current?.blur()
-+    onCleanup(() => {
-+      pop()
-+      prompt.current?.focus()
-+    })
-+  })
-+
-+  useBindings(() => ({
-+    enabled: game.open(),
-+    bindings: [
-+      { key: "left", desc: "Move left", group: "Space Invaders", cmd: game.left },
-+      { key: "right", desc: "Move right", group: "Space Invaders", cmd: game.right },
-+      { key: "space", desc: "Fire", group: "Space Invaders", cmd: game.fire },
-+      { key: "p", desc: "Pause", group: "Space Invaders", cmd: game.pause },
-+      { key: "escape", desc: "Close Space Invaders", group: "Space Invaders", cmd: game.close },
++  Keymap.createLayer(() => ({
++    priority: 20,
++    enabled: game.open,
++    commands: [
++      { bind: "left", title: "Move left", group: "Space Invaders", run: game.left },
++      { bind: "right", title: "Move right", group: "Space Invaders", run: game.right },
++      { bind: "space", title: "Fire", group: "Space Invaders", run: game.fire },
++      { bind: "p", title: "Pause", group: "Space Invaders", run: game.pause },
++      { bind: "escape", title: "Close Space Invaders", group: "Space Invaders", run: game.close },
 +    ],
 +  }))
 +
 +  const colors = (): Record<Color, RGBA> => ({
-+    a0: theme.error,
-+    a1: theme.warning,
-+    a2: theme.accent,
-+    ufo: theme.secondary,
-+    ship: theme.primary,
-+    shot: theme.text,
-+    bomb: theme.warning,
-+    boom: theme.text,
-+    banner: theme.primary,
-+    none: theme.text,
++    a0: theme.text.feedback.error.base,
++    a1: theme.text.feedback.warning.base,
++    a2: theme.hue.accent[400],
++    ufo: theme.text.feedback.info.base,
++    ship: theme.text.action.primary.base,
++    shot: theme.text.base,
++    bomb: theme.text.feedback.warning.base,
++    boom: theme.text.base,
++    banner: theme.text.action.primary.base,
++    none: theme.text.base,
 +  })
 +
 +  // One text line per field row, cut into runs of one colour.
@@ -437,29 +422,29 @@ index 0000000000000000000000000000000000000000..13f6942f6355e2b5ea08283d00827fd8
 +
 +  return (
 +    <Show when={game.open()}>
-+      <box width={props.width} flexShrink={0} paddingLeft={1} paddingRight={2} paddingBottom={1}>
++      <box width={props.width} height="100%" flexShrink={0} paddingLeft={1} paddingRight={2} paddingBottom={1}>
 +        <box
 +          flexGrow={1}
 +          border
 +          borderStyle="rounded"
-+          borderColor={theme.border}
++          borderColor={theme.border.base}
 +          paddingLeft={1}
 +          paddingRight={1}
 +          flexDirection="column"
 +        >
 +          <box flexDirection="row" justifyContent="space-between" gap={1} flexShrink={0}>
-+            <text fg={theme.text} attributes={TextAttributes.BOLD} wrapMode="none">
++            <text fg={theme.text.base} attributes={TextAttributes.BOLD} wrapMode="none">
 +              {narrow() ? "Invaders" : "Space Invaders"}
 +            </text>
-+            <text fg={theme.textMuted} wrapMode="none">
++            <text fg={theme.text.muted} wrapMode="none">
 +              {narrow() ? "" : "score "}
-+              <span style={{ fg: theme.text }}>{pad(status().score)}</span> ·{" "}
++              <span style={{ fg: theme.text.base }}>{pad(status().score)}</span> ·{" "}
 +              <Show when={!tiny()}>
-+                best <span style={{ fg: theme.text }}>{pad(Math.max(game.best(), status().score))}</span> ·{" "}
++                best <span style={{ fg: theme.text.base }}>{pad(Math.max(game.best(), status().score))}</span> ·{" "}
 +              </Show>
 +              {narrow() ? "w" : "wave "}
-+              <span style={{ fg: theme.text }}>{String(status().wave)}</span> ·{" "}
-+              <span style={{ fg: theme.error }}>{"♥".repeat(Math.max(0, status().lives))}</span>
++              <span style={{ fg: theme.text.base }}>{String(status().wave)}</span> ·{" "}
++              <span style={{ fg: theme.text.feedback.error.base }}>{"♥".repeat(Math.max(0, status().lives))}</span>
 +            </text>
 +          </box>
 +          {/* The field takes exactly the room left between the header and the
@@ -486,7 +471,7 @@ index 0000000000000000000000000000000000000000..13f6942f6355e2b5ea08283d00827fd8
 +            <Show
 +              when={status().over}
 +              fallback={
-+                <text fg={theme.textMuted} wrapMode="none">
++                <text fg={theme.text.muted} wrapMode="none">
 +                  {game.paused()
 +                    ? narrow()
 +                      ? "paused · p resumes · esc"
@@ -497,7 +482,7 @@ index 0000000000000000000000000000000000000000..13f6942f6355e2b5ea08283d00827fd8
 +                </text>
 +              }
 +            >
-+              <text fg={theme.error} wrapMode="none">
++              <text fg={theme.text.feedback.error.base} wrapMode="none">
 +                {narrow() ? "game over · space again" : "game over · space plays again · esc closes"}
 +              </text>
 +            </Show>
@@ -507,38 +492,158 @@ index 0000000000000000000000000000000000000000..13f6942f6355e2b5ea08283d00827fd8
 +    </Show>
 +  )
 +}
-diff --git a/packages/tui/src/routes/session/index.tsx b/packages/tui/src/routes/session/index.tsx
-index 2b54f21671b3889e6752175b1c2b0f36d189d3b9..9fc86a2712c6a7ff6cce42a4361bacc7273eda17 100644
---- a/packages/tui/src/routes/session/index.tsx
-+++ b/packages/tui/src/routes/session/index.tsx
-@@ -53,6 +53,7 @@ import { DialogTimeline } from "./dialog-timeline"
- import { DialogForkFromTimeline } from "./dialog-fork-from-timeline"
- import { DialogSessionRename } from "../../component/dialog-session-rename"
- import { Sidebar } from "./sidebar"
-+import { InvadersPanel, isInvadersOpen } from "../../component/invaders"
- import { SubagentFooter } from "./subagent-footer.tsx"
- import { filetype } from "../../util/filetype"
- import parsers from "../../parsers-config"
-@@ -275,7 +276,11 @@ export function Session() {
-     return false
+diff --git a/packages/tui/src/component/session-frame.tsx b/packages/tui/src/component/session-frame.tsx
+index d8bac292afe00a5acd80f6cf7820e60006a1a191..e6da38a07adef1bcf18db5cd22afebca2faf97e5 100644
+--- a/packages/tui/src/component/session-frame.tsx
++++ b/packages/tui/src/component/session-frame.tsx
+@@ -14,6 +14,7 @@ import { Keymap } from "../context/keymap"
+ import { InteractivityProvider } from "../context/interactivity"
+ import { useSessionTerminals } from "../context/session-terminals"
+ import { usePromptRef } from "../context/prompt"
++import { InvadersPanel, isInvadersOpen } from "./invaders"
+ import { usePanel } from "../context/panel"
+ import { useStorage } from "../context/storage"
+ import { useDialog } from "../ui/dialog"
+@@ -110,6 +111,7 @@ export function SessionFrame(props: { sessionID: string; verticalTabsWidth: numb
+     return (config.data.session?.sidebar ?? "auto") === "auto" && wide()
    })
-   const showTimestamps = createMemo(() => timestamps() === "show")
--  const contentWidth = createMemo(() => dimensions().width - (sidebarVisible() ? 42 : 0) - 4)
-+  // Space Invaders takes the right half in place of the sidebar.
-+  const invadersWidth = createMemo(() => dimensions().width - Math.floor(dimensions().width / 2))
-+  const contentWidth = createMemo(
-+    () => dimensions().width - (isInvadersOpen() ? invadersWidth() : sidebarVisible() ? 42 : 0) - 4,
+   const rightPane = createMemo(() => {
++    if (isInvadersOpen()) return "invaders"
+     if (activePanel()) return "panel"
+     if (sidebarOpen() && sidebarVisible()) return "sidebar"
+     if (selectedTerminal()) return "terminal"
+@@ -154,8 +156,19 @@ export function SessionFrame(props: { sessionID: string; verticalTabsWidth: numb
+     if (fullscreen()) focusRightPane()
+   })
+   createEffect(() => {
+-    if (rightPane() !== "terminal" && rightPane() !== "panel") setActivePane("session")
++    if (rightPane() !== "terminal" && rightPane() !== "panel" && rightPane() !== "invaders") setActivePane("session")
+   })
++  // Space Invaders takes the right half and the keyboard while it is open:
++  // the prompt stays in view, muted, and gets the keyboard back when it closes.
++  const invadersWidth = () => availableWidth() - Math.floor(availableWidth() / 2)
++  createEffect(
++    on(isInvadersOpen, (open, was) => {
++      if (open) {
++        renderer.currentFocusedRenderable?.blur()
++        setActivePane("right")
++      } else if (was) focusSession()
++    }),
 +  )
-   const providers = createMemo(() => Model.index(sync.data.provider))
- 
-   const scrollAcceleration = createMemo(() => getScrollAcceleration(tuiConfig))
-@@ -1335,7 +1340,8 @@ export function Session() {
-             </Show>
-             <Toast />
-           </box>
--          <Show when={sidebarVisible()}>
-+          <InvadersPanel width={invadersWidth()} />
-+          <Show when={sidebarVisible() && !isInvadersOpen()}>
-             <Switch>
-               <Match when={wide()}>
-                 <Sidebar sessionID={route.sessionID} />
+   createEffect(() => {
+     if (!restoreTerminalFocus() || selectedTerminal()) return
+     setRestoreTerminalFocus(false)
+@@ -321,60 +334,80 @@ export function SessionFrame(props: { sessionID: string; verticalTabsWidth: numb
+           />
+         </Show>
+       </box>
+-      <Show when={rightPane() === "terminal" || rightPane() === "panel" || (rightPane() === "sidebar" && wide())}>
++      <Show
++        when={
++          rightPane() === "terminal" ||
++          rightPane() === "panel" ||
++          rightPane() === "invaders" ||
++          (rightPane() === "sidebar" && wide())
++        }
++      >
+         <box
+           ref={(value: BoxRenderable) => (rightNode = value)}
+           flexShrink={0}
+           width={
+-            fullscreen() ? availableWidth() : rightPane() === "sidebar" ? SESSION_SIDEBAR_WIDTH : paneResize.size()
++            fullscreen()
++              ? availableWidth()
++              : rightPane() === "sidebar"
++                ? SESSION_SIDEBAR_WIDTH
++                : rightPane() === "invaders"
++                  ? invadersWidth()
++                  : paneResize.size()
+           }
+           minWidth={0}
+           minHeight={0}
+         >
+           <Show
+-            when={rightPane() === "sidebar"}
++            when={rightPane() === "invaders"}
+             fallback={
+               <Show
+-                keyed
+-                when={activePanel()}
++                when={rightPane() === "sidebar"}
+                 fallback={
+-                  <Show keyed when={selectedTerminal()?.id}>
+-                    {(ptyID) => (
+-                      <TerminalPane
+-                        ptyID={ptyID}
+-                        resizing={paneResize.resizing()}
+-                        autoFocus={restoreTerminalFocus() || sessions.shouldFocus(ptyID)}
+-                        onAutoFocus={() => {
+-                          sessions.clearFocus(ptyID)
+-                          setRestoreTerminalFocus(false)
++                  <Show
++                    keyed
++                    when={activePanel()}
++                    fallback={
++                      <Show keyed when={selectedTerminal()?.id}>
++                        {(ptyID) => (
++                          <TerminalPane
++                            ptyID={ptyID}
++                            resizing={paneResize.resizing()}
++                            autoFocus={restoreTerminalFocus() || sessions.shouldFocus(ptyID)}
++                            onAutoFocus={() => {
++                              sessions.clearFocus(ptyID)
++                              setRestoreTerminalFocus(false)
++                            }}
++                            onFocusRequest={(value) => (focusTerminal = value)}
++                            onDisconnect={() => setRestoreTerminalFocus(true)}
++                          />
++                        )}
++                      </Show>
++                    }
++                  >
++                    {(item) => (
++                      <PanelHost
++                        panel={item}
++                        width={fullscreen() ? availableWidth() : paneResize.size()}
++                        focused={activePane() === "right"}
++                        onFocus={focusRightPane}
++                        onTarget={(node) => {
++                          panelNode = node
++                          if (node) {
++                            focusRightPane()
++                            return
++                          }
++                          setActivePane("session")
+                         }}
+-                        onFocusRequest={(value) => (focusTerminal = value)}
+-                        onDisconnect={() => setRestoreTerminalFocus(true)}
+                       />
+                     )}
+                   </Show>
+                 }
+               >
+-                {(item) => (
+-                  <PanelHost
+-                    panel={item}
+-                    width={fullscreen() ? availableWidth() : paneResize.size()}
+-                    focused={activePane() === "right"}
+-                    onFocus={focusRightPane}
+-                    onTarget={(node) => {
+-                      panelNode = node
+-                      if (node) {
+-                        focusRightPane()
+-                        return
+-                      }
+-                      setActivePane("session")
+-                    }}
+-                  />
+-                )}
++                <Sidebar sessionID={props.sessionID} />
+               </Show>
+             }
+           >
+-            <Sidebar sessionID={props.sessionID} />
++            <InvadersPanel width={fullscreen() ? availableWidth() : invadersWidth()} />
+           </Show>
+         </box>
+       </Show>
