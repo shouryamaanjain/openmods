@@ -34,7 +34,7 @@ describe("the newest release", () => {
     const server = Bun.serve({ port: 0, fetch: () => new Response("down", { status: 503 }) })
     try {
       const repo = await repoWithTags(["v1.0.0", "v1.1.0"])
-      expect(latestRelease({ repo, latestRelease: { url: `http://127.0.0.1:${server.port}/`, tag: "v{version}" } }, newer)).rejects.toThrow("answered 503")
+      await expect(latestRelease({ repo, latestRelease: { url: `http://127.0.0.1:${server.port}/`, tag: "v{version}" } }, newer)).rejects.toThrow("answered 503")
     } finally {
       server.stop(true)
     }
