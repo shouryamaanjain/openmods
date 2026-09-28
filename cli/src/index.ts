@@ -358,7 +358,8 @@ async function revokedUrl(reg: string) {
   return gh ? `https://raw.githubusercontent.com/${gh[1]}/${gh[2]}/HEAD/revoked.json` : ""
 }
 // Whether the list is known: fetched now, or a copy of this same list kept.
-async function fetchRevocations(reg: string): Promise<boolean> {
+// With `offline`, only the kept copy is read.
+async function fetchRevocations(reg: string, offline = false): Promise<boolean> {
   const url = await revokedUrl(reg)
   if (!url) return true
   let kept: { url?: string; revoked?: unknown[] } = {}
@@ -366,10 +367,12 @@ async function fetchRevocations(reg: string): Promise<boolean> {
     kept = readJsonFile(REVOKED_COPY)
   } catch {}
   if (kept.url === url && Array.isArray(kept.revoked)) fetchedRevocations = { list: kept.revoked.filter(isRevocation), fresh: false }
+  if (offline) return fetchedRevocations !== null
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(3000) })
-    // No file means nothing is revoked.
-    const body = res.status === 404 ? { revoked: [] } : res.ok ? ((await res.json()) as { revoked?: unknown }) : null
+    // The registry always has the file, with an empty list when nothing is
+    // revoked; anything but a good answer leaves the last copy standing.
+    const body = res.ok ? ((await res.json()) as { revoked?: unknown }) : null
     // A list with anything malformed in it is not taken; the last copy stands.
     if (!body || !Array.isArray(body.revoked) || !body.revoked.every(isRevocation)) return fetchedRevocations !== null
     fetchedRevocations = { list: body.revoked, fresh: true }
@@ -1069,7 +1072,8 @@ function endDev(h: Harness) {
 
 // The launcher for a build that contains a revoked mod: it never runs the
 // build again. It says why on every launch and starts the stock harness.
-const REVOKED_MARK = "openmods removed-mod launcher"
+// In every stopped launcher's first comment, from older openmods too.
+const REVOKED_MARK = "build contains a mod removed from OpenMods"
 function revokedLauncherOf(h: Harness, bad: { id: string; reason: string }[], stock: string | null) {
   const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
   const ids = bad.map((b) => b.id).join(" ")
@@ -1080,7 +1084,7 @@ function revokedLauncherOf(h: Harness, bad: { id: string; reason: string }[], st
       : `Your modded ${h.name} will not run again. \`openmods uninstall ${ids}\` removes the mod.`,
   ].join("\n")
   return `#!/bin/sh
-# ${REVOKED_MARK}: this ${h.name} build contains a mod removed from OpenMods, so it does not run.
+# openmods: this ${h.name} build contains a mod removed from OpenMods, so it does not run.
 printf '%s\\n' ${q(message)} >&2
 ${stock ? `exec ${JSON.stringify(stock)} "$@"` : "exit 1"}
 `
@@ -2187,7 +2191,7 @@ async function cmdCheck() {
   if (result.unchecked || result.applies !== true || (has("typecheck") && result.typechecks !== true) || (has("build") && result.builds !== true)) process.exit(1)
 }
 
-// Every command keeps the launchers current and stops a
+// Every command but help and registry keeps the launchers current and stops a
 // revoked mod; nothing does this in the background. Launchers from before
 // that run \`openmods check-updates\` once a day, which now only does this,
 // offline, and so replaces them with the launcher that just starts the build.
@@ -2196,7 +2200,7 @@ async function keepCurrent(fetchRevoked: boolean) {
   rmSync(path.join(HOME, "updates"), { recursive: true, force: true })
   const reg = await ensureRegistry()
   // Before anything is installed too: install refuses a removed mod.
-  const known = fetchRevoked ? await fetchRevocations(reg) : true
+  const known = await fetchRevocations(reg, !fetchRevoked)
   const state = loadState()
   for (const [id, e] of Object.entries(state)) {
     if (!existsSync(path.join(reg, "harnesses", `${id}.json`))) continue
@@ -2327,7 +2331,8 @@ if (cmd === "help" && positional[1]) {
 } else if (commands[cmd]) {
   if (has("help")) console.log(commandHelp(cmd) ?? helpText())
   else {
-    await keepCurrent(cmd !== "check-updates")
+    // `registry` shows where things are, even with a damaged checkout.
+    if (cmd !== "registry") await keepCurrent(cmd !== "check-updates")
     await commands[cmd]!()
   }
 } else {

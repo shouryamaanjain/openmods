@@ -200,15 +200,33 @@ describe("the list of removed mods, fetched on its own", () => {
     expect(r.code).toBe(0)
     expect(r.out).toContain("t/later was removed from OpenMods")
   })
+  test("a list that is not there (404) is a failed fetch, not an empty list", async () => {
+    listed = null
+    const r = await withUrl(url, "status")
+    expect(r.out).toContain("t/later was removed from OpenMods")
+  })
+  test("the daily call of an old launcher uses the last copy, offline", async () => {
+    const r = await withUrl("http://127.0.0.1:9/never-fetched.json", "check-updates")
+    expect(r.all).toBe("")
+    expect((await withUrl(url, "check-updates")).all).toBe("")
+    expect((await $`sh ${launcher()}`.nothrow().quiet()).stdout.toString().trim()).toBe("stock greet")
+  })
   test("with no list at all (the copy damaged, the fetch failing), a stopped build stays stopped", async () => {
     writeFileSync(path.join(sb.om, "revoked.json"), "{ damaged")
     down = true
     expect((await withUrl(url, "status")).code).toBe(0)
     down = false
     expect((await $`sh ${launcher()}`.nothrow().quiet()).stdout.toString().trim()).toBe("stock greet")
+    // One stopped by an older openmods, whose first comment differs.
+    const launcherFile = launcher()
+    writeFileSync(launcherFile, readFileSync(launcherFile, "utf8").replace(/^# .*$/m, "# openmods: this Fake build contains a mod removed from OpenMods, so it does not run."))
+    down = true
+    expect((await withUrl(url, "status")).code).toBe(0)
+    down = false
+    expect((await $`sh ${launcher()}`.nothrow().quiet()).stdout.toString().trim()).toBe("stock greet")
   })
   test("once it is taken off the list, the mod can be switched back on", async () => {
-    listed = null
+    listed = { revoked: [] }
     expect((await withUrl(url, "status")).out).not.toContain("removed from OpenMods")
     expect((await withUrl(url, "on")).code).toBe(0)
     expect((await $`sh ${launcher()}`.nothrow().quiet()).stdout.toString().trim()).not.toBe("stock greet")
