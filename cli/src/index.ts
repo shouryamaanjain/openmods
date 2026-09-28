@@ -2627,7 +2627,7 @@ function newsFor(reg: string, h: Harness, e: State[string]) {
   const old = carriesBase(e) && !moveTo && !fixes.length
   const ask = !!moveTo || fixes.length > 0 || old
   const message = old
-    ? `Your ${h.name} build was made when OpenMods still changed the code of ${h.name} (a patch and a version stamp of its own); updating builds your mods without them.${heldSaid ? ` ${heldSaid}` : ""}`
+    ? `Your ${h.name} build was made before OpenMods stopped changing harness code; updating builds your mods without an OpenMods patch or version stamp.${heldSaid ? ` ${heldSaid}` : ""}`
     : moveTo
     ? `${h.name} ${moveTo} is out, and all your mods support it.${fixesSaid ? ` New in your mods: ${fixesSaid}.` : ""}${heldSaid ? ` ${heldSaid}` : ""}`
     : fixes.length

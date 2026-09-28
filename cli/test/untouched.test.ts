@@ -46,7 +46,7 @@ describe("a build made while OpenMods still changed harness code", () => {
     writeFileSync(stateFile(), JSON.stringify(state))
     const look = await cli(sb, "check-updates", "fake", "--json")
     expect(JSON.parse(look.out)).toMatchObject({ ask: true })
-    expect(readFileSync(path.join(sb.om, "updates", "fake"), "utf8")).toContain("was made when OpenMods still changed the code of Fake")
+    expect(readFileSync(path.join(sb.om, "updates", "fake"), "utf8")).toContain("was made before OpenMods stopped changing harness code")
     const r = await cli(sb, "update", "fake")
     expect(r.code, r.all).toBe(0)
     expect(r.out).toContain("now runs Fake 1.0.0 + t/friendly")
