@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, test } from "bun:test"
 import { $ } from "bun"
 import { existsSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { cli, createHarness, createMod, git, greeting, sandbox, setGreeting } from "./harness"
+import { cli, createHarness, createMod, git, greeting, run, sandbox, setGreeting } from "./harness"
 
 const sb = sandbox("dev")
 const clone = path.join(sb.T, "my-clone")
@@ -39,9 +39,13 @@ describe("openmods dev", () => {
     expect(await greeting(sb)).toBe("stock greet")
     expect((await cli(sb, "dev", "--stop")).code).toBe(1)
   })
-  test("installing a mod ends dev mode and says so; --stop then returns to that build", async () => {
+  test("installing a mod asks before ending dev mode, and says so; --stop then returns to that build", async () => {
     expect((await cli(sb, "dev", clone, "--fake")).code).toBe(0)
-    const r = await cli(sb, "install", "t/friendly")
+    const no = await run(sb, { answer: "n\n" }, "install", "t/friendly")
+    expect(no.out).toContain("runs your clone at")
+    expect(no.out).toContain("This switches it to the modded build. Go ahead?")
+    expect(await greeting(sb)).toBe("hello from my edit")
+    const r = await cli(sb, "install", "t/friendly", "--yes")
     expect(r.out).toContain("no longer runs your clone")
     expect(await greeting(sb)).toBe("hello from friendly")
     expect((await cli(sb, "dev", clone, "--fake")).code).toBe(0)

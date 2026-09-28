@@ -127,7 +127,7 @@ const positional: string[] = []
 // harness flags (--opencode, --codex, ...), so `install --opencode owner/mod`
 // never swallows the mod as the flag's value.
 const VALUE_FLAGS = new Set(["registry", "name", "owner", "harness", "base", "out", "ref", "workspace", "at", "note"])
-const SWITCHES = new Set(["build", "force", "help", "json", "local", "no-path", "typecheck", "stop"])
+const SWITCHES = new Set(["build", "force", "help", "json", "local", "no-path", "typecheck", "stop", "yes"])
 for (let i = 0; i < args.length; i++) {
   const a = args[i]!
   if (a.startsWith("--")) {
@@ -148,9 +148,12 @@ const log = (msg: string) => {
   if (progress?.live && progress.running) progress.note(msg)
   else if (!has("json")) console.log(msg)
 }
+// While a change is being built: what to say if it fails, after the error.
+let failNote: string[] = []
 const fail = (msg: string): never => {
   progress?.failed()
   console.error(`error: ${msg}`)
+  for (const line of failNote) console.error(line)
   process.exit(1)
 }
 
@@ -583,6 +586,21 @@ async function select(question: string, options: { label: string; hint?: string 
  * when there is no terminal to ask on (OPENMODS_ASSUME_TTY lets tests answer
  * through stdin).
  */
+/**
+ * A question before a change the user may not expect. --yes answers yes.
+ * With no terminal to ask on, it stops and says how to go ahead; a no leaves
+ * everything as it is.
+ */
+async function ask(question: string) {
+  if (has("yes")) return
+  const yes = await confirm(question)
+  if (yes === null) fail(`${question} Answer in a terminal, or add --yes to go ahead.`)
+  if (!yes) {
+    log("Nothing was changed.")
+    process.exit(0)
+  }
+}
+
 async function confirm(question: string): Promise<boolean | null> {
   const tty = (process.stdin.isTTY && process.stdout.isTTY) || !!process.env.OPENMODS_ASSUME_TTY
   if (!tty || has("json")) return null
@@ -1490,8 +1508,17 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     set = active
   }
   const shared = sharedReleases(set)
-  if (shared.length === 0)
-    fail(`${active.map((m) => m.id).join(" and ")} have no ${h.name} release in common, so they cannot be built together: ${releasesSaid(active)}. Nothing was changed.`)
+  if (shared.length === 0) {
+    // Which of the mods already there leave the new ones no release: the
+    // user decides whether to uninstall them, never openmods.
+    const added = active.filter((m) => adding.includes(m.id))
+    const blocking = active.filter((m) => !adding.includes(m.id) && added.some((a) => sharedReleases([a, m]).length === 0))
+    fail(
+      `${active.map((m) => m.id).join(" and ")} have no ${h.name} release in common, so they cannot be built together: ${releasesSaid(active)}. Nothing was changed.${
+        added.length && blocking.length ? ` To have ${added.map((m) => m.id).join(" and ")}, uninstall ${blocking.map((m) => m.id).join(" and ")} first: openmods uninstall ${blocking.map((m) => m.id).join(" ")}` : ""
+      }`,
+    )
+  }
   const release = target
     ? shared.includes(target)
       ? target
@@ -1499,10 +1526,26 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     : current && shared.includes(current)
       ? current
       : shared[0]!
+  // Another release than the user expects is asked about first.
   if (current && release !== current && !target) {
     const lacking = set.filter((m) => !at(m, current))
-    log(`note: building ${h.name} ${rel(release)}, not ${rel(current)}: ${lacking.map((m) => shown(m.id)).join(", ")} ${lacking.length === 1 ? "has" : "have"} no version for ${rel(current)}.`)
+    const who = `${lacking.map((m) => shown(m.id)).join(", ")} ${lacking.length === 1 ? "has" : "have"} no version for ${rel(current)}`
+    await ask(
+      newerRelease(release, current)
+        ? `This also updates ${h.name} from ${rel(current)} to ${rel(release)} for all your mods, since ${who}. Go ahead?`
+        : `This moves ${h.name} from ${rel(current)} back to ${rel(release)} for all your mods, since ${who}. Go ahead?`,
+    )
+  } else if (!current && adding.length) {
+    const stock = await versionOf(stockBinary(h))
+    const have = stock?.replace(/^[^0-9]*/, "")
+    if (have && newerRelease(have, release))
+      await ask(
+        `${active.map((m) => m.id).join(" and ")} ${active.length === 1 ? "supports" : "support"} ${h.name} up to ${rel(release)}; your ${h.name} is ${have}. Build ${h.name} ${rel(release)} with ${active.length === 1 ? "it" : "them"}? Your own ${h.name} stays ${have}; sessions and settings from the newer one may not all work in the older build.`,
+      )
   }
+  // A clone running with openmods dev gives way to the build only on a yes.
+  const dev = devOf(harnessId)
+  if (dev) await ask(`\`${h.binary}\` runs your clone at ${pretty(dev.path)} (openmods dev). This switches it to the modded build. Go ahead?`)
   const mods = set.map((m) => at(m, release)!)
   for (const m of mods) {
     const r = revocationOf(reg, m.id, m.update)
@@ -1531,6 +1574,19 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
   // them needs none of it.
   await checkRequirements(h)
   holdBuildLock(harnessId, h)
+  // If the build fails, nothing is switched: say what still runs.
+  const before = state[harnessId]
+  const runs = dev
+    ? `your clone at ${pretty(dev.path)}`
+    : before?.enabled && before.artifact && existsSync(before.artifact)
+      ? `${h.name} ${rel(before.ref)} + ${before.mods.filter((m) => !before.off.includes(m)).join(" + ")}`
+      : `your stock ${h.name}`
+  const failing = adding.length ? `${adding.join(" and ")} could not be built${active.length > adding.length ? ` with your other ${h.name} mods` : ""}.` : `The new ${h.name} build could not be made.`
+  failNote = [
+    "",
+    `${failing} Nothing changed: \`${h.binary}\` still runs ${runs}.`,
+    ...(adding.length ? [`\`openmods info ${adding[0]}\` shows who maintains it, to tell them.`] : []),
+  ]
   const base = mods[0]!.upstream
   const builds = path.join(HOME, "harnesses", harnessId, "builds")
   const first = !existsSync(builds) || readdirSync(builds).length === 0
@@ -1549,6 +1605,7 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
   const was = state[harnessId]?.ref
   const artifact = keepBuild(h, harnessId, root, `${rel(base.ref)}+${stampOf(mods.filter((m) => m.id !== BASE_ID))}`)
   progress = undefined
+  failNote = []
   switchOn(h, artifact)
   state[harnessId] = {
     ref: base.ref,
