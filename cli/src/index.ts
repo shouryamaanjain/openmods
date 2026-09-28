@@ -1030,7 +1030,9 @@ openmods() { ${cli} "$@"; }
 # Only at a terminal. (OPENMODS_ASSUME_TTY=1 lets tests drive it without one.)
 if { [ -t 0 ] && [ -t 1 ]; } || [ -n "$OPENMODS_ASSUME_TTY" ]; then
   # Look for news for next time, in the background.
-  [ -z "$OPENMODS_NO_CHECK" ] && ( openmods check-updates "$HARNESS" >/dev/null 2>&1 & )
+  # The whole group is redirected: dash keeps a background function's output
+  # open otherwise, and whatever reads this launcher's output would wait.
+  [ -z "$OPENMODS_NO_CHECK" ] && ( openmods check-updates "$HARNESS" & ) </dev/null >/dev/null 2>&1
   KEY= ASK= MESSAGE= ESTIMATE=
   [ -f "$NOTE" ] && . "$NOTE"
   if [ -n "$KEY" ] && ! grep -qxF "$KEY" "$NOTE.seen" 2>/dev/null; then
@@ -1465,7 +1467,9 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     enabled: true,
   }
   saveState(state)
-  // The launcher's note described the build this replaces.
+  // The launcher's note described the build this replaces; cleared again now,
+  // in case a look that began before the build wrote one meanwhile.
+  rmSync(path.join(HOME, "updates", harnessId), { force: true })
   await tidy(root, base.ref, !!was && was !== base.ref)
   await explainSwitch(h, state[harnessId]!)
 }
@@ -1523,6 +1527,17 @@ function holdBuildLock(harnessId: string, h: Harness) {
 // Whether a lock's process still runs and is the one that wrote it: it
 // started before the lock was written. Without ps to ask, a lock is trusted
 // for 12 hours, longer than any build.
+// Whether a build of the harness is running now: its lock is held by a live
+// process. A lock a killed build left behind does not count.
+function building(harnessId: string) {
+  const lock = path.join(HOME, "harnesses", harnessId, "build.lock")
+  try {
+    return lockOwnerRuns(Number(readFileSync(lock, "utf8")), lstatSync(lock).mtimeMs)
+  } catch {
+    return false
+  }
+}
+
 function lockOwnerRuns(pid: number, written: number) {
   if (!(pid > 0) || pid === process.pid) return false
   try {
@@ -2275,6 +2290,8 @@ async function cmdCheckUpdates() {
   const index = await fetchIndex(reg)
   const known = allHarnesses(reg).map((h) => h.id)
   if (positional[1] && !known.includes(positional[1])) fail(`unknown harness "${positional[1]}". Known: ${known.join(", ")}.`)
+  // A harness the registry no longer has gets no news, and loses any old note.
+  for (const id of Object.keys(state).filter((x) => !known.includes(x) && ID.test(x))) rmSync(path.join(HOME, "updates", id), { force: true })
   for (const id of positional[1] ? [positional[1]] : Object.keys(state).filter((x) => known.includes(x))) {
     const e = state[id]
     const file = path.join(HOME, "updates", id)
@@ -2292,7 +2309,7 @@ async function cmdCheckUpdates() {
     }
     // A build that started or finished while this looked makes the news
     // stale: the next look says what is true then.
-    if (existsSync(path.join(HOME, "harnesses", id, "build.lock")) || JSON.stringify(loadState()[id]) !== JSON.stringify(e)) continue
+    if (building(id) || JSON.stringify(loadState()[id]) !== JSON.stringify(e)) continue
     const took = lastRebuild(path.join(HOME, "timings.json"), id)
     // The launcher sources this file, so every value is single-quoted; written
     // whole and then moved into place, since a launcher may read it meanwhile.
