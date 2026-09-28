@@ -213,7 +213,15 @@ function otherCommandRuns() {
       if (Number(f) === process.pid) return false
       // Its process must have started before the marker was written: a
       // process that took the number of a killed command is not it.
-      if (lockOwnerRuns(Number(f), lstatSync(path.join(BUSY, f)).mtimeMs)) return true
+      let written: number
+      try {
+        written = lstatSync(path.join(BUSY, f)).mtimeMs
+      } catch (e) {
+        // Gone since the listing: that command has ended. Anything else
+        // unreadable counts as running, to be safe.
+        return (e as NodeJS.ErrnoException).code !== "ENOENT"
+      }
+      if (lockOwnerRuns(Number(f), written)) return true
       // Left by a command that was killed.
       rmSync(path.join(BUSY, f), { force: true })
       return false
