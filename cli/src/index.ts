@@ -7,7 +7,7 @@
 // The stock install of the harness is never touched.
 
 import { $ } from "bun"
-import { cpSync, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { cpSync, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { cpus, homedir, tmpdir, totalmem } from "node:os"
 import path from "node:path"
 import { footprint, incompatibility as whyNot, type Footprint } from "./overlap"
@@ -174,13 +174,107 @@ async function ensureRegistry(): Promise<string> {
   return dir
 }
 
+// The registry openmods cloned holds the mods list, the build recipes and the
+// list of removed mods; list, info, install and update pull it first, so new
+// mods show up without updating anything. The program itself runs from its
+// own copy (see installCli), so a pull never changes it. A pull that fails,
+// or takes more than 20 seconds, leaves the copy on this machine, and says so
+// on stderr, so --json output stays clean.
+let pullsAllowed = true
 async function refreshRegistry(): Promise<string> {
   const dir = await ensureRegistry()
-  if (dir === path.join(HOME, "registry")) {
-    log("Updating registry")
-    await $`git -C ${dir} pull --ff-only`.quiet()
+  if (dir !== path.join(HOME, "registry") || !pullsAllowed) return dir
+  const p = Bun.spawn(["git", "-C", dir, "pull", "-q", "--ff-only"], {
+    env: {
+      ...process.env,
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND ?? "ssh -o BatchMode=yes -o ConnectTimeout=10",
+      GIT_HTTP_LOW_SPEED_LIMIT: "1000",
+      GIT_HTTP_LOW_SPEED_TIME: "15",
+    },
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "pipe",
+    timeout: 20_000,
+  })
+  const [code, err] = await Promise.all([p.exited, new Response(p.stderr).text()])
+  if (code !== 0) {
+    const why = p.signalCode ? "it took too long" : err.trim().split("\n").filter(Boolean).at(-1)?.replace(/^(fatal|error): /, "") || `git exited with ${code}`
+    console.error(`note: could not update the mods list (${why}); using the copy this machine fetched last.`)
   }
   return dir
+}
+
+// The program runs from ~/.openmods/cli, a copy of the registry's cli/ taken
+// by the installer and by \`openmods update\`, never from the registry clone
+// itself: pulling the mods list must not change what runs. Each version gets
+// its own folder, and ~/.openmods/cli is a link swapped to it in one step, so
+// the openmods command always finds a whole program. A version is named by
+// the package version and the git tree of cli/, so publishing a mod does not
+// make a new one. Returns the versions when it switched.
+const CLI_DIR = path.join(HOME, "cli")
+const CLI_VERSIONS = path.join(HOME, "cli-versions")
+const runsFromRegistry = () => {
+  try {
+    return realpathSync(import.meta.dir).startsWith(realpathSync(path.join(HOME, "registry")) + path.sep)
+  } catch {
+    return false
+  }
+}
+// The openmods command runs the copy, not the registry clone.
+function pointWrapperAtCopy() {
+  const wrapper = path.join(BIN, "openmods")
+  if (!existsSync(wrapper)) return
+  const text = readFileSync(wrapper, "utf8")
+  const moved = text.replaceAll("/registry/cli/src/index.ts", "/cli/src/index.ts")
+  if (moved !== text) writeScript(wrapper, moved)
+}
+async function installCli(reg: string): Promise<{ from: string; to: string } | null> {
+  const src = path.join(reg, "cli")
+  if (!existsSync(path.join(src, "src", "index.ts"))) return null
+  const tree = (await $`git -C ${reg} rev-parse --short HEAD:cli`.quiet()).text().trim()
+  const to = `${readJsonFile(path.join(src, "package.json")).version} (${tree})`
+  const readVersion = (dir: string) => {
+    try {
+      return readFileSync(path.join(dir, ".version"), "utf8").trim()
+    } catch {
+      return ""
+    }
+  }
+  const from = readVersion(CLI_DIR)
+  if (from === to) {
+    pointWrapperAtCopy()
+    return null
+  }
+  const dest = path.join(CLI_VERSIONS, tree)
+  if (readVersion(dest) !== to) {
+    const next = `${dest}.${process.pid}`
+    rmSync(next, { recursive: true, force: true })
+    mkdirSync(next, { recursive: true })
+    cpSync(path.join(src, "src"), path.join(next, "src"), { recursive: true })
+    for (const f of ["get-bun.sh", "package.json"]) if (existsSync(path.join(src, f))) cpSync(path.join(src, f), path.join(next, f))
+    writeFileSync(path.join(next, ".version"), `${to}\n`)
+    // A version folder, once there, is whole and never replaced: another
+    // command may have put it there first and linked to it already.
+    try {
+      renameSync(next, dest)
+    } catch {
+      rmSync(next, { recursive: true, force: true })
+    }
+    if (readVersion(dest) !== to) throw new Error(`could not set up ${pretty(dest)}`)
+  }
+  // A folder left by an earlier layout is moved aside, then the link swapped in.
+  if (existsSync(CLI_DIR) && !lstatSync(CLI_DIR).isSymbolicLink()) renameSync(CLI_DIR, path.join(CLI_VERSIONS, `old-${process.pid}`))
+  const link = `${CLI_DIR}.${process.pid}`
+  rmSync(link, { force: true })
+  symlinkSync(dest, link)
+  renameSync(link, CLI_DIR)
+  pointWrapperAtCopy()
+  // Only this version and the one before stay: a command started just before
+  // the switch may still be reading the old one.
+  const keep = new Set([tree, from.match(/\(([0-9a-f]+)\)$/)?.[1] ?? ""])
+  for (const d of readdirSync(CLI_VERSIONS)) if (!keep.has(d) && !d.includes(".")) rmSync(path.join(CLI_VERSIONS, d), { recursive: true, force: true })
+  return { from, to }
 }
 
 function loadHarness(reg: string, id: string): Harness {
@@ -1600,7 +1694,7 @@ async function tidy(root: string, ref: string, moved: boolean) {
 // ---------------------------------------------------------------- commands
 
 async function cmdList() {
-  const reg = await ensureRegistry()
+  const reg = await refreshRegistry()
   const only = positional[1] ?? harnessFlags(reg)[0]
   const mods = listMods(reg, only).filter((m) => !m.internal)
   if (has("json")) return console.log(JSON.stringify(mods.map(({ dir, root, ...m }) => m), null, 2))
@@ -1625,7 +1719,7 @@ async function cmdList() {
 }
 
 async function cmdInfo() {
-  const reg = await ensureRegistry()
+  const reg = await refreshRegistry()
   const spec = positional[1] ?? fail("usage: openmods info <owner>/<mod> [--<harness>]")
   const picked = harnessFlags(reg)
   const variants = supportsOf(reg, spec).filter((m) => !picked.length || picked.includes(m.harness))
@@ -1671,7 +1765,7 @@ async function harnessOfClone(reg: string, checkout: string): Promise<Harness> {
 const isPathSpec = (s: string) => s === "." || s === ".." || /^(\.{1,2}\/|\/|~)/.test(s)
 
 async function cmdInstall() {
-  const reg = await ensureRegistry()
+  const reg = await refreshRegistry()
   let specs = positional.slice(1)
   if (specs.length === 0) fail("install needs a mod, e.g. openmods install shouryamaanjain/space-invaders --opencode. `openmods list` shows what is available.")
   // `openmods install .` in a clone of a harness: pack its commits on top of
@@ -1861,6 +1955,8 @@ async function cmdOff() {
 
 async function cmdUpdate() {
   const reg = await refreshRegistry()
+  const cli = reg === path.join(HOME, "registry") ? await installCli(reg) : null
+  if (cli) log(cli.from ? `OpenMods is updated: ${cli.from} → ${cli.to}. Your next command runs it.` : `OpenMods ${cli.to} is set up in ${pretty(CLI_DIR)}.`)
   const state = loadState()
   const ids = positional[1] ? [positional[1]] : Object.keys(state)
   for (const id of ids) {
@@ -2527,6 +2623,16 @@ if (cmd === "help" && positional[1]) {
 } else if (commands[cmd]) {
   if (has("help")) console.log(commandHelp(cmd) ?? helpText())
   else {
+    // An install from before the program had its own copy runs it from the
+    // registry clone: move it out once, so pulls never change it again.
+    if (runsFromRegistry()) {
+      const moved = await installCli(path.join(HOME, "registry")).catch((e: unknown) => e as Error)
+      // Until it has moved, a pull would change the program as it runs.
+      if (moved instanceof Error) {
+        pullsAllowed = false
+        console.error(`note: could not move OpenMods to ${pretty(CLI_DIR)} (${moved.message}); the mods list is not updated until it can.`)
+      }
+    }
     // `registry` shows where things are even when the check cannot run,
     // with a damaged checkout for one.
     if (cmd === "registry") await keepCurrent(true).catch(() => {})

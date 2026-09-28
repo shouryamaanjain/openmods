@@ -1,10 +1,10 @@
 #!/bin/sh
-# Installs the openmods CLI: a clone of the registry under ~/.openmods and
-# an `openmods` command in ~/.openmods/bin, which install also puts first
-# on your PATH. The CLI runs on its own copy of Bun, kept in
-# ~/.openmods/toolchains with the versions harness builds pin; nothing
-# outside ~/.openmods changes except the PATH line in your shell's startup
-# files. Needs git, curl and tar.
+# Installs the openmods CLI: a clone of the registry (the mods list) under
+# ~/.openmods, the program itself in ~/.openmods/cli, and an `openmods`
+# command in ~/.openmods/bin, which install also puts first on your PATH.
+# The CLI runs on its own copy of Bun, kept in ~/.openmods/toolchains with
+# the versions harness builds pin; nothing outside ~/.openmods changes
+# except the PATH line in your shell's startup files. Needs git, curl and tar.
 #
 #   curl -fsSL https://openmods.dev/install.sh | sh
 set -e
@@ -43,6 +43,12 @@ WRAP
 chmod 755 "$OM/bin/openmods"
 
 # PATH, and a launcher in front of each harness you have (see `openmods help setup`).
+# Run from the fresh clone, this also copies the program to ~/.openmods/cli,
+# where it runs from then on, so pulling the mods list never changes it.
 "$OM/bin/openmods" setup
+if [ ! -f "$OM/cli/.version" ] || ! grep -q '"\$OM/cli/src/index.ts"' "$OM/bin/openmods"; then
+  echo "openmods could not set itself up in $OM/cli; the message above says why."
+  exit 1
+fi
 
 echo "openmods is installed. Try: openmods list"
