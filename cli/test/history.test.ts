@@ -6,7 +6,7 @@ import { beforeAll, describe, expect, test } from "bun:test"
 import { $ } from "bun"
 import { readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { addFile, addVersion, cli, createHarness, createMod, git, greeting, release, sandbox, setGreeting, versions } from "./harness"
+import { addFile, addVersion, cli, createHarness, createMod, git, greeting, release, run, sandbox, setGreeting, versions } from "./harness"
 
 const sb = sandbox("history")
 const dirOf = (name: string) => path.join(sb.reg, "mods", "t", name, "fake")
@@ -31,10 +31,21 @@ describe("building", () => {
     expect(r.code, r.all).toBe(0)
     expect(r.out).toContain("now runs Fake 1.1.0 + t/friendly")
   })
-  test("adding a mod with no version for the current release builds the newest release both have, and says so", async () => {
-    const r = await cli(sb, "install", "t/notes")
+  test("adding a mod with no version for the current release asks before moving every mod back", async () => {
+    const question = "This moves Fake from 1.1.0 back to 1.0.0 for all your mods, since t/notes has no version for 1.1.0. Go ahead?"
+    // No terminal to ask on: nothing happens, and it says how to go ahead.
+    const script = await cli(sb, "install", "t/notes")
+    expect(script.code).toBe(1)
+    expect(script.err).toContain(question)
+    expect(script.err).toContain("add --yes to go ahead")
+    expect(state().mods).toEqual(["t/friendly"])
+    const no = await run(sb, { answer: "n\n" }, "install", "t/notes")
+    expect(no.code).toBe(0)
+    expect(no.out).toContain("Nothing was changed.")
+    expect(state().ref).toBe("v1.1.0")
+    const r = await run(sb, { answer: "y\n" }, "install", "t/notes")
     expect(r.code, r.all).toBe(0)
-    expect(r.out).toContain("building Fake 1.0.0, not 1.1.0: t/notes has no version for 1.1.0")
+    expect(r.out).toContain(question)
     expect(r.out).toContain("now runs Fake 1.0.0 + t/friendly + t/notes")
     expect(await greeting(sb)).toBe("hello from friendly")
   })

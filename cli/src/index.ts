@@ -127,7 +127,7 @@ const positional: string[] = []
 // harness flags (--opencode, --codex, ...), so `install --opencode owner/mod`
 // never swallows the mod as the flag's value.
 const VALUE_FLAGS = new Set(["registry", "name", "owner", "harness", "base", "out", "ref", "workspace", "at", "note"])
-const SWITCHES = new Set(["build", "force", "help", "json", "local", "no-path", "typecheck", "stop"])
+const SWITCHES = new Set(["build", "force", "help", "json", "local", "no-path", "typecheck", "stop", "yes"])
 for (let i = 0; i < args.length; i++) {
   const a = args[i]!
   if (a.startsWith("--")) {
@@ -148,9 +148,12 @@ const log = (msg: string) => {
   if (progress?.live && progress.running) progress.note(msg)
   else if (!has("json")) console.log(msg)
 }
+// While a change is being built: what to say if it fails, after the error.
+let failNote: (() => string[]) | undefined
 const fail = (msg: string): never => {
   progress?.failed()
   console.error(`error: ${msg}`)
+  for (const line of failNote?.() ?? []) console.error(line)
   process.exit(1)
 }
 
@@ -583,6 +586,23 @@ async function select(question: string, options: { label: string; hint?: string 
  * when there is no terminal to ask on (OPENMODS_ASSUME_TTY lets tests answer
  * through stdin).
  */
+/**
+ * A question before a change the user may not expect. --yes answers yes.
+ * With no terminal to ask on, it stops and says how to go ahead; a no leaves
+ * everything as it is.
+ */
+// What a no leaves behind; \`install .\` has packed a local mod by then.
+let declined = "Nothing was changed."
+async function askUser(question: string) {
+  if (has("yes")) return
+  const yes = await confirm(question)
+  if (yes === null) fail(`${question} Answer in a terminal, or add --yes to go ahead.`)
+  if (!yes) {
+    log(declined)
+    process.exit(0)
+  }
+}
+
 async function confirm(question: string): Promise<boolean | null> {
   const tty = (process.stdin.isTTY && process.stdout.isTTY) || !!process.env.OPENMODS_ASSUME_TTY
   if (!tty || has("json")) return null
@@ -682,8 +702,8 @@ async function installHarness(h: Harness, noticed = false) {
   const how = h.installer?.command ?? fail(`${h.name} is not installed on this system. Install it${h.homepage ? ` from ${h.homepage}` : ""}, then run this again.`)
   log(`${noticed ? "" : `${h.name} is not installed on this system. `}Its official installer is:`)
   log(`  ${how}`)
-  const yes = await confirm(`Install ${h.name} now?`)
-  if (yes === null) fail(`install ${h.name} with the command above, then run this again.`)
+  const yes = has("yes") || (await confirm(`Install ${h.name} now?`))
+  if (yes === null) fail(`install ${h.name} with the command above, then run this again, or add --yes to have openmods run it.`)
   if (!yes) {
     log("Nothing installed.")
     process.exit(0)
@@ -1446,13 +1466,35 @@ async function cmdSetup() {
 // The release is `target` when given (update), else the one the user is on
 // if every mod has a version for it, else the newest release they all have.
 // Nothing else moves the user to another release.
-async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[] = [], adding: string[] = [], target?: string) {
+// What the harness command starts now, read from its launcher.
+function whatRuns(h: Harness, e: State[string] | undefined) {
+  const launcher = path.join(BIN, h.binary)
+  let text = ""
+  try {
+    text = readFileSync(launcher, "utf8")
+  } catch {
+    return `your stock ${h.name}`
+  }
+  if (text.includes(REVOKED_MARK)) return `your stock ${h.name}, since your build has a mod removed from OpenMods`
+  if (text.startsWith("#!/bin/sh\n# openmods dev:")) return `your clone (openmods dev)`
+  const artifact = /^exec '((?:[^']|'\\'')*)'/m.exec(text)?.[1]?.replaceAll("'\\''", "'")
+  if (!artifact) return `your stock ${h.name}`
+  if (!existsSync(artifact)) return `nothing: its build is missing (\`openmods update --force\` makes it again)`
+  return e ? `${h.name} ${rel(e.ref)} + ${e.mods.filter((m) => !e.off.includes(m)).join(" + ")}` : `your modded ${h.name}`
+}
+
+// With \`plan\`, it only checks and asks, and changes nothing: an install on
+// several harnesses asks every question before it builds any of them. With
+// \`asked\`, the questions were answered by such a plan.
+async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[] = [], adding: string[] = [], target?: string, opts: { plan?: boolean; asked?: boolean } = {}) {
   const h = loadHarness(reg, harnessId)
   // What the launcher would say next is about the build this replaces.
   rmSync(path.join(HOME, "updates", harnessId), { force: true })
   const root = path.join(HOME, "harnesses", harnessId, "src")
   const state = loadState()
+  const ask = opts.asked ? async (_q: string) => {} : askUser
   if (all.length === 0) {
+    if (opts.plan) return
     // Last mod gone: leave nothing of it behind. The link, the built binary
     // and the patched commits all go; the stock harness release is what the
     // checkout is left pointing at, kept only as a cache for the next install.
@@ -1473,6 +1515,7 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
   }
   const active = all.filter((m) => !off.includes(m.id))
   if (active.length === 0) {
+    if (opts.plan) return
     switchOff(h)
     state[harnessId] = { ...(state[harnessId] ?? { ref: all[0]!.upstream.ref, commit: all[0]!.upstream.commit, artifact: "" }), mods: all.map((m) => m.id), off: [...off], hashes: {}, updates: {}, enabled: false }
     saveState(state)
@@ -1486,12 +1529,26 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
   const basePatch = baseFor(reg, harnessId)
   let set = basePatch ? [basePatch, ...active] : active
   if (basePatch && sharedReleases(set).length === 0 && sharedReleases(active).length) {
-    log(`note: the OpenMods base patch has no version for a ${h.name} release your mods share, so this build goes without it.`)
+    if (!opts.asked) log(`note: the OpenMods base patch has no version for a ${h.name} release your mods share, so this build goes without it.`)
     set = active
   }
   const shared = sharedReleases(set)
-  if (shared.length === 0)
-    fail(`${active.map((m) => m.id).join(" and ")} have no ${h.name} release in common, so they cannot be built together: ${releasesSaid(active)}. Nothing was changed.`)
+  if (shared.length === 0) {
+    // Which of the mods already there leave the new ones no release: the
+    // user decides whether to uninstall them, never openmods.
+    // Of the releases the new mods share, the one the fewest installed mods
+    // lack; those are what would have to go.
+    const added = active.filter((m) => adding.includes(m.id))
+    const others = active.filter((m) => !adding.includes(m.id))
+    const options = added.length ? sharedReleases(added).map((r) => ({ r, blocking: others.filter((m) => !at(m, r)) })) : []
+    const best = options.sort((a, b) => a.blocking.length - b.blocking.length)[0]
+    const advice = !added.length
+      ? ""
+      : !best
+        ? ` ${added.map((m) => m.id).join(" and ")} have no release in common with each other either.`
+        : ` To have ${added.map((m) => m.id).join(" and ")}, uninstall ${best.blocking.map((m) => m.id).join(" and ")} first: openmods uninstall ${best.blocking.map((m) => m.id).join(" ")}`
+    fail(`${active.map((m) => m.id).join(" and ")} have no ${h.name} release in common, so they cannot be built together: ${releasesSaid(active)}. Nothing was changed.${advice}`)
+  }
   const release = target
     ? shared.includes(target)
       ? target
@@ -1499,10 +1556,30 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     : current && shared.includes(current)
       ? current
       : shared[0]!
+  // Another release than the user expects is asked about first.
   if (current && release !== current && !target) {
     const lacking = set.filter((m) => !at(m, current))
-    log(`note: building ${h.name} ${rel(release)}, not ${rel(current)}: ${lacking.map((m) => shown(m.id)).join(", ")} ${lacking.length === 1 ? "has" : "have"} no version for ${rel(current)}.`)
+    const who = `${lacking.map((m) => shown(m.id)).join(", ")} ${lacking.length === 1 ? "has" : "have"} no version for ${rel(current)}`
+    await ask(
+      newerRelease(release, current)
+        ? `This also updates ${h.name} from ${rel(current)} to ${rel(release)} for all your mods, since ${who}. Go ahead?`
+        : `This moves ${h.name} from ${rel(current)} back to ${rel(release)} for all your mods, since ${who}. Go ahead?`,
+    )
+  } else if (!current && adding.length) {
+    const stock = await versionOf(stockBinary(h))
+    const have = stock?.replace(/^[^0-9]*/, "")
+    if (have && newerRelease(have, release)) {
+      // The limit is the mods', or the base patch's when the mods alone go further.
+      const byBase = set !== active && newerRelease(sharedReleases(active)[0] ?? "", release)
+      const who = byBase ? "the OpenMods base patch" : active.map((m) => m.id).join(" and ")
+      await ask(
+        `${h.name} ${rel(release)} is the newest release ${who} ${byBase || active.length === 1 ? "has" : "have"} a version for; your ${h.name} is ${have}. Build ${h.name} ${rel(release)} with ${active.length === 1 ? "it" : "them"}? Your own ${h.name} stays ${have}; sessions and settings from the newer one may not all work in the older build.`,
+      )
+    }
   }
+  // A clone running with openmods dev gives way to the build only on a yes.
+  const dev = devOf(harnessId)
+  if (dev) await ask(`\`${h.binary}\` runs your clone at ${pretty(dev.path)} (openmods dev). This switches it to the modded build. Go ahead?`)
   const mods = set.map((m) => at(m, release)!)
   for (const m of mods) {
     const r = revocationOf(reg, m.id, m.update)
@@ -1527,10 +1604,25 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
       )
     }
   }
+  if (opts.plan) return
   // Only now that there is something to build: turning mods off or removing
   // them needs none of it.
   await checkRequirements(h)
   holdBuildLock(harnessId, h)
+  // If the build fails, nothing is switched: say what still runs, as the
+  // launcher has it, and what to do, by the step that failed.
+  const runs = whatRuns(h, state[harnessId])
+  const failing = adding.length ? `${adding.join(" and ")} could not be built${active.length > adding.length ? ` with your other ${h.name} mods` : ""}.` : `The new ${h.name} build could not be made.`
+  failNote = () => {
+    const step = progress?.lastStep
+    // Fetching the source or dependencies: the progress output already says
+    // when that was a download, so nothing is guessed here.
+    const advice =
+      adding.length && (step === "Patches" || step === "Build")
+          ? `If it fails again, \`openmods info ${adding[0]}\` shows who maintains it, to tell them.`
+          : ""
+    return ["", `${failing} Nothing changed: \`${h.binary}\` still runs ${runs}.`, ...(advice ? [advice] : [])]
+  }
   const base = mods[0]!.upstream
   const builds = path.join(HOME, "harnesses", harnessId, "builds")
   const first = !existsSync(builds) || readdirSync(builds).length === 0
@@ -1549,6 +1641,7 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
   const was = state[harnessId]?.ref
   const artifact = keepBuild(h, harnessId, root, `${rel(base.ref)}+${stampOf(mods.filter((m) => m.id !== BASE_ID))}`)
   progress = undefined
+  failNote = undefined
   switchOn(h, artifact)
   state[harnessId] = {
     ref: base.ref,
@@ -1788,19 +1881,31 @@ async function cmdInstall() {
     positional[1] = checkout
     const packed = await cmdPack({ quiet: true })
     log(`Packed ${pretty(checkout)} as the local mod ${packed.owner}/${packed.name}.`)
+    declined = `Nothing was installed. Your commits stay packed as the local mod ${packed.owner}/${packed.name} in ${pretty(LOCAL)}.`
     specs = [`${packed.owner}/${packed.name}`]
     flags.set(packed.harness, true)
   }
   const wanted: Mod[] = []
   for (const spec of specs) wanted.push(...(await chooseHarnesses(reg, spec, "Install", { needHarness: true })))
   const state = loadState()
-  for (const id of new Set(wanted.map((m) => m.harness))) {
+  const plans = [...new Set(wanted.map((m) => m.harness))].map((id) => {
     const current = (state[id]?.mods ?? []).map((n) => resolveMod(reg, n, id))
     const here = wanted.filter((w) => w.harness === id)
     const merged = [...current.filter((c) => !here.some((w) => w.id === c.id)), ...here]
     const off = (state[id]?.off ?? []).filter((n) => !here.some((w) => w.id === n))
-    await rebuild(reg, id, merged, off, here.map((m) => m.id))
+    return { id, merged, off, adding: here.map((m) => m.id) }
+  })
+  // Every check and question first, on every harness, so a no or a refusal
+  // leaves all of them as they were.
+  // What each harness looked like when asked: if it changed before its turn
+  // to build (a dev session started in another terminal, say), it asks again.
+  const looked = (id: string) => JSON.stringify([loadState()[id] ?? null, devOf(id) ?? null])
+  const seen = new Map<string, string>()
+  for (const p of plans) {
+    await rebuild(reg, p.id, p.merged, p.off, p.adding, undefined, { plan: true })
+    seen.set(p.id, looked(p.id))
   }
+  for (const p of plans) await rebuild(reg, p.id, p.merged, p.off, p.adding, undefined, { asked: seen.get(p.id) === looked(p.id) })
 }
 
 async function cmdUninstall() {
