@@ -184,7 +184,17 @@
         "type": "string",
         "minLength": 1
       },
-      "description": "Arguments the modded build, and a clone under `openmods dev`, always start with, before the user's. For a setting a modded build needs that has no environment variable, such as turning off Codex's update check, since OpenMods offers the updates."
+      "description": "Arguments the modded build, and a clone under `openmods dev`, always start with, before the user's. For a setting a modded build needs next to the stock one that has no environment variable, such as turning off Codex's update check, since OpenMods offers the updates. They are the harness's own switches: OpenMods never changes a harness's code."
+    },
+    "argsUnless": {
+      "type": "object",
+      "required": ["args", "given"],
+      "additionalProperties": false,
+      "properties": {
+        "args": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 },
+        "given": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 }
+      },
+      "description": "More arguments to start with, after `args`, unless the user's arguments include one of `given` (a word as typed; a trailing * matches its start). For a switch the harness refuses in some uses, such as Codex's --no-daemon, which `codex agents` and --remote reject."
     },
     "releaseTagPattern": {
       "type": "string",

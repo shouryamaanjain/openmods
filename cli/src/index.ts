@@ -48,6 +48,8 @@ type Harness = {
   // the user's: for a setting with no environment variable, such as Codex's
   // update check.
   args?: string[]
+  // More args, unless the user's include one of \`given\`; see the schema.
+  argsUnless?: { args: string[]; given: string[] }
   releaseTagPattern?: string
 }
 
@@ -94,7 +96,7 @@ type Mod = {
   // ~/.openmods/local/<owner>/<name>, where authors keep mods they are
   // still working on or do not want to publish.
   source: "registry" | "local"
-  // The OpenMods base patch (see BASE_ID) is the only internal mod.
+  // Marked internal in its mod.json: never listed or installed by hand.
   internal?: boolean
 }
 
@@ -411,15 +413,12 @@ function listMods(reg: string, harness?: string): Mod[] {
   return [...published, ...local].sort((a, b) => a.id.localeCompare(b.id) || a.harness.localeCompare(b.harness))
 }
 
-// OpenMods' own patch, applied first in every modded build. It keeps a
-// modded harness from sending its users to the upstream project for problems
-// the upstream project did not cause: crash reports, feedback uploads and the
-// agent's "report issues at" line point to OpenMods instead. It lives in the
-// registry as an internal mod, so it gets versions, overlap checks and the
-// release watch like any mod, but users never list, install or remove it.
+// OpenMods used to put a patch of its own into every modded build
+// (openmods/base). It never changes a harness's code now; a build that still
+// carries that patch is rebuilt without it on the next update.
 const BASE_ID = "openmods/base"
-const baseFor = (reg: string, harness: string) => listMods(reg, harness).find((m) => m.id === BASE_ID)
-const shown = (id: string) => (id === BASE_ID ? "the OpenMods base patch" : id)
+const carriesBase = (e: State[string]) => e.hashes[BASE_ID] !== undefined || e.updates[BASE_ID] !== undefined
+const shown = (id: string) => id
 
 function allHarnesses(reg: string): Harness[] {
   return readdirSync(path.join(reg, "harnesses"))
@@ -1167,6 +1166,21 @@ function envOf(h: Harness) {
     .join("")
 }
 
+// Shell lines that put argsUnless's arguments before the user's, unless the
+// user's include one of its words. Prepended with \`set --\`, so each stays one
+// argument whatever it holds.
+function argsUnlessOf(h: Harness) {
+  const u = h.argsUnless
+  if (!u) return ""
+  const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
+  // A trailing * matches the start of an argument; nothing else is a pattern.
+  const pattern = (w: string) => (w.endsWith("*") ? `${q(w.slice(0, -1))}*` : q(w))
+  return `OPENMODS_ADD=1
+for a in "$@"; do case "$a" in ${u.given.map(pattern).join("|")}) OPENMODS_ADD= ;; esac; done
+[ -n "$OPENMODS_ADD" ] && set -- ${u.args.map(q).join(" ")} "$@"
+`
+}
+
 // The harness's own arguments, quoted for the launcher, with a space after.
 function argsOf(h: Harness) {
   const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
@@ -1212,7 +1226,7 @@ if { [ -t 0 ] && [ -t 1 ]; } || [ -n "$OPENMODS_ASSUME_TTY" ]; then
   fi
 fi
 
-${envOf(h)}exec ${q(artifact)} ${argsOf(h)}"$@"
+${envOf(h)}${argsUnlessOf(h)}exec ${q(artifact)} ${argsOf(h)}"$@"
 `
 }
 
@@ -1236,7 +1250,7 @@ function devLauncherOf(h: Harness, clone: string, version: string, toolchain: st
   return `#!/bin/sh
 # openmods dev: \`${h.binary}\` runs your clone at ${clone} from source.
 # \`openmods dev --stop\` switches back.
-${toolchain ? `PATH=${q(toolchain)}:"$PATH"; export PATH\n` : ""}${envOf(h)}${run} ${argsOf(h)}"$@"
+${toolchain ? `PATH=${q(toolchain)}:"$PATH"; export PATH\n` : ""}${envOf(h)}${argsUnlessOf(h)}${run} ${argsOf(h)}"$@"
 `
 }
 
@@ -1566,16 +1580,9 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     log(`Every ${h.name} mod is off (${off.join(", ")}), so \`${h.binary}\` runs your stock ${h.name}. \`openmods on ${off[0]} --${harnessId}\` brings one back.`)
     return
   }
-  // One release for all of them, and each mod's version for it. The base
-  // patch goes first; if it has no version for any release the mods share,
-  // the build goes ahead without it and says so.
+  // One release for all of them, and each mod's version for it.
   const current = state[harnessId]?.ref
-  const basePatch = baseFor(reg, harnessId)
-  let set = basePatch ? [basePatch, ...active] : active
-  if (basePatch && sharedReleases(set).length === 0 && sharedReleases(active).length) {
-    if (!opts.asked) log(`note: the OpenMods base patch has no version for a ${h.name} release your mods share, so this build goes without it.`)
-    set = active
-  }
+  const set = active
   const shared = sharedReleases(set)
   if (shared.length === 0) {
     // Which of the mods already there leave the new ones no release: the
@@ -1613,11 +1620,9 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     const stock = await versionOf(stockBinary(h))
     const have = stock?.replace(/^[^0-9]*/, "")
     if (have && newerRelease(have, release)) {
-      // The limit is the mods', or the base patch's when the mods alone go further.
-      const byBase = set !== active && newerRelease(sharedReleases(active)[0] ?? "", release)
-      const who = byBase ? "the OpenMods base patch" : active.map((m) => m.id).join(" and ")
+      const who = active.map((m) => m.id).join(" and ")
       await ask(
-        `${h.name} ${rel(release)} is the newest release ${who} ${byBase || active.length === 1 ? "has" : "have"} a version for; your ${h.name} is ${have}. Build ${h.name} ${rel(release)} with ${active.length === 1 ? "it" : "them"}? Your own ${h.name} stays ${have}; sessions and settings from the newer one may not all work in the older build.`,
+        `${h.name} ${rel(release)} is the newest release ${who} ${active.length === 1 ? "has" : "have"} a version for; your ${h.name} is ${have}. Build ${h.name} ${rel(release)} with ${active.length === 1 ? "it" : "them"}? Your own ${h.name} stays ${have}; sessions and settings from the newer one may not all work in the older build.`,
       )
     }
   }
@@ -1638,7 +1643,7 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
       return why ? [{ id: o.id, why }] : []
     })
     if (clashes.length) {
-      const ids = clashes.map((c) => c.id).filter((id) => id !== BASE_ID)
+      const ids = clashes.map((c) => c.id)
       fail(
         `${order[j]!.id} does not work with ${clashes.map((c) => `${shown(c.id)} on ${h.name}: ${c.why}`).join("; nor with ")}. ${
           ids.length
@@ -1671,7 +1676,7 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
   const builds = path.join(HOME, "harnesses", harnessId, "builds")
   const first = !existsSync(builds) || readdirSync(builds).length === 0
   progress = new Progress(live(), harnessId, first, path.join(HOME, "timings.json"), path.join(HOME, "logs"), color)
-  const named = mods.filter((m) => m.id !== BASE_ID).map((m) => m.id)
+  const named = mods.map((m) => m.id)
   progress.title(`${h.name} ${rel(base.ref)} + ${named.join(" + ")}`)
   await progress.run("Source", () => ensureCheckout(h, root, base.commit, base.ref))
   await progress.run("Patches", () => applyMods(root, mods))
@@ -1679,11 +1684,11 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     OPENMODS_HARNESS: harnessId,
     OPENMODS_REF: base.ref,
     OPENMODS_VERSION: base.ref.replace(/^[^0-9]*/, ""),
-    OPENMODS_MODS: stampOf(mods.filter((m) => m.id !== BASE_ID)),
+    OPENMODS_MODS: stampOf(mods),
   }
   await build(h, root).catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)))
   const was = state[harnessId]?.ref
-  const artifact = keepBuild(h, harnessId, root, `${rel(base.ref)}+${stampOf(mods.filter((m) => m.id !== BASE_ID))}`)
+  const artifact = keepBuild(h, harnessId, root, `${rel(base.ref)}+${stampOf(mods)}`)
   progress = undefined
   failNote = undefined
   switchOn(h, artifact)
@@ -2122,22 +2127,21 @@ async function cmdUpdate() {
     }
     const mods = (e?.mods ?? []).map((n) => resolveMod(reg, n, id))
     const active = mods.filter((m) => !e?.off.includes(m.id))
-    // The newest release every mod that is on has a version for, with the
-    // base patch if it has one there too.
-    const basePatch = baseFor(reg, id)
-    const withBase = basePatch ? [basePatch, ...active] : active
-    const target = sharedReleases(withBase)[0] ?? sharedReleases(active)[0]
+    // The newest release every mod that is on has a version for. A build
+    // that still carries OpenMods' old patch is made again without it.
+    const target = sharedReleases(active)[0]
     const same =
       e &&
       existsSync(e.artifact) &&
       active.length > 0 &&
       target === e.ref &&
-      withBase.every((m) => {
+      !carriesBase(e) &&
+      active.every((m) => {
         const v = at(m, e.ref)
         return v ? e.hashes[m.id] === patchHash(v) : e.hashes[m.id] === undefined
       })
     if (same && !has("force")) {
-      const held = heldBack(loadHarness(reg, id), e, active, basePatch)
+      const held = heldBack(loadHarness(reg, id), e, active)
       refreshLauncher(reg, loadHarness(reg, id), e)
       log(`${loadHarness(reg, id).name} ${rel(e.ref)} + ${active.map((m) => m.id).join(" + ")} is already up to date.`)
       if (held) log(held)
@@ -2145,7 +2149,7 @@ async function cmdUpdate() {
     }
     await rebuild(reg, id, mods, e?.off ?? [], [], target)
     const now = loadState()[id]
-    const still = now && heldBack(loadHarness(reg, id), now, active, basePatch)
+    const still = now && heldBack(loadHarness(reg, id), now, active)
     if (still) log(still)
   }
 }
@@ -2281,8 +2285,7 @@ async function cmdPack(opts: { quiet?: boolean } = {}): Promise<{ owner: string;
   )
 
   // mod.json is shared by every harness the mod supports: create it once,
-  // keep what the author filled in, fields pack does not know included
-  // (the base patch's "internal").
+  // keep what the author filled in, fields pack does not know included.
   const author = (await $`git -C ${checkout} log -1 --format=%an HEAD`.text()).trim()
   const metaFile = path.join(root, "mod.json")
   const existing = existsSync(metaFile) ? readJsonFile(metaFile) : {}
@@ -2429,30 +2432,6 @@ async function cmdCheck() {
         result.unchecked = "could not fetch the release's files the patches were made against"
       }
     }
-    // Then as users build it: the OpenMods base patch first, as in every
-    // install, when it has a version for this release. The patches above are
-    // the mod's alone, so they apply with or without it.
-    const base = spec && mod.id !== BASE_ID ? baseFor(reg, mod.harness) : undefined
-    const baseVersion = base ? at(base, ref) : undefined
-    if (result.applies && baseVersion && files.length) {
-      await $`git -C ${root} checkout -q --force --detach ${result.commit as string}`
-      const baseFiles = await fetchBases(root, baseVersion)
-      const identity = { ...process.env, ...GIT_IDENTITY }
-      const b = await $`git -C ${root} am -3 --quiet ${baseVersion.patches.map((p) => path.join(baseVersion.dir, p))}`.env(identity).nothrow().quiet()
-      const both = b.exitCode === 0 ? await $`git -C ${root} am -3 --quiet ${files}`.env(identity).nothrow().quiet() : b
-      // Missing files explain a failure only where they were needed: the
-      // base patch's when it failed, the mod's when it failed on top.
-      if (both.exitCode !== 0 && (b.exitCode !== 0 ? !baseFiles : !bases)) {
-        delete result.applies
-        result.unchecked = "could not fetch the release's files the OpenMods base patch was made against"
-        result.error = (both.stderr.toString() + both.stdout.toString()).trim()
-        await clearApplyState(root)
-      } else if (both.exitCode !== 0) {
-        result.applies = false
-        result.error = `${b.exitCode === 0 ? "it does not apply on top of the OpenMods base patch" : "the OpenMods base patch does not apply"} at ${rel(ref)}:\n${(both.stderr.toString() + both.stdout.toString()).trim()}`
-        await clearApplyState(root)
-      } else result.base = baseVersion.update
-    }
     if (result.applies && (has("build") || has("typecheck"))) {
       // The stamp must be valid semver build metadata: mod names are, "(stock)" is not.
       buildEnv = { OPENMODS_HARNESS: h.id, OPENMODS_REF: ref, OPENMODS_VERSION: rel(ref), OPENMODS_MODS: mod.patches.length ? mod.name : "stock" }
@@ -2489,7 +2468,7 @@ async function cmdCheck() {
   else {
     log(result.stock ? `stock ${mod.harness} at ${rel(ref)} (${String(result.commit ?? "?").slice(0, 12)})` : `${result.mod} (made for ${rel(String(result.madeFor))}) against ${rel(ref)} (${String(result.commit ?? "?").slice(0, 12)})`)
     // Only the verdicts the check reached.
-    if (result.applies !== undefined) log(`  applies:    ${result.applies ? "yes" : "NO"}${result.base ? " (with the OpenMods base patch)" : ""}`)
+    if (result.applies !== undefined) log(`  applies:    ${result.applies ? "yes" : "NO"}`)
     if (result.typechecks !== undefined) log(`  typechecks: ${result.typechecks ? "yes" : "NO"}`)
     if (result.builds !== undefined) log(`  builds:     ${result.builds ? "yes" : "NO"}`)
     if (result.unchecked) log(`  not checked: ${result.unchecked}. That says nothing about the mod.`)
@@ -2618,10 +2597,7 @@ function newsFor(reg: string, h: Harness, e: State[string]) {
   }
   const shared = (list: { releases: Rel[] }[]) =>
     newestFirst(list.reduce<string[]>((acc, m, i) => (i === 0 ? m.releases.map((r) => r.release) : acc.filter((r) => m.releases.some((x) => x.release === r))), []))[0]
-  const active = e.mods.filter((m) => !e.off.includes(m)).map((id) => ({ id, releases: releasesOf(id) }))
-  // As \`openmods update\` picks: with the base patch when it shares a release with the mods.
-  const base = { id: BASE_ID, releases: releasesOf(BASE_ID) }
-  const withBase = base.releases.length && shared([base, ...active]) ? [base, ...active] : active
+  const withBase = e.mods.filter((m) => !e.off.includes(m)).map((id) => ({ id, releases: releasesOf(id) }))
   const current = rel(e.ref)
   const newest = shared(withBase)
   const moveTo = newest && newerRelease(newest, current) ? newest : ""
@@ -2645,15 +2621,19 @@ function newsFor(reg: string, h: Harness, e: State[string]) {
   const held = newerRelease(latest, target) ? withBase.filter((m) => !m.releases.some((r) => r.release === latest)).map((m) => m.id) : []
   const heldSaid = held.length ? `${h.name} ${latest} is out, but ${held.map(shown).join(", ")} ${held.length === 1 ? "has" : "have"} no version for it yet.` : ""
   const fixesSaid = fixes.map((f) => `${shown(f.id)} update ${f.update}`).join(", ")
-  const ask = !!moveTo || fixes.length > 0
-  const message = moveTo
+  // A build made with OpenMods' old patch: \`update\` makes it again without.
+  const old = carriesBase(e) && !moveTo && !fixes.length
+  const ask = !!moveTo || fixes.length > 0 || old
+  const message = old
+    ? `Your ${h.name} build still has the patch OpenMods used to add to every build; updating builds your mods without it.`
+    : moveTo
     ? `${h.name} ${moveTo} is out, and all your mods support it.${fixesSaid ? ` New in your mods: ${fixesSaid}.` : ""}${heldSaid ? ` ${heldSaid}` : ""}`
     : fixes.length
       ? `New in your ${h.name} mods: ${fixesSaid}.${heldSaid ? ` ${heldSaid}` : ""}`
       : heldSaid
         ? `${heldSaid} You stay on ${current}.`
         : ""
-  const key = ask ? `update ${moveTo} ${fixes.map((f) => `${f.id}@${f.update}`).join(",")}` : held.length ? `held ${latest} ${held.join(",")}` : ""
+  const key = old ? "update without the base patch" : ask ? `update ${moveTo} ${fixes.map((f) => `${f.id}@${f.update}`).join(",")}` : held.length ? `held ${latest} ${held.join(",")}` : ""
   return { ask, message, key, moveTo, fixes, held, latest }
 }
 
@@ -2661,9 +2641,7 @@ function newsFor(reg: string, h: Harness, e: State[string]) {
  * A newer release than the one a harness's build is on, when some of its
  * mods have no version for it yet, as a line for \`openmods update\`.
  */
-function heldBack(h: Harness, e: State[string], mine: Mod[], basePatch?: Mod) {
-  // The base patch counts like a mod when it has a version the mods share.
-  const active = basePatch && sharedReleases([basePatch, ...mine]).length ? [basePatch, ...mine] : mine
+function heldBack(h: Harness, e: State[string], active: Mod[]) {
   const newest = newestFirst([e.ref, ...active.flatMap((m) => m.versions.map((v) => v.ref))])[0]!
   if (!newerRelease(newest, e.ref)) return ""
   const blocked = active.filter((m) => !at(m, newest)).map((m) => m.id)

@@ -47,3 +47,34 @@ describe("a harness's args", () => {
     }
   })
 })
+
+describe("a harness's argsUnless", () => {
+  const setUnless = (u: object | undefined) => {
+    const { argsUnless: _, ...rest } = JSON.parse(readFileSync(definition, "utf8"))
+    writeFileSync(definition, JSON.stringify(u ? { ...rest, argsUnless: u } : rest))
+  }
+  test("come after args and before the user's, unless the user gives one of its words", async () => {
+    setArgs(["-c", "x=1"])
+    setUnless({ args: ["--no-daemon"], given: ["agents", "--remote", "--remote=*"] })
+    await cli(sb, "status")
+    expect(await greet()).toBe("args:[-c][x=1][--no-daemon]")
+    expect(await greet("resume", "--last")).toBe("args:[-c][x=1][--no-daemon][resume][--last]")
+    expect(await greet("agents")).toBe("args:[-c][x=1][agents]")
+    expect(await greet("--remote", "ws://h")).toBe("args:[-c][x=1][--remote][ws://h]")
+    expect(await greet("--remote=ws://h")).toBe("args:[-c][x=1][--remote=ws://h]")
+    // A word inside a longer argument is not the word.
+    expect(await greet("fix the agents page")).toBe("args:[-c][x=1][--no-daemon][fix the agents page]")
+  })
+  test("reach a clone under openmods dev too", async () => {
+    const clone = path.join(sb.T, "clone-unless")
+    await $`git clone -q ${sb.harness} ${clone}`.quiet()
+    await git(clone, "checkout", "-q", "-b", "mine", "v1.0.0")
+    writeFileSync(path.join(clone, "greet.sh"), "#!/bin/sh\nprintf 'dev:'; printf '[%s]' \"$@\"; echo\n")
+    expect((await cli(sb, "dev", clone, "--fake")).code).toBe(0)
+    expect(await greet()).toBe("dev:[-c][x=1][--no-daemon]")
+    expect(await greet("agents")).toBe("dev:[-c][x=1][agents]")
+    setUnless(undefined)
+    setArgs(undefined)
+    await cli(sb, "dev", "--stop")
+  })
+})

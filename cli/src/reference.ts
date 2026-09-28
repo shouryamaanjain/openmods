@@ -62,7 +62,7 @@ export const COMMANDS: Command[] = [
       "Mods stack on one checkout. Two mods that change the same lines of the release, or lines right next to each other, cannot be combined: that is worked out from the patches before anything is built, and the install is refused with the mods and lines named. Your current build keeps running. A mod that still fails to apply, or a build that fails, also leaves the previous build in place, and it says which mod failed and what still runs.",
       "Installing a mod that is already installed reinstalls it. A mod that was switched off comes back on. If a clone is running with `openmods dev`, it asks before switching to the modded build.",
       "Given the path of a harness clone instead, it packs your commits on top of the release as a local mod, named after the branch unless --name says otherwise, and installs that: the way an author tries a mod exactly as users will run it.",
-      "The OpenMods base patch goes in first, when it has a version for the release: it sends nothing, and tells people to report problems to OpenMods instead of the upstream project, which did not ship the mods. For Codex it also turns off Codex's own update notice, and from Codex 0.156.1 runs without the shared background server except for `codex agents` and `--remote`, so the modded build is what runs. With no version for the release, the build goes ahead without it and says so.",
+      "Nothing of OpenMods goes into the build: it is the release plus your mods. The launcher starts it with the harness's own switches where modded and stock would clash (for Codex: --no-daemon, and -c to turn off its update notice and feedback upload).",
     ],
     flags: [
       { flag: "--no-path", description: "Do not edit your shell config to put ~/.openmods/bin on PATH." },
@@ -199,7 +199,7 @@ export const COMMANDS: Command[] = [
     short: "openmods check <owner>/<mod> --<harness> [--typecheck | --build]",
     summary: "Does a mod apply, typecheck, or build against a release?",
     description: [
-      "Clones the harness into a workspace in your temp folder, reused between runs, checks out the release, and applies the mod's patches, first on their own and then after the OpenMods base patch, as an install does, when the base patch has a version for that release. --typecheck then runs the harness's typecheck (minutes); --build runs its full build (long). CI runs the typecheck, on pull requests and against each new harness release; authors run the build themselves before opening a pull request.",
+      "Clones the harness into a workspace in your temp folder, reused between runs, checks out the release, and applies the mod's patches, as an install does. --typecheck then runs the harness's typecheck (minutes); --build runs its full build (long). CI runs the typecheck, on pull requests and against each new harness release; authors run the build themselves before opening a pull request.",
       "With --harness and no mod, it builds the stock harness: what the manual harness build workflow runs to prove a harness definition, or to confirm it after a release changed the build recipe. Exits non-zero on any failure.",
     ],
     flags: [

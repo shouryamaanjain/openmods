@@ -17,13 +17,13 @@ The registry only carries patches. Nothing is prebuilt: your machine compiles th
 ## What the registry checks
 
 - Only a mod's owner, a maintainer the owner listed, or a registry maintainer can change it; a new mod lives under its author's GitHub handle. The **standards** check enforces this, along with a README that discloses what the mod does with the network, files, commands and the agent's instructions, and patches that are readable source.
-- CI applies and typechecks each version of a mod that a pull request changes, on top of the OpenMods base patch as users build it, against the release it names; a failure blocks the merge. The author builds it; CI does not.
+- CI applies and typechecks each version of a mod that a pull request changes, as users build it, against the release it names; a failure blocks the merge. The author builds it; CI does not.
 - Greptile reviews the code the patches add, for correctness and for security: anything malicious, and anything the README does not disclose. For an update, a comment shows what it changes compared with the published update, as plain code.
 - A registry maintainer reads the diff and the README and approves every pull request before it is merged. The release bot's own commits go straight to main: they only add versions CI has checked on a new release, and record the results.
 - The hourly job that moves mods to new releases never changes a mod's code: if a rebase would change the reviewed lines, the mod waits for its maintainer instead.
 - When the harness ships a new release, the hourly check applies and typechecks every mod against it, so a mod cannot silently drift, and holds every mod if the release changed how the harness builds.
 - Your machine builds everything you install, from the release and the patches.
-- Modded builds carry the OpenMods base patch, for each release it has a version for. It adds no network access: it tells people to report problems to OpenMods rather than the upstream project, and for Codex turns off Codex's own update notice and, from Codex 0.156.1, runs without the shared background server except for `codex agents` and `--remote`. Report problems with a modded build here, after checking whether they also happen with `openmods off`.
+- OpenMods adds nothing to a harness's code; modded builds are the release plus the mods you chose. The launcher passes a few of the harness's own switches for each run (listed in the README), which keep a modded build from sharing stock's background server, update notice or feedback upload. Report problems with a modded build here, after checking whether they also happen with `openmods off`.
 
 These are checks on the process, not a guarantee about intent. A malicious patch can pass all of them. Reading the diff is what protects you.
 

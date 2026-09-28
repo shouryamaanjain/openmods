@@ -113,7 +113,7 @@ function modsIn(base: string, local: boolean): Mod[] {
       .flatMap((name) => {
         const root = path.join(base, owner, name)
         const meta = readJson(path.join(root, "mod.json"))
-        // The OpenMods base patch goes into every build; it is not a mod to list.
+        // A mod marked internal is not listed.
         if (meta.internal) return []
         const readme = existsSync(path.join(root, "README.md")) ? readFileSync(path.join(root, "README.md"), "utf8") : ""
         return dirs(root)
