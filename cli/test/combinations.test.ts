@@ -89,14 +89,13 @@ describe("the CLI", () => {
     await createMod(sb, "seven-too", setLine(7, "line 7, by seven-too"))
     const r = await cli(sb, "install", "t/seven")
     expect(r.err).toContain("t/seven does not work with t/six on Fake: both change lines.txt (line 7); nor with t/eight on Fake: both change lines.txt (line 8)")
-    expect(r.err).toContain("`openmods off t/six t/eight`")
+    expect(r.err).toContain("`openmods uninstall t/six t/eight` makes room")
   })
-  test("once they are off, it installs, and they cannot come back on", async () => {
-    expect((await cli(sb, "off", "t/six", "--fake")).code).toBe(0)
-    expect((await cli(sb, "uninstall", "t/eight")).code).toBe(0)
+  test("once they are uninstalled, it installs, and they cannot come back beside it", async () => {
+    expect((await cli(sb, "uninstall", "t/six", "t/eight")).code).toBe(0)
     const i = await cli(sb, "install", "t/seven")
     expect(i.code, i.all).toBe(0)
-    const r = await cli(sb, "on", "t/six")
+    const r = await cli(sb, "install", "t/six")
     expect(r.code).toBe(1)
     expect(r.err).toContain("t/six does not work with t/seven")
   })

@@ -1578,7 +1578,7 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     switchOff(h)
     state[harnessId] = { ...(state[harnessId] ?? { ref: all[0]!.upstream.ref, commit: all[0]!.upstream.commit, artifact: "" }), mods: all.map((m) => m.id), off: [...off], hashes: {}, updates: {}, enabled: false }
     saveState(state)
-    log(`Every ${h.name} mod is off (${off.join(", ")}), so \`${h.binary}\` runs your stock ${h.name}. \`openmods on ${off[0]} --${harnessId}\` brings one back.`)
+    log(`Every ${h.name} mod is built out (${off.join(", ")}), so \`${h.binary}\` runs your stock ${h.name}. \`openmods install ${off[0]} --${harnessId}\` builds one back in.`)
     return
   }
   // One release for all of them, and each mod's version for it.
@@ -1648,7 +1648,7 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
       fail(
         `${order[j]!.id} does not work with ${clashes.map((c) => `${shown(c.id)} on ${h.name}: ${c.why}`).join("; nor with ")}. ${
           ids.length
-            ? `They cannot be on at the same time, so nothing was changed. \`openmods off ${ids.join(" ")}\` or \`openmods uninstall ${ids.join(" ")}\` makes room.`
+            ? `They cannot be on at the same time, so nothing was changed. \`openmods uninstall ${ids.join(" ")}\` makes room.`
             : "Every modded build carries that patch, so this mod cannot be installed until its author moves those lines. Nothing was changed."
         }`,
       )
@@ -2013,6 +2013,7 @@ async function cmdStatus() {
   }
   if (ids.length === 0) {
     if (!Object.keys(dev).length) log("No mods installed. `openmods list` shows what is available.")
+    whereFrom(reg)
     return
   }
   for (const id of ids.filter((i) => !dev[i])) {
@@ -2028,7 +2029,7 @@ async function cmdStatus() {
     log(`${h.binary} → ${runs}`)
     const active = e.mods.filter((m) => !e.off.includes(m))
     log(`  modded  ${h.name} ${rel(e.ref)} + ${active.join(" + ") || "(nothing)"}  ${e.enabled ? "on" : "off (openmods on)"}${built || !active.length ? "" : "  [not built; run openmods update]"}`)
-    for (const m of e.off) log(`          ${m} is off (openmods on ${m} --${id})`)
+    for (const m of e.off) log(`          ${m} is built out (openmods install ${m} --${id} builds it back in)`)
     log(`  stock   ${stock ? `${(await versionOf(stock)) ?? "?"}  ${pretty(stock)}` : "not found on PATH"}`)
     for (const b of revokedIn(reg, id, e)) log(`  removed ${b.id} was removed from OpenMods: ${b.reason} \`openmods uninstall ${b.id}\``)
     const note = e.enabled ? readNote(id) : null
@@ -2036,42 +2037,40 @@ async function cmdStatus() {
     if (e.enabled && !onPath) log(`  note    ${pretty(BIN)} is not on PATH in this shell; open a new terminal or run: export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"`)
     else if (e.enabled && !reaches && first) log(`  note    in this terminal \`${h.binary}\` finds ${pretty(first)} first; run: export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"`)
   }
+  whereFrom(reg)
 }
 
-// `on`/`off` with no argument or a harness id switch the whole modded build
-// (instant, no rebuild). With a mod, owner/name, they build that mod in or out.
-async function modTarget(reg: string, state: State, arg: string | undefined, verb: string): Promise<{ id: string; name: string } | null> {
-  if (!arg || !arg.includes("/")) {
-    if (arg && !state[arg]) fail(`"${arg}" is neither an installed mod nor a harness; \`openmods status\` lists both`)
-    return null
-  }
-  const id = parseId(reg, arg)
-  const on = Object.keys(state).filter((h) => state[h]!.mods.includes(id))
-  if (on.length === 0) fail(`${id} is not installed`)
-  const [m] = await chooseHarnesses(reg, id, verb, { among: on })
-  return { id: m!.harness, name: id }
+// Where the mods list and OpenMods itself come from, at the end of status.
+function whereFrom(reg: string) {
+  let version = ""
+  try {
+    version = readFileSync(path.join(CLI_DIR, ".version"), "utf8").trim()
+  } catch {}
+  log("")
+  log(`mods list  ${pretty(reg)}${reg === path.join(HOME, "registry") ? "" : " (a registry checkout)"}`)
+  log(`openmods   ${version || "run from a checkout"}, in ${pretty(HOME)}`)
+}
+
+// \`on\`/\`off\` switch a harness's command between its modded build and the
+// stock one, instantly, keeping the build. Adding or removing a mod is
+// \`install\` and \`uninstall\`.
+function harnessTarget(state: State, arg: string | undefined, verb: "on" | "off"): string[] {
+  if (arg?.includes("/"))
+    fail(`\`openmods ${verb}\` switches a whole harness between its modded build and your stock one. To ${verb === "on" ? "add" : "remove"} ${arg}: openmods ${verb === "on" ? "install" : "uninstall"} ${arg}`)
+  if (arg && !state[arg]) fail(`no mods installed for "${arg}"; \`openmods status\` lists what is`)
+  return arg ? [arg] : Object.keys(state)
 }
 
 async function cmdOn() {
   const reg = await ensureRegistry()
   const state = loadState()
-  const target = await modTarget(reg, state, positional[1], "Switch on")
-  if (target) {
-    const e = state[target.id]!
-    if (!e.off.includes(target.name)) {
-      log(`${target.name} is already on for ${target.id}.`)
-      return
-    }
-    log(`Building ${target.name} back into ${target.id}`)
-    await rebuild(reg, target.id, e.mods.map((n) => resolveMod(reg, n, target.id)), e.off.filter((n) => n !== target.name), [target.name])
-    return
-  }
-  const ids = positional[1] ? [positional[1]] : Object.keys(state)
+  const ids = harnessTarget(state, positional[1], "on")
   if (ids.length === 0) fail("nothing to switch on; install a mod first")
   for (const id of ids) {
     const e = state[id] ?? fail(`no mods installed for ${id}`)
     const h = loadHarness(reg, id)
-    if (e.mods.every((m) => e.off.includes(m))) fail(`every ${h.name} mod is off; \`openmods on ${e.off[0]} --${id}\` builds one back in`)
+    // Mods built out with an older openmods's \`off <mod>\` come back with install.
+    if (e.mods.every((m) => e.off.includes(m))) fail(`every ${h.name} mod is built out; \`openmods install ${e.off[0]} --${id}\` builds one back in`)
     e.artifact ||= artifactPath(h, path.join(HOME, "harnesses", id, "src"))
     if (!existsSync(e.artifact)) fail(`the modded ${h.name} build is missing; run: openmods update ${id}`)
     const bad = revokedIn(reg, id, e)
@@ -2086,18 +2085,7 @@ async function cmdOn() {
 async function cmdOff() {
   const reg = await ensureRegistry()
   const state = loadState()
-  const target = await modTarget(reg, state, positional[1], "Switch off")
-  if (target) {
-    const e = state[target.id]!
-    if (e.off.includes(target.name)) {
-      log(`${target.name} is already off for ${target.id}.`)
-      return
-    }
-    log(`Building ${target.name} out of ${target.id} (it stays installed; \`openmods on ${target.name} --${target.id}\` restores it)`)
-    await rebuild(reg, target.id, e.mods.map((n) => resolveMod(reg, n, target.id)), [...e.off, target.name])
-    return
-  }
-  const ids = positional[1] ? [positional[1]] : Object.keys(state)
+  const ids = harnessTarget(state, positional[1], "off")
   if (ids.length === 0) fail("nothing to switch off")
   for (const id of ids) {
     const e = state[id] ?? fail(`no mods installed for ${id}`)
@@ -2651,10 +2639,6 @@ function heldBack(h: Harness, e: State[string], active: Mod[]) {
   return `${h.name} ${rel(newest)} is out, but ${blocked.map(shown).join(", ")} ${blocked.length === 1 ? "has" : "have"} no version for it yet, so you stay on ${rel(e.ref)}.`
 }
 
-async function cmdRegistry() {
-  log(`registry: ${registryDir()}`)
-  log(`home:     ${HOME}`)
-}
 
 import { COMMANDS, ENVIRONMENT, FILES, GLOBAL_FLAGS, INTRO } from "./reference"
 
@@ -2718,19 +2702,14 @@ const commands: Record<string, () => Promise<void>> = {
   list: cmdList,
   info: cmdInfo,
   install: cmdInstall,
-  add: cmdInstall,
   uninstall: cmdUninstall,
-  remove: cmdUninstall,
-  rm: cmdUninstall,
   status: cmdStatus,
-  installed: cmdStatus,
   on: cmdOn,
   off: cmdOff,
   update: cmdUpdate,
   pack: async () => void (await cmdPack()),
   dev: cmdDev,
   check: cmdCheck,
-  registry: cmdRegistry,
   // Hidden: what the launcher runs in the background.
   "check-updates": cmdCheckUpdates,
   setup: cmdSetup,
@@ -2756,11 +2735,8 @@ if (cmd === "help" && positional[1]) {
         console.error(`note: could not move OpenMods to ${pretty(CLI_DIR)} (${moved.message}); the mods list is not updated until it can.`)
       }
     }
-    // `registry` shows where things are even when the check cannot run,
-    // with a damaged checkout for one.
     if (cmd !== "check-updates") markBusy()
-    if (cmd === "registry") await keepCurrent(true).catch(() => {})
-    else await keepCurrent(true)
+    await keepCurrent(true)
     await commands[cmd]!()
   }
 } else {

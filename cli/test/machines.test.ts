@@ -143,12 +143,12 @@ describe("what a build needs", () => {
     expect(r.err).toContain("building Fake needs:\n  - something missing")
     expect(existsSync(path.join(sb.T, "check-ws", ".git"))).toBe(false)
   })
-  test("are not needed to turn mods off or remove them", async () => {
+  test("are not needed to switch to stock or remove a mod", async () => {
     const saved = readFileSync(definition, "utf8")
     writeFileSync(definition, JSON.stringify({ ...JSON.parse(saved), requirements: [{ check: "exit 1", hint: "something missing" }] }))
     let off: Awaited<ReturnType<typeof cli>>, removed: Awaited<ReturnType<typeof cli>>
     try {
-      off = await cli(sb, "off", "t/friendly")
+      off = await cli(sb, "off")
       removed = await cli(sb, "uninstall", "t/friendly")
     } finally {
       writeFileSync(definition, saved)

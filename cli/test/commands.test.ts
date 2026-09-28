@@ -45,15 +45,17 @@ describe("on and off", () => {
     expect((await cli(sb, "on")).out).toContain("now runs Fake 1.0.0 + t/friendly")
     expect(await greeting(sb)).toBe("hello from friendly")
   })
-  test("off <mod> builds that mod out but keeps it installed", async () => {
-    expect((await cli(sb, "off", "t/friendly")).out).toContain("Every Fake mod is off")
-    expect((await cli(sb, "status")).out).toContain("friendly is off")
-    expect((await cli(sb, "on", "t/friendly")).out).toContain("now runs Fake 1.0.0 + t/friendly")
+  test("switch a whole harness; for one mod they point to install and uninstall", async () => {
+    const off = await cli(sb, "off", "t/friendly")
+    expect(off.code).toBe(1)
+    expect(off.err).toContain("To remove t/friendly: openmods uninstall t/friendly")
+    const on = await cli(sb, "on", "t/friendly")
+    expect(on.err).toContain("To add t/friendly: openmods install t/friendly")
   })
-  test("names that are neither a mod nor a harness are refused", async () => {
+  test("names that are not a harness with mods are refused", async () => {
     const r = await cli(sb, "off", "nope")
     expect(r.code).toBe(1)
-    expect(r.err).toContain("neither an installed mod nor a harness")
+    expect(r.err).toContain('no mods installed for "nope"')
   })
 })
 
@@ -74,3 +76,23 @@ describe("uninstall", () => {
     expect((await cli(sb, "uninstall", "t/friendly")).code).toBe(1)
   })
 })
+
+describe("the commands", () => {
+  test("help lists the 11 a person types, and nothing else", async () => {
+    const help = (await cli(sb, "help")).out
+    for (const c of ["install", "uninstall", "update", "list", "info", "status", "on", "off", "dev", "pack", "check"]) expect(help).toContain(`openmods ${c}`)
+    for (const c of ["setup", "check-updates", "registry", "installed", "add", "remove", "rm"]) expect(help).not.toContain(`openmods ${c} `)
+    expect(help.match(/^ {2}openmods [a-z-]+/gm)!.length).toBe(11)
+  })
+  test("second names and registry are gone; status says where things come from", async () => {
+    for (const c of ["add", "remove", "rm", "installed", "registry"]) expect((await cli(sb, c)).code, c).toBe(1)
+    const status = (await cli(sb, "status")).out
+    expect(status).toContain("mods list  ")
+    expect(status).toContain("openmods   ")
+  })
+  test("setup and check-updates still run, for the installer and the launcher", async () => {
+    expect((await cli(sb, "setup")).code).toBe(0)
+    expect((await cli(sb, "check-updates")).code).toBe(0)
+  })
+})
+

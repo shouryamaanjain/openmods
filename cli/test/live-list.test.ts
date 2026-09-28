@@ -152,7 +152,7 @@ describe("one source of mods data", () => {
     const server = Bun.serve({ port: 0, fetch: () => (hits++, Response.json({ revoked: [] })) })
     const url = { OPENMODS_REVOKED_URL: `http://localhost:${server.port}/revoked.json` }
     await shWith(url, wrapper(), "list")
-    await shWith(url, wrapper(), "add", "t/fresh", "--yes")
+    await shWith(url, wrapper(), "install", "t/fresh", "--yes")
     expect(hits).toBe(2)
     server.stop()
   })

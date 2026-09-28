@@ -42,7 +42,8 @@ exec "\$OM/toolchains/bun-$BUN_VERSION/bin/bun" "\$OM/registry/cli/src/index.ts"
 WRAP
 chmod 755 "$OM/bin/openmods"
 
-# PATH, and a launcher in front of each harness you have (see `openmods help setup`).
+# PATH, and a launcher in front of each harness you have, which starts your
+# stock one until you install a mod for it (`setup`, run only from here).
 # Run from the fresh clone, this also copies the program to ~/.openmods/cli,
 # where it runs from then on, so pulling the mods list never changes it.
 "$OM/bin/openmods" setup

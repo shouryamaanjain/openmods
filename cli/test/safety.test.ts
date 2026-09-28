@@ -231,9 +231,9 @@ describe("the list of removed mods, fetched on its own", () => {
     expect((await withUrl(url, "on")).code).toBe(0)
     expect((await $`sh ${launcher()}`.nothrow().quiet()).stdout.toString().trim()).not.toBe("stock greet")
   })
-  test("every command checks, second names included", async () => {
+  test("every command checks", async () => {
     listed = { revoked: [{ id: "t/later", reason: "It deletes your files." }] }
-    expect((await withUrl(url, "installed")).out).toContain("t/later was removed from OpenMods")
+    expect((await withUrl(url, "status")).out).toContain("t/later was removed from OpenMods")
   })
   test("a list with anything malformed in it is not taken; the last one stands", async () => {
     listed = { revoked: [null, { id: 3 }] }
@@ -266,28 +266,5 @@ describe("the list of removed mods, on a first install", () => {
     server.stop()
     expect(r.code).toBe(1)
     expect(r.err).toContain("t/early was removed from OpenMods: It deletes your files.")
-  })
-})
-
-describe("openmods registry", () => {
-  const reg = sandbox("safety-registry")
-  const greet = async () => (await $`sh ${path.join(reg.om, "bin", "greet")}`.nothrow().quiet()).stdout.toString().trim()
-  test("stops a removed mod like every other command", async () => {
-    await createHarness(reg)
-    await createMod(reg, "friendly", setGreeting("hello from friendly"))
-    expect((await cli(reg, "install", "t/friendly")).code).toBe(0)
-    writeFileSync(path.join(reg.reg, "revoked.json"), JSON.stringify({ revoked: [{ id: "t/friendly", reason: "It sends your files to a server." }] }))
-    const r = await cli(reg, "registry")
-    expect(r.code).toBe(0)
-    expect(r.out).toContain("t/friendly was removed from OpenMods")
-    expect(await greet()).toBe("stock greet")
-  })
-  test("still shows where things are when the check cannot run", async () => {
-    // A damaged state file stops every other command.
-    writeFileSync(path.join(reg.om, "state.json"), "{ damaged")
-    expect((await cli(reg, "status")).code).not.toBe(0)
-    const r = await cli(reg, "registry")
-    expect(r.code).toBe(0)
-    expect(r.out).toContain("home:")
   })
 })
