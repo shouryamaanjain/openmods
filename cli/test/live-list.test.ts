@@ -59,6 +59,8 @@ describe("the installer", () => {
     expect(lstatSync(copy()).isSymbolicLink()).toBe(true)
     expect(readFileSync(path.join(copy(), ".version"), "utf8")).toMatch(/^0\.1\.0 \([0-9a-f]+\)$/m)
     expect(readFileSync(wrapper(), "utf8")).toContain('"$OM/cli/src/index.ts"')
+    // status names the version running: the installed copy's.
+    expect((await openmods("status")).out).toMatch(/openmods {3}0\.1\.0 \([0-9a-f]+\), home /)
   })
 })
 
@@ -152,7 +154,7 @@ describe("one source of mods data", () => {
     const server = Bun.serve({ port: 0, fetch: () => (hits++, Response.json({ revoked: [] })) })
     const url = { OPENMODS_REVOKED_URL: `http://localhost:${server.port}/revoked.json` }
     await shWith(url, wrapper(), "list")
-    await shWith(url, wrapper(), "add", "t/fresh", "--yes")
+    await shWith(url, wrapper(), "install", "t/fresh", "--yes")
     expect(hits).toBe(2)
     server.stop()
   })

@@ -51,7 +51,6 @@ export const COMMANDS: Command[] = [
   },
   {
     name: "install",
-    aliases: ["add"],
     usage: "openmods install <owner>/<mod> [<owner>/<mod> ...] [--<harness> ...]\nopenmods install <path to a harness clone> [--name <mod>]",
     short: "openmods install <owner>/<mod> [--<harness>]",
     summary: "Build a harness with these mods and switch it on.",
@@ -80,7 +79,6 @@ export const COMMANDS: Command[] = [
   },
   {
     name: "uninstall",
-    aliases: ["remove", "rm"],
     usage: "openmods uninstall <owner>/<mod> [<owner>/<mod> ...] [--<harness> ...]",
     short: "openmods uninstall <owner>/<mod> [--<harness>]",
     summary: "Remove mods and rebuild without them.",
@@ -93,11 +91,10 @@ export const COMMANDS: Command[] = [
   },
   {
     name: "status",
-    aliases: ["installed"],
     usage: "openmods status",
     summary: "Which build your command runs right now, per harness.",
     description: [
-      "Shows the modded build (release plus mods, on or off), the stock binary it would fall back to, any mod that is installed but built out, a clone running with `openmods dev`, a mod removed from OpenMods, and any news the launcher found (an update waiting, or a release some mods hold back). Says so if this terminal would not run the launcher: ~/.openmods/bin is not on PATH, or another build comes first.",
+      "Shows the modded build (release plus mods, on or off), the stock binary it would fall back to, any mod that is installed but built out, a clone running with `openmods dev`, a mod removed from OpenMods, and any news the launcher found (an update waiting, or a release some mods hold back). Says so if this terminal would not run the launcher: ~/.openmods/bin is not on PATH, or another build comes first. Ends with where the mods list comes from and which OpenMods is running: its version, or the checkout it runs from. With a state file that cannot be read, it still says those.",
     ],
     flags: [{ flag: "--json", description: "The state file as JSON, with any dev clones." }],
     examples: [{ command: "openmods status" }],
@@ -105,24 +102,22 @@ export const COMMANDS: Command[] = [
   },
   {
     name: "on",
-    usage: "openmods on [harness | <owner>/<mod> [--<harness>]]",
-    summary: "Make your command run the modded build again, or build one mod back in.",
+    usage: "openmods on [harness]",
+    summary: "Make your command run the modded build again.",
     description: [
-      "With no argument, or a harness id: writes the launcher back into ~/.openmods/bin. Instant, nothing is rebuilt.",
-      "With a mod: rebuilds the harness with that mod included again, after an `off <owner>/<mod>`. Asks which harness if it is installed on several.",
+      "Switches back from your stock harness to the modded build, after `openmods off`. Instant: the build was kept, nothing is rebuilt. With a harness id, only that harness. To add a mod, use `openmods install`.",
     ],
-    examples: [{ command: "openmods on" }, { command: "openmods on shouryamaanjain/space-invaders --opencode" }],
+    examples: [{ command: "openmods on" }, { command: "openmods on codex", note: "just Codex" }],
     audience: "users",
   },
   {
     name: "off",
-    usage: "openmods off [harness | <owner>/<mod> [--<harness>]]",
-    summary: "Make your command run the stock build again, or build one mod out.",
+    usage: "openmods off [harness]",
+    summary: "Make your command run your stock harness, keeping the modded build.",
     description: [
-      "With no argument, or a harness id: the launcher starts the stock binary instead. Instant, and the modded build is kept for `on`.",
-      "With a mod: rebuilds the harness without that mod. It stays installed and listed in status as off.",
+      "The launcher starts your stock harness instead of the modded build. Instant, and the build is kept for `openmods on`. With a harness id, only that harness. To remove a mod, use `openmods uninstall`.",
     ],
-    examples: [{ command: "openmods off" }, { command: "openmods off codex", note: "just Codex" }, { command: "openmods off shouryamaanjain/space-invaders --codex" }],
+    examples: [{ command: "openmods off" }, { command: "openmods off codex", note: "just Codex" }],
     audience: "users",
   },
   {
@@ -134,16 +129,6 @@ export const COMMANDS: Command[] = [
     ],
     flags: [{ flag: "--force", description: "Rebuild even if nothing changed." }],
     examples: [{ command: "openmods update" }, { command: "openmods update codex --force" }],
-    audience: "users",
-  },
-  {
-    name: "setup",
-    usage: "openmods setup",
-    summary: "Put ~/.openmods/bin first on PATH, and a launcher in front of each harness you have.",
-    description: [
-      "The installer runs it; running it again changes only what is missing. Each launcher starts your stock harness until you install a mod for it, so in a terminal opened after setup, installing a mod takes effect at once, even if that terminal already ran the harness. An older terminal is told to run `hash -r`. PATH goes in your shell's startup file; for bash on Linux, also in the one a login shell such as an SSH session reads, which can otherwise put ~/.local/bin, where Codex installs, first.",
-    ],
-    examples: [{ command: "openmods setup" }],
     audience: "users",
   },
   {
@@ -216,14 +201,6 @@ export const COMMANDS: Command[] = [
       { command: "openmods check mods/shouryamaanjain/space-invaders/codex --at rust-v0.156.1 --typecheck", note: "an older version" },
       { command: "openmods check --harness codex --ref rust-v0.156.0 --build" },
     ],
-    audience: "authors",
-  },
-  {
-    name: "registry",
-    usage: "openmods registry",
-    summary: "Which registry checkout and home folder the CLI is using.",
-    description: ["When the CLI itself runs from a checkout of the registry (bun cli/src/index.ts, or after bun link), it uses that checkout and never pulls; otherwise it uses the clone under ~/.openmods/registry."],
-    examples: [{ command: "openmods registry" }],
     audience: "authors",
   },
 ]
