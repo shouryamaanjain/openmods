@@ -61,8 +61,9 @@ describe("the scrubbing", () => {
     expect(emailsIn(withPrivateEmails(patch, "t"))).toEqual([])
   })
   test("finds addresses with a dotless or non-ASCII domain, not versions", () => {
-    const patch = "From: A <alice@intranet>\nSubject: x\n\nwith bob@bücher.de, see pkg@1.2.3\n---\ndiff --git a/f b/f\n"
-    expect(emailsIn(patch)).toEqual(["alice@intranet", "bob@bücher.de"])
+    const patch = "From: A <alice@intranet>\nSubject: x\n\nwith bob@bücher.de and carol@1example.com, see pkg@1.2.3\nCo-authored-by: D <d@9.9.9.9>\n---\ndiff --git a/f b/f\n"
+    expect(emailsIn(patch)).toEqual(["alice@intranet", "bob@bücher.de", "carol@1example.com", "d@9.9.9.9"])
+    expect(emailsIn(withPrivateEmails(patch, "t"))).toEqual([])
     expect(withPrivateEmails(patch, "t")).toContain("see pkg@1.2.3")
   })
 

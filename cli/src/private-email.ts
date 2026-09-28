@@ -5,10 +5,14 @@
 // itself is left alone.
 
 const PRIVATE = /@users\.noreply\.github\.com$/i
-// Any address: a local part, then a domain that starts with a letter, in any
-// script, with or without dots (alice@intranet, alice@bücher.de). A version
-// such as pkg@1.2.3 is not one.
-const EMAIL = /[\p{L}\p{N}._%+-]+@\p{L}[\p{L}\p{N}.-]*/gu
+// Any address: anything in <...> with an @ in it, as in a From line, and
+// otherwise a local part and a domain with a letter in it somewhere, in any
+// script, with or without dots (alice@intranet, bob@bücher.de,
+// alice@1example.com). A version such as pkg@1.2.3 has no letter after its @,
+// so it is not one.
+const EMAIL = /<[^<>\s]+@[^<>\s]+>|[\p{L}\p{N}._%+-]+@[\p{L}\p{N}][\p{L}\p{N}.-]*/gu
+const isEmail = (m: string) => m.startsWith("<") || /\p{L}/u.test(m.slice(m.indexOf("@") + 1))
+const bare = (m: string) => (m.startsWith("<") ? m.slice(1, -1) : m)
 
 /** GitHub's private address for a handle. */
 export const noreply = (handle: string) => `${handle}@users.noreply.github.com`
@@ -25,13 +29,13 @@ export function headerAndDiff(text: string): [string, string] {
 /** The patch with every email in its header replaced by the handle's private address. */
 export function withPrivateEmails(text: string, handle: string): string {
   const [head, diff] = headerAndDiff(text)
-  return head.replace(EMAIL, (e) => (PRIVATE.test(e) ? e : noreply(handle))) + diff
+  return head.replace(EMAIL, (m) => (!isEmail(m) || PRIVATE.test(bare(m)) ? m : m.startsWith("<") ? `<${noreply(handle)}>` : noreply(handle))) + diff
 }
 
 /** The emails in a patch's header that are not private addresses. */
 export function emailsIn(text: string): string[] {
   const [head] = headerAndDiff(text)
-  return [...new Set((head.match(EMAIL) ?? []).filter((e) => !PRIVATE.test(e)))]
+  return [...new Set((head.match(EMAIL) ?? []).filter(isEmail).map(bare).filter((e) => !PRIVATE.test(e)))]
 }
 
 /**
