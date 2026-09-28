@@ -21,8 +21,7 @@ async function bash(lines: string[], vars: Record<string, string> = {}) {
     env: {
       HOME: sb.home,
       OPENMODS_HOME: sb.om,
-      OPENMODS_NO_CHECK: "1",
-      OPENMODS_NO_PROMPT: "1",
+      OPENMODS_REVOKED_URL: "",
       OM_CLI: CLI,
       OM_REG: sb.reg,
       BIN: bin(),
@@ -45,7 +44,7 @@ beforeAll(async () => {
 // for `age` seconds when it runs the command.
 async function fromShell(age: number, ...a: string[]) {
   const p = Bun.spawn(["sh", "-c", `sleep ${age}; bun "$@"; exit $?`, "sh", CLI, ...a, "--registry", sb.reg, "--no-path"], {
-    env: { ...process.env, SHELL: "/bin/bash", PATH: `${bin()}:${process.env.PATH}`, HOME: sb.home, OPENMODS_HOME: sb.om, OPENMODS_NO_CHECK: "1" },
+    env: { ...process.env, SHELL: "/bin/bash", PATH: `${bin()}:${process.env.PATH}`, HOME: sb.home, OPENMODS_HOME: sb.om, OPENMODS_REVOKED_URL: "" },
     stdout: "pipe",
     stderr: "pipe",
   })

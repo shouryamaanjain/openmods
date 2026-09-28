@@ -25,12 +25,12 @@ beforeAll(async () => {
 })
 
 describe("a harness's env", () => {
-  test("reaches a build made before it existed, with the daily check", async () => {
+  test("reaches a build made before it existed, with the next command", async () => {
     setEnv(undefined)
     await cli(sb, "update", "fake", "--force")
     expect(await greeting(sb)).toBe("self-update=")
     setEnv({ GREET_SELF_UPDATE: "off", "not a name": "x" })
-    await cli(sb, "check-updates", "fake")
+    await cli(sb, "status")
     expect(await greeting(sb)).toBe("self-update=off")
     expect(launcher()).not.toContain("not a name")
   })
@@ -47,11 +47,11 @@ describe("a harness's env", () => {
   })
   test("cannot replace PATH", async () => {
     setEnv({ PATH: "/nowhere", GREET_SELF_UPDATE: "off" })
-    await cli(sb, "check-updates", "fake")
+    await cli(sb, "status")
     expect(launcher()).not.toContain("export PATH")
     expect(await greeting(sb)).toBe("self-update=off")
   })
-  test("is set for a clone under openmods dev, and follows a change with the daily check", async () => {
+  test("is set for a clone under openmods dev, and follows a change with the next command", async () => {
     setEnv({ GREET_SELF_UPDATE: "off" })
     const clone = path.join(sb.T, "clone")
     await $`git clone -q ${sb.harness} ${clone}`.quiet()
@@ -60,13 +60,13 @@ describe("a harness's env", () => {
     expect((await cli(sb, "dev", clone, "--fake")).code).toBe(0)
     expect(await greeting(sb)).toBe("dev self-update=off")
     setEnv({ GREET_SELF_UPDATE: "changed" })
-    await cli(sb, "check-updates", "fake")
+    await cli(sb, "status")
     expect(await greeting(sb)).toBe("dev self-update=changed")
   })
   test("a harness that drops its dev command leaves a dev launcher as it is", async () => {
     const { dev: _, ...rest } = JSON.parse(readFileSync(definition, "utf8"))
     writeFileSync(definition, JSON.stringify({ ...rest, env: { GREET_SELF_UPDATE: "again" } }))
-    const r = await cli(sb, "check-updates", "fake")
+    const r = await cli(sb, "status")
     expect(r.code, r.all).toBe(0)
     expect(await greeting(sb)).toBe("dev self-update=changed")
   })

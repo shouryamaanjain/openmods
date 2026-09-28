@@ -40,7 +40,7 @@ Mods are built from source on your machine, nothing is prebuilt. The first build
 
 ### Updates
 
-The launcher checks for updates once a day in the background. When a newer release is supported by every mod you have switched on, or one of your mods has a new update, it asks once before starting. `openmods update` does the same on demand, and `OPENMODS_NO_PROMPT=1` turns the question off.
+OpenMods updates only when you run `openmods update`: it moves you to the newest release every mod you have switched on supports, with your mods' latest updates for it, and names any mod that holds you back. Nothing checks or updates in the background, and typing `codex` or `opencode` only starts your build. Every `openmods` command you run, other than asking for help, also fetches the list of mods removed from OpenMods, so a removed mod stops running.
 
 A build's version names what went into it: `codex --version` prints something like `0.157.0+space-invaders-1`.
 

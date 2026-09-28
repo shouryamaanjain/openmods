@@ -6,7 +6,7 @@ import { beforeAll, describe, expect, test } from "bun:test"
 import { $ } from "bun"
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { addFile, addVersion, cli, createHarness, createMod, greeting, release, sandbox, setGreeting, WATCH } from "./harness"
+import { addFile, addVersion, cli, createHarness, createMod, greeting, release, run, sandbox, setGreeting, WATCH } from "./harness"
 
 const sb = sandbox("safety")
 const VALIDATE = path.resolve(import.meta.dir, "../../script/validate.ts")
@@ -108,8 +108,10 @@ describe("revocation", () => {
     expect((await cli(sb, "install", "t/friendly")).code).toBe(0)
     expect(await greeting(sb)).toBe("hello from friendly")
     revoke({ id: "t/friendly", reason: "It sends your files to a server." })
-    const check = await cli(sb, "check-updates", "fake")
+    // Any command stops it, and says so once.
+    const check = await cli(sb, "list")
     expect(check.out).toContain("t/friendly was removed from OpenMods")
+    expect((await cli(sb, "list")).out).not.toContain("removed from OpenMods")
     for (let i = 0; i < 2; i++) {
       const run = await $`sh ${launcher()}`.nothrow().quiet()
       expect(run.stdout.toString().trim()).toBe("stock greet")
@@ -120,7 +122,7 @@ describe("revocation", () => {
     expect(on.code).toBe(1)
     expect(on.err).toContain("`openmods uninstall t/friendly` removes it")
   })
-  test("`openmods update` stops it too, for anyone who turned the daily check off", async () => {
+  test("`openmods update` says so too, and has nothing to update it to", async () => {
     rmSync(path.join(sb.reg, "revoked.json"))
     expect((await cli(sb, "on")).code).toBe(0)
     expect(await greeting(sb)).toBe("hello from friendly")
@@ -133,7 +135,7 @@ describe("revocation", () => {
   })
   test("only the updates listed are revoked", async () => {
     revoke({ id: "t/friendly", updates: [2], reason: "Update 2 sends your files to a server." })
-    const check = await cli(sb, "check-updates", "fake")
+    const check = await cli(sb, "status")
     expect(check.out).not.toContain("removed from OpenMods")
   })
   test("an install from before update numbers were recorded is matched by its patches", async () => {
@@ -142,9 +144,9 @@ describe("revocation", () => {
     delete state.fake.updates
     writeFileSync(file, JSON.stringify(state))
     revoke({ id: "t/friendly", updates: [2], reason: "Update 2 sends your files to a server." })
-    expect((await cli(sb, "check-updates", "fake")).out).not.toContain("removed from OpenMods")
+    expect((await cli(sb, "status")).out).not.toContain("removed from OpenMods")
     revoke({ id: "t/friendly", updates: [1], reason: "Update 1 sends your files to a server." })
-    expect((await cli(sb, "check-updates", "fake")).out).toContain("t/friendly was removed from OpenMods")
+    expect((await cli(sb, "status")).out).toContain("t/friendly was removed from OpenMods")
   })
   test("it can be uninstalled even after it is deleted from the registry", async () => {
     revoke({ id: "t/friendly", reason: "It sends your files to a server." })
@@ -171,5 +173,121 @@ describe("mods deleted from the registry", () => {
     const both = await cli(sb, "uninstall", "t/left", "t/right")
     expect(both.code, both.all).toBe(0)
     expect((await cli(sb, "status")).out).toContain("No mods installed")
+  })
+})
+
+describe("the list of removed mods, fetched on its own", () => {
+  // As raw.githubusercontent.com would serve it: the registry's revoked.json.
+  let listed: object | null = null
+  let down = false
+  const server = Bun.serve({ port: 0, fetch: () => (down ? new Response("", { status: 503 }) : listed ? Response.json(listed) : new Response("", { status: 404 })) })
+  const url = `http://localhost:${server.port}/revoked.json`
+  const withUrl = (u: string, ...a: string[]) => run(sb, { env: { OPENMODS_REVOKED_URL: u } }, ...a)
+  test("stops a mod the registry copy on this machine does not list yet, on any command", async () => {
+    rmSync(path.join(sb.reg, "revoked.json"), { force: true })
+    await createMod(sb, "later", addFile("LATER.md", "later\n"))
+    expect((await cli(sb, "install", "t/later")).code).toBe(0)
+    expect((await withUrl(url, "status")).out).not.toContain("removed from OpenMods")
+    listed = { revoked: [{ id: "t/later", reason: "It deletes your files." }] }
+    expect((await withUrl(url, "list")).out).toContain("t/later was removed from OpenMods: It deletes your files.")
+    const launched = await $`sh ${launcher()}`.nothrow().quiet()
+    expect(launched.stderr.toString()).toContain("t/later was removed from OpenMods")
+  })
+  test("when the list cannot be fetched, the last copy stands and the command still runs", async () => {
+    down = true
+    const r = await withUrl(url, "status")
+    down = false
+    expect(r.code).toBe(0)
+    expect(r.out).toContain("t/later was removed from OpenMods")
+  })
+  test("a list that is not there (404) is a failed fetch, not an empty list", async () => {
+    listed = null
+    const r = await withUrl(url, "status")
+    expect(r.out).toContain("t/later was removed from OpenMods")
+  })
+  test("the daily call of an old launcher uses the last copy, offline", async () => {
+    const r = await withUrl("http://127.0.0.1:9/never-fetched.json", "check-updates")
+    expect(r.all).toBe("")
+    expect((await withUrl(url, "check-updates")).all).toBe("")
+    expect((await $`sh ${launcher()}`.nothrow().quiet()).stdout.toString().trim()).toBe("stock greet")
+  })
+  test("with no list at all (the copy damaged, the fetch failing), a stopped build stays stopped", async () => {
+    writeFileSync(path.join(sb.om, "revoked.json"), "{ damaged")
+    down = true
+    expect((await withUrl(url, "status")).code).toBe(0)
+    down = false
+    expect((await $`sh ${launcher()}`.nothrow().quiet()).stdout.toString().trim()).toBe("stock greet")
+    // One stopped by an older openmods, whose first comment differs.
+    const launcherFile = launcher()
+    writeFileSync(launcherFile, readFileSync(launcherFile, "utf8").replace(/^# .*$/m, "# openmods: this Fake build contains a mod removed from OpenMods, so it does not run."))
+    down = true
+    expect((await withUrl(url, "status")).code).toBe(0)
+    down = false
+    expect((await $`sh ${launcher()}`.nothrow().quiet()).stdout.toString().trim()).toBe("stock greet")
+  })
+  test("once it is taken off the list, the mod can be switched back on", async () => {
+    listed = { revoked: [] }
+    expect((await withUrl(url, "status")).out).not.toContain("removed from OpenMods")
+    expect((await withUrl(url, "on")).code).toBe(0)
+    expect((await $`sh ${launcher()}`.nothrow().quiet()).stdout.toString().trim()).not.toBe("stock greet")
+  })
+  test("every command checks, second names included", async () => {
+    listed = { revoked: [{ id: "t/later", reason: "It deletes your files." }] }
+    expect((await withUrl(url, "installed")).out).toContain("t/later was removed from OpenMods")
+  })
+  test("a list with anything malformed in it is not taken; the last one stands", async () => {
+    listed = { revoked: [null, { id: 3 }] }
+    const r = await withUrl(url, "status")
+    expect(r.code).toBe(0)
+    expect(r.out).toContain("t/later was removed from OpenMods")
+  })
+  test("a fresh list is the list, even if this machine's registry copy still names the mod", async () => {
+    writeFileSync(path.join(sb.reg, "revoked.json"), JSON.stringify({ revoked: [{ id: "t/later", reason: "It deletes your files." }] }))
+    listed = { revoked: [] }
+    expect((await withUrl(url, "status")).out).not.toContain("removed from OpenMods")
+    rmSync(path.join(sb.reg, "revoked.json"))
+  })
+  test("the copy kept of one list is not used for another", async () => {
+    listed = { revoked: [{ id: "t/later", reason: "It deletes your files." }] }
+    expect((await withUrl(url, "status")).out).toContain("removed from OpenMods")
+    // Another list, which cannot be reached: nothing is known about it.
+    expect((await withUrl("http://127.0.0.1:9/other.json", "status")).out).not.toContain("removed from OpenMods")
+    server.stop()
+  })
+})
+
+describe("the list of removed mods, on a first install", () => {
+  const fresh = sandbox("safety-first")
+  const server = Bun.serve({ port: 0, fetch: () => Response.json({ revoked: [{ id: "t/early", reason: "It deletes your files." }] }) })
+  test("is fetched before anything is installed, so a removed mod is refused", async () => {
+    await createHarness(fresh)
+    await createMod(fresh, "early", setGreeting("hello from early"))
+    const r = await run(fresh, { env: { OPENMODS_REVOKED_URL: `http://localhost:${server.port}/revoked.json` } }, "install", "t/early")
+    server.stop()
+    expect(r.code).toBe(1)
+    expect(r.err).toContain("t/early was removed from OpenMods: It deletes your files.")
+  })
+})
+
+describe("openmods registry", () => {
+  const reg = sandbox("safety-registry")
+  const greet = async () => (await $`sh ${path.join(reg.om, "bin", "greet")}`.nothrow().quiet()).stdout.toString().trim()
+  test("stops a removed mod like every other command", async () => {
+    await createHarness(reg)
+    await createMod(reg, "friendly", setGreeting("hello from friendly"))
+    expect((await cli(reg, "install", "t/friendly")).code).toBe(0)
+    writeFileSync(path.join(reg.reg, "revoked.json"), JSON.stringify({ revoked: [{ id: "t/friendly", reason: "It sends your files to a server." }] }))
+    const r = await cli(reg, "registry")
+    expect(r.code).toBe(0)
+    expect(r.out).toContain("t/friendly was removed from OpenMods")
+    expect(await greet()).toBe("stock greet")
+  })
+  test("still shows where things are when the check cannot run", async () => {
+    // A damaged state file stops every other command.
+    writeFileSync(path.join(reg.om, "state.json"), "{ damaged")
+    expect((await cli(reg, "status")).code).not.toBe(0)
+    const r = await cli(reg, "registry")
+    expect(r.code).toBe(0)
+    expect(r.out).toContain("home:")
   })
 })

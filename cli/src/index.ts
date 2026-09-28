@@ -11,7 +11,7 @@ import { cpSync, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFi
 import { cpus, homedir, tmpdir, totalmem } from "node:os"
 import path from "node:path"
 import { footprint, incompatibility as whyNot, type Footprint } from "./overlap"
-import { lastRebuild, Progress, roughly } from "./progress"
+import { Progress } from "./progress"
 import { managerHere, missingMessage, type Requirement } from "./requirements"
 import { sameRepo } from "./same-repo"
 
@@ -322,9 +322,65 @@ const findMod = (reg: string, id: string, harness: string) => listMods(reg, harn
 // doing harm. They are never built, and a build that has one stops running
 // it: the launcher warns and starts the stock harness instead.
 type Revocation = { id: string; updates?: number[]; reason: string }
+const isRevocation = (r: unknown): r is Revocation => {
+  const x = r as Revocation
+  return !!x && typeof x.id === "string" && typeof x.reason === "string" && (x.updates === undefined || (Array.isArray(x.updates) && x.updates.every((u) => typeof u === "number")))
+}
+// The list for this run: the registry checkout's own, unless a list fetched
+// on its own says otherwise (see fetchRevocations).
+let fetchedRevocations: { list: Revocation[]; fresh: boolean } | null = null
 function revocations(reg: string): Revocation[] {
-  const file = path.join(reg, "revoked.json")
-  return existsSync(file) ? ((readJsonFile(file).revoked ?? []) as Revocation[]) : []
+  let local: Revocation[] = []
+  try {
+    const file = path.join(reg, "revoked.json")
+    if (existsSync(file)) local = ((readJsonFile(file).revoked ?? []) as unknown[]).filter(isRevocation)
+  } catch {}
+  if (!fetchedRevocations) return local
+  // Fetched just now: it is the list. Only the last copy, offline: whichever
+  // of it and the checkout is newer may list more, so both count.
+  return fetchedRevocations.fresh ? fetchedRevocations.list : [...local, ...fetchedRevocations.list]
+}
+
+// The list of removed mods is fetched on its own, on every command the user
+// runs, so a removed mod stops running without pulling the registry (which
+// also holds the CLI's code). By default the list of the registry openmods
+// cloned, else the official one; OPENMODS_REVOKED_URL names another, and set
+// empty turns the fetch off. The copy kept is used only for the same list.
+// Offline, or on any error, the last copy stands; it never holds a command
+// up for more than a few seconds.
+const REVOKED_COPY = path.join(HOME, "revoked.json")
+async function revokedUrl(reg: string) {
+  const set = process.env.OPENMODS_REVOKED_URL
+  if (set !== undefined) return set
+  const origin =
+    reg === path.join(HOME, "registry") ? (await $`git -C ${reg} remote get-url origin`.nothrow().quiet()).stdout.toString().trim() : DEFAULT_REGISTRY
+  const gh = /github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(origin)
+  return gh ? `https://raw.githubusercontent.com/${gh[1]}/${gh[2]}/HEAD/revoked.json` : ""
+}
+// Whether the list is known: fetched now, or a copy of this same list kept.
+// With `offline`, only the kept copy is read.
+async function fetchRevocations(reg: string, offline = false): Promise<boolean> {
+  const url = await revokedUrl(reg)
+  if (!url) return true
+  let kept: { url?: string; revoked?: unknown[] } = {}
+  try {
+    kept = readJsonFile(REVOKED_COPY)
+  } catch {}
+  if (kept.url === url && Array.isArray(kept.revoked)) fetchedRevocations = { list: kept.revoked.filter(isRevocation), fresh: false }
+  if (offline) return fetchedRevocations !== null
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(3000) })
+    // The registry always has the file, with an empty list when nothing is
+    // revoked; anything but a good answer leaves the last copy standing.
+    const body = res.ok ? ((await res.json()) as { revoked?: unknown }) : null
+    // A list with anything malformed in it is not taken; the last copy stands.
+    if (!body || !Array.isArray(body.revoked) || !body.revoked.every(isRevocation)) return fetchedRevocations !== null
+    fetchedRevocations = { list: body.revoked, fresh: true }
+    const tmp = `${REVOKED_COPY}.${process.pid}`
+    writeFileSync(tmp, JSON.stringify({ url, revoked: body.revoked }) + "\n")
+    renameSync(tmp, REVOKED_COPY)
+  } catch {}
+  return fetchedRevocations !== null
 }
 const revocationOf = (reg: string, id: string, update: number | undefined) =>
   revocations(reg).find((r) => r.id === id && (!r.updates || update === undefined || r.updates.includes(update)))
@@ -936,12 +992,9 @@ function isRunning(pid: number) {
 const BIN = path.join(HOME, "bin")
 const pretty = (p: string) => p.replace(homedir(), "~")
 
-// The launcher is what `opencode` runs. It starts the modded binary at once
-// and, at most once a day, refreshes the registry in the background. When
-// there is something to update (a newer release all installed mods support,
-// or a new update of one of them) the next launch asks, once. A no is final
-// for that offer: it asks again only when there is something new. It never
-// rebuilds without a yes.
+// The launcher is what `opencode` runs: it starts the modded build, with the
+// harness's env and args, and does nothing else. Updates happen only when the
+// user runs `openmods update`.
 // `export` lines for a harness's env, quoted like the rest of the launcher.
 // Names that are not shell variable names are left out, and so is PATH,
 // which the launcher sets up itself (the dev clone's pinned toolchain).
@@ -960,50 +1013,10 @@ function argsOf(h: Harness) {
 }
 
 function launcherOf(h: Harness, artifact: string) {
-  const cli = Bun.which("openmods") ?? `${process.execPath} ${path.resolve(import.meta.path)}`
+  const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
   return `#!/bin/sh
 # openmods launcher for ${h.binary}. \`openmods off\` makes it start the stock ${h.name}, which is untouched.
-HARNESS=${h.id}
-SELF=${JSON.stringify(path.join(BIN, h.binary))}
-REAL=${JSON.stringify(artifact)}
-OM=${JSON.stringify(HOME)}
-CLI=${JSON.stringify(cli)}
-NOTE="$OM/updates/$HARNESS"
-NOW=$(date +%s)
-
-# Refresh the note in the background once a day; never delays startup.
-if [ -z "$OPENMODS_NO_CHECK" ]; then
-  LAST=$(cat "$NOTE.checked" 2>/dev/null || echo 0)
-  if [ $((NOW - LAST)) -gt 86400 ]; then
-    mkdir -p "$OM/updates" && echo "$NOW" > "$NOTE.checked"
-    ( $CLI check-updates "$HARNESS" >/dev/null 2>&1 & )
-  fi
-fi
-
-# Show each offer once, and only at an interactive terminal.
-# (OPENMODS_ASSUME_TTY=1 lets tests drive the prompt without a terminal.)
-if { { [ -t 0 ] && [ -t 1 ]; } || [ -n "$OPENMODS_ASSUME_TTY" ]; } && [ -z "$OPENMODS_NO_PROMPT" ] && [ -f "$NOTE" ]; then
-  . "$NOTE"
-  if [ -n "$KEY" ] && [ "$KEY" != "$(cat "$NOTE.seen" 2>/dev/null)" ]; then
-    printf '%s\n' "$KEY" > "$NOTE.seen"
-    printf '%s\n' "$MESSAGE"
-    if [ "$ASK" = 1 ]; then
-      printf '%s' "Update now? It rebuilds ${h.name}\${ESTIMATE:+ (\$ESTIMATE)}. [y/N] "
-      read -r ANSWER
-      case "$ANSWER" in
-        y|Y|yes|YES)
-          # The update replaces this launcher and removes the old build, so
-          # start again from the new launcher rather than the old path above.
-          if $CLI update "$HARNESS"; then exec "$SELF" "$@"; else
-            printf '%s\n' "Update failed; starting your current build. Run \"openmods update $HARNESS\" to try again."
-          fi ;;
-        *) printf '%s\n' "Not now. You will not be asked about this again; \"openmods update\" does it any time." ;;
-      esac
-    fi
-  fi
-fi
-
-${envOf(h)}exec "$REAL" ${argsOf(h)}"$@"
+${envOf(h)}exec ${q(artifact)} ${argsOf(h)}"$@"
 `
 }
 
@@ -1059,6 +1072,8 @@ function endDev(h: Harness) {
 
 // The launcher for a build that contains a revoked mod: it never runs the
 // build again. It says why on every launch and starts the stock harness.
+// In every stopped launcher's first comment, from older openmods too.
+const REVOKED_MARK = "build contains a mod removed from OpenMods"
 function revokedLauncherOf(h: Harness, bad: { id: string; reason: string }[], stock: string | null) {
   const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
   const ids = bad.map((b) => b.id).join(" ")
@@ -1406,7 +1421,6 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
   }
   saveState(state)
   // The launcher's note described the build this replaces.
-  rmSync(path.join(HOME, "updates", harnessId), { force: true })
   await tidy(root, base.ref, !!was && was !== base.ref)
   await explainSwitch(h, state[harnessId]!)
 }
@@ -1707,8 +1721,6 @@ async function cmdStatus() {
     for (const m of e.off) log(`          ${m} is off (openmods on ${m} --${id})`)
     log(`  stock   ${stock ? `${(await versionOf(stock)) ?? "?"}  ${pretty(stock)}` : "not found on PATH"}`)
     for (const b of revokedIn(reg, id, e)) log(`  removed ${b.id} was removed from OpenMods: ${b.reason} \`openmods uninstall ${b.id}\``)
-    const pending = readNote(id)
-    if (pending?.ASK === "1" && pending.MESSAGE) log(`  update  ${pending.MESSAGE} \`openmods update ${id}\` does it.`)
     if (e.enabled && !onPath) log(`  note    ${pretty(BIN)} is not on PATH in this shell; open a new terminal or run: export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"`)
     else if (e.enabled && !reaches && first) log(`  note    in this terminal \`${h.binary}\` finds ${pretty(first)} first; run: export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"`)
   }
@@ -1795,8 +1807,7 @@ async function cmdUpdate() {
       log(`No mods are installed for ${loadHarness(reg, id).name}; nothing to update.`)
       continue
     }
-    // A revoked mod stops running here too, for anyone who turned the daily
-    // check off; there is nothing to update it to.
+    // A revoked mod has nothing to update it to.
     const bad = devOf(id) ? [] : revokedIn(reg, id, e)
     if (bad.length) {
       log(stopRevoked(loadHarness(reg, id), e, bad))
@@ -1819,12 +1830,16 @@ async function cmdUpdate() {
         return v ? e.hashes[m.id] === patchHash(v) : e.hashes[m.id] === undefined
       })
     if (same && !has("force")) {
-      // For anyone who turned the daily check off, this is where it happens.
+      const held = heldBack(loadHarness(reg, id), e, active, basePatch)
       refreshLauncher(reg, loadHarness(reg, id), e)
       log(`${loadHarness(reg, id).name} ${rel(e.ref)} + ${active.map((m) => m.id).join(" + ")} is already up to date.`)
+      if (held) log(held)
       continue
     }
     await rebuild(reg, id, mods, e?.off ?? [], [], target)
+    const now = loadState()[id]
+    const still = now && heldBack(loadHarness(reg, id), now, active, basePatch)
+    if (still) log(still)
   }
 }
 
@@ -2176,126 +2191,49 @@ async function cmdCheck() {
   if (result.unchecked || result.applies !== true || (has("typecheck") && result.typechecks !== true) || (has("build") && result.builds !== true)) process.exit(1)
 }
 
-// Compare what is installed with what the registry now says, and leave a
-// note for the launcher. Runs in the background from the launcher once a
-// day; safe to run by hand.
-
-async function cmdCheckUpdates() {
-  const reg = await refreshRegistry()
+// Every command (asking for help aside) keeps the launchers current and stops a
+// revoked mod; nothing does this in the background. Launchers from before
+// that run \`openmods check-updates\` once a day, which now only does this,
+// offline, and so replaces them with the launcher that just starts the build.
+async function keepCurrent(fetchRevoked: boolean) {
+  // The notes the old launcher read.
+  rmSync(path.join(HOME, "updates"), { recursive: true, force: true })
+  const reg = await ensureRegistry()
+  // Before anything is installed too: install refuses a removed mod.
+  const known = await fetchRevocations(reg, !fetchRevoked)
   const state = loadState()
-  const ids = positional[1] ? [positional[1]] : Object.keys(state)
-  mkdirSync(path.join(HOME, "updates"), { recursive: true })
-  for (const id of ids) {
-    const e = state[id]
-    const file = path.join(HOME, "updates", id)
-    if (!e) {
-      rmSync(file, { force: true })
-      continue
-    }
+  for (const [id, e] of Object.entries(state)) {
+    if (!existsSync(path.join(reg, "harnesses", `${id}.json`))) continue
     const h = loadHarness(reg, id)
+    const bad = devOf(id) ? [] : revokedIn(reg, id, e)
+    if (!bad.length) {
+      // A build stopped for a removed mod stays stopped while the list
+      // cannot be known.
+      const launcher = path.join(BIN, h.binary)
+      const stopped = existsSync(launcher) && readFileSync(launcher, "utf8").includes(REVOKED_MARK)
+      if (known || !stopped) refreshLauncher(reg, h, e)
+      continue
+    }
+    // Said once, when it stops; status and update say it again.
     const launcher = path.join(BIN, h.binary)
-    // In dev mode the launcher runs the author's clone; leave it alone.
-    if (devOf(id)) {
-      refreshLauncher(reg, h, e)
-      log(`${id}: runs your clone (openmods dev); no updates while it does.`)
-      continue
-    }
-    const bad = revokedIn(reg, id, e)
-    if (bad.length) {
-      log(`${id}: ${stopRevoked(h, e, bad)}`)
-      if (has("json")) console.log(JSON.stringify({ current: rel(e.ref), revoked: bad }))
-      continue
-    }
-    // A change to how the launcher asks, or to the harness's env, reaches
-    // everyone without a rebuild.
-    refreshLauncher(reg, h, e)
-    // A mod the registry no longer has keeps running as built; it just has no updates.
-    const active = e.mods.filter((n) => !e.off.includes(n)).flatMap((n) => findMod(reg, n, id) ?? [])
-    const offer = updateOffer(h, e, active, baseFor(reg, id))
-    // The launcher sources this file, so every value is single-quoted. KEY
-    // names the offer: the launcher shows each one once, and a no is final
-    // until the key changes (another release, another mod update).
-    const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
-    const now = Math.floor(Date.now() / 1000)
-    // How long the rebuild took here last time, for the question.
-    const took = lastRebuild(path.join(HOME, "timings.json"), id)
-    const estimate = took === undefined ? "" : roughly(took)
-    writeFileSync(
-      file,
-      [`CURRENT=${q(rel(e.ref))}`, `KEY=${q(offer.key)}`, `ASK=${offer.ask ? 1 : 0}`, `MESSAGE=${q(offer.message)}`, `ESTIMATE=${q(estimate)}`, `CHECKED=${now}`].join("\n") + "\n",
-    )
-    writeFileSync(`${file}.checked`, `${now}\n`)
-    if (has("json"))
-      console.log(
-        JSON.stringify({
-          current: rel(e.ref),
-          currentTag: e.ref,
-          available: offer.latest ? rel(offer.latest) : "",
-          availableTag: offer.latest,
-          allSupport: offer.blocked.length === 0,
-          blocked: offer.blocked,
-          moveTo: offer.moveTo ? rel(offer.moveTo) : "",
-          updates: offer.updates,
-          ask: offer.ask,
-          message: offer.message,
-        }),
-      )
-    else log(offer.message ? `${id}: ${offer.message}${offer.ask ? ` \`openmods update ${id}\` does it.` : ""}` : `${id}: up to date (${rel(e.ref)})`)
+    const stopped = existsSync(launcher) && readFileSync(launcher, "utf8") === revokedLauncherOf(h, bad, stockBinary(h))
+    const said = stopRevoked(h, e, bad)
+    if (!stopped && e.enabled) log(said)
   }
-}
-
-/** The launcher's note for a harness, as written by check-updates. */
-function readNote(id: string): Record<string, string> | null {
-  const file = path.join(HOME, "updates", id)
-  if (!existsSync(file)) return null
-  const out: Record<string, string> = {}
-  for (const line of readFileSync(file, "utf8").split("\n")) {
-    const m = /^([A-Z_]+)=(.*)$/.exec(line)
-    if (m) out[m[1]!] = m[2]!.replace(/^'|'$/g, "").replaceAll("'\\''", "'")
-  }
-  return out
 }
 
 /**
- * What there is to offer a user for one harness: a newer release every mod
- * that is on has a version for (`moveTo`), and new updates of their mods at
- * the release they would be on (`updates`). Either one is a question; a newer
- * release that some mods hold back is only a notice. `key` names the offer.
+ * A newer release than the one a harness's build is on, when some of its
+ * mods have no version for it yet, as a line for \`openmods update\`.
  */
-function updateOffer(h: Harness, e: State[string], mine: Mod[], basePatch?: Mod) {
+function heldBack(h: Harness, e: State[string], mine: Mod[], basePatch?: Mod) {
   // The base patch counts like a mod when it has a version the mods share.
   const active = basePatch && sharedReleases([basePatch, ...mine]).length ? [basePatch, ...mine] : mine
-  const shared = sharedReleases(active)[0]
-  const moveTo = shared && newerRelease(shared, e.ref) ? shared : ""
   const newest = newestFirst([e.ref, ...active.flatMap((m) => m.versions.map((v) => v.ref))])[0]!
-  const latest = newerRelease(newest, e.ref) ? newest : ""
-  const blocked = latest ? active.filter((m) => !at(m, latest)).map((m) => m.id) : []
-  const target = moveTo || e.ref
-  // Which update of each mod the build holds; older installs did not record
-  // it, so it is read from the patches when they still match.
-  const installed = (m: Mod) => {
-    if (e.updates[m.id] !== undefined) return e.updates[m.id]!
-    // A build from before the base patch existed has none of it.
-    if (m.id === BASE_ID) return e.hashes[m.id] === undefined ? 0 : undefined
-    const v = at(m, e.ref)
-    return v && patchHash(v) === e.hashes[m.id] ? v.update : undefined
-  }
-  const updates = active.flatMap((m) => {
-    const v = at(m, target)
-    const have = installed(m)
-    return v && have !== undefined && v.update > have ? [{ id: m.id, update: v.update, ...(v.note ? { note: v.note } : {}) }] : []
-  })
-  const said = updates.map((u) => `${shown(u.id)} update ${u.update}${u.note ? ` (${u.note})` : ""}`).join(", ")
-  const ask = !!moveTo || updates.length > 0
-  const message = moveTo
-    ? `${h.name} ${rel(moveTo)} is out, and all your mods support it.${said ? ` New in your mods: ${said}.` : ""}`
-    : updates.length
-      ? `New in your ${h.name} mods: ${said}.`
-      : blocked.length
-        ? `${h.name} ${rel(latest)} is out, but ${blocked.map(shown).join(", ")} ${blocked.length === 1 ? "has" : "have"} no version for it yet, so you stay on ${rel(e.ref)}.`
-        : ""
-  const key = ask ? `update ${moveTo} ${updates.map((u) => `${u.id}@${u.update}`).join(",")}` : blocked.length ? `blocked ${latest}` : ""
-  return { moveTo, latest, blocked, updates, ask, message, key }
+  if (!newerRelease(newest, e.ref)) return ""
+  const blocked = active.filter((m) => !at(m, newest)).map((m) => m.id)
+  if (!blocked.length) return ""
+  return `${h.name} ${rel(newest)} is out, but ${blocked.map(shown).join(", ")} ${blocked.length === 1 ? "has" : "have"} no version for it yet, so you stay on ${rel(e.ref)}.`
 }
 
 async function cmdRegistry() {
@@ -2378,7 +2316,8 @@ const commands: Record<string, () => Promise<void>> = {
   dev: cmdDev,
   check: cmdCheck,
   registry: cmdRegistry,
-  "check-updates": cmdCheckUpdates,
+  // Hidden: what launchers from before 2026-09 run; see keepCurrent.
+  "check-updates": async () => {},
   setup: cmdSetup,
 }
 
@@ -2391,7 +2330,13 @@ if (cmd === "help" && positional[1]) {
   console.log(helpText())
 } else if (commands[cmd]) {
   if (has("help")) console.log(commandHelp(cmd) ?? helpText())
-  else await commands[cmd]!()
+  else {
+    // `registry` shows where things are even when the check cannot run,
+    // with a damaged checkout for one.
+    if (cmd === "registry") await keepCurrent(true).catch(() => {})
+    else await keepCurrent(cmd !== "check-updates")
+    await commands[cmd]!()
+  }
 } else {
   fail(`unknown command "${cmd}"\n\n${helpText()}`)
 }

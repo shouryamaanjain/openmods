@@ -49,8 +49,10 @@ export async function run(sb: Sandbox, opts: { answer?: string; env?: Record<str
       ...process.env,
       HOME: sb.home,
       OPENMODS_HOME: sb.om,
-      OPENMODS_NO_CHECK: "1",
       TMPDIR: sb.tmp,
+      // No network: the list of removed mods comes only from the registry
+      // checkout, unless a test names a URL.
+      OPENMODS_REVOKED_URL: "",
       PATH: process.env.PATH ?? "",
       ...(opts.answer !== undefined ? { OPENMODS_ASSUME_TTY: "1" } : {}),
       ...opts.env,
@@ -209,5 +211,5 @@ export const addFile = (name: string, text: string) => (dir: string) => writeFil
 export async function greeting(sb: Sandbox) {
   const launcher = path.join(sb.om, "bin", "greet")
   if (!existsSync(launcher)) return null
-  return (await $`sh ${launcher}`.env({ OPENMODS_NO_CHECK: "1", OPENMODS_NO_PROMPT: "1" }).text()).trim()
+  return (await $`sh ${launcher}`.text()).trim()
 }

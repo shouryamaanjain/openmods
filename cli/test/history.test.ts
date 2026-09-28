@@ -57,19 +57,17 @@ describe("building", () => {
 })
 
 describe("updates", () => {
-  test("a newer release is blocked by the mods with no version for it", async () => {
-    const r = await cli(sb, "check-updates", "fake", "--json")
-    expect(JSON.parse(r.out)).toMatchObject({ current: "1.0.0", available: "1.1.0", allSupport: false, blocked: ["t/notes"] })
-    expect((await cli(sb, "update", "fake")).out).toContain("already up to date")
+  test("a newer release is blocked by the mods with no version for it, and update names them", async () => {
+    const r = await cli(sb, "update", "fake")
+    expect(r.out).toContain("already up to date")
+    expect(r.out).toContain("Fake 1.1.0 is out, but t/notes has no version for it yet, so you stay on 1.0.0.")
   })
   test("once every mod has a version for it, update moves there", async () => {
     await addVersion(sb, dirOf("notes"), "v1.1.0")
-    const note = await cli(sb, "check-updates", "fake", "--json")
-    expect(JSON.parse(note.out)).toMatchObject({ available: "1.1.0", allSupport: true, blocked: [], moveTo: "1.1.0", ask: true })
-    expect((await cli(sb, "status")).out).toContain("update  Fake 1.1.0 is out, and all your mods support it. `openmods update fake` does it.")
     const r = await cli(sb, "update", "fake")
     expect(r.code, r.all).toBe(0)
     expect(r.out).toContain("now runs Fake 1.1.0 + t/friendly + t/notes")
+    expect(r.out).not.toContain("is out, but")
   })
 })
 
@@ -85,20 +83,18 @@ describe("mod updates", () => {
     expect(r.out).toContain("Same code as update 1, so it stays update 1.")
     expect(versions(dirOf("notes"))[0]).toMatchObject({ ref: "v1.2.0", update: 1 })
   })
-  test("new code at the release the user is on is offered on its own, with no release change", async () => {
+  test("new code at the release the user is on is an update on its own, with no release change", async () => {
     await git(work, "checkout", "-q", "v1.1.0")
     writeFileSync(path.join(work, "NOTES.md"), "better notes\n")
     await git(work, "add", "-A")
     await git(work, "commit", "-qm", "fix: notes")
     const pack = await cli(sb, "pack", work, "--name", "notes", "--owner", "t", "--harness", "fake", "--force", "--note", "clearer notes")
     expect(pack.out).toContain("This is update 2: clearer notes.")
-    const r = JSON.parse((await cli(sb, "check-updates", "fake", "--json")).out)
-    expect(r).toMatchObject({ moveTo: "", ask: true, updates: [{ id: "t/notes", update: 2, note: "clearer notes" }] })
-    expect(r.message).toBe("New in your Fake mods: t/notes update 2 (clearer notes).")
     const u = await cli(sb, "update", "fake")
     expect(u.code, u.all).toBe(0)
+    expect(u.out).toContain("now runs Fake 1.1.0 + t/friendly + t/notes")
     expect(state().updates).toEqual({ "t/friendly": 1, "t/notes": 2 })
-    expect(JSON.parse((await cli(sb, "check-updates", "fake", "--json")).out)).toMatchObject({ ask: false, updates: [] })
+    expect((await cli(sb, "update", "fake")).out).toContain("already up to date")
   })
 })
 

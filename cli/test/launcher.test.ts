@@ -1,77 +1,80 @@
-// The launcher's update prompt, end to end. It asks once per offer: a no
-// is final until there is something new, a new release or a new update of a
-// mod. A yes rebuilds and starts the new build in the same invocation.
+// The launcher only starts the build: no update check in the background, no
+// question before a session. Launchers from before that are replaced by the
+// next openmods command, or by the daily `check-updates` they run, offline.
 import { beforeAll, describe, expect, test } from "bun:test"
-import { readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { $ } from "bun"
-import { addFile, addVersion, cli, createHarness, createMod, git, release, sandbox, setGreeting } from "./harness"
+import { addFile, addVersion, cli, createHarness, createMod, release, sandbox, setGreeting } from "./harness"
 
 const sb = sandbox("launcher")
 const launcher = () => path.join(sb.om, "bin", "greet")
 
-async function launch(answer: string) {
+// As from a terminal, where the old launcher would have asked.
+async function launch() {
   const p = Bun.spawn(["sh", launcher()], {
-    env: { ...process.env, HOME: sb.home, OPENMODS_HOME: sb.om, OPENMODS_REGISTRY: sb.reg, OPENMODS_NO_CHECK: "1", OPENMODS_ASSUME_TTY: "1" },
-    stdin: new TextEncoder().encode(answer),
+    env: { ...process.env, HOME: sb.home, OPENMODS_HOME: sb.om, OPENMODS_REGISTRY: sb.reg, OPENMODS_REVOKED_URL: "", OPENMODS_ASSUME_TTY: "1" },
+    stdin: new TextEncoder().encode("y\n"),
     stdout: "pipe",
     stderr: "pipe",
   })
   const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()])
-  return { code: await p.exited, out, err, all: out + err }
+  return { code: await p.exited, out, err }
 }
+
+// The launcher an older openmods wrote, trimmed to what matters here: a
+// background check once a day, and a question from its note.
+const oldLauncher = () => `#!/bin/sh
+NOTE="${sb.om}/updates/fake"
+( openmods check-updates fake >/dev/null 2>&1 & )
+[ -f "$NOTE" ] && . "$NOTE" && printf '%s\\n' "$MESSAGE"
+exec "${readFileSync(launcher(), "utf8").match(/exec '([^']+)'/)![1]}" "$@"
+`
 
 beforeAll(async () => {
   await createHarness(sb)
   await createMod(sb, "friendly", setGreeting("hello from friendly"))
-  await cli(sb, "install", "t/friendly")
-  // A release that leaves the mod's lines alone, and the bump the release
-  // watch would commit for it.
+  expect((await cli(sb, "install", "t/friendly")).code).toBe(0)
+  // A release every mod supports: the old launcher would have offered it.
   await release(sb, "v1.1.0", addFile("CHANGELOG.md", "1.1.0\n"))
   await addVersion(sb, path.join(sb.reg, "mods", "t", "friendly", "fake"), "v1.1.0")
-  await cli(sb, "check-updates", "fake")
 })
 
-describe("the update prompt", () => {
-  test("offers a release every mod supports, once", async () => {
-    const r = await launch("n\n")
-    expect(r.out).toContain("Fake 1.1.0 is out, and all your mods support it.")
-    // Only a first build was timed, which says nothing about a rebuild.
-    expect(r.out).toContain("Update now? It rebuilds Fake. [y/N]")
-    expect(r.out).toContain("You will not be asked about this again")
-    expect(r.out).toContain("hello from friendly")
+describe("the launcher", () => {
+  test("only starts the build, even at a terminal with an update out", async () => {
+    const script = readFileSync(launcher(), "utf8")
+    expect(script).not.toContain("check-updates")
+    expect(script).not.toContain("read ")
+    const r = await launch()
     expect(r.code).toBe(0)
-  })
-  test("after a no, the same offer is never shown again", async () => {
-    await cli(sb, "check-updates", "fake")
-    const r = await launch("")
-    expect(r.out).not.toContain("Update now?")
     expect(r.out.trim()).toBe("hello from friendly")
+    expect(r.err).toBe("")
+    expect(existsSync(path.join(sb.om, "updates"))).toBe(false)
   })
-  test("a new update of a mod is something new, so it asks again, with the author's note", async () => {
-    const work = path.join(sb.T, "work-friendly")
-    await git(work, "fetch", "-q", "--tags")
-    await git(work, "checkout", "-q", "v1.1.0")
-    writeFileSync(path.join(work, "greet.sh"), "#!/bin/sh\necho hello from friendly, update 2\n")
-    await git(work, "commit", "-qam", "fix: friendlier")
-    const pack = await cli(sb, "pack", work, "--name", "friendly", "--owner", "t", "--harness", "fake", "--force", "--note", "friendlier greeting")
-    expect(pack.out).toContain("This is update 2: friendlier greeting.")
-    await cli(sb, "check-updates", "fake")
-    const r = await launch("y\n")
-    expect(r.out).toContain("Fake 1.1.0 is out, and all your mods support it. New in your mods: t/friendly update 2 (friendlier greeting).")
-    expect(r.all).toContain("now runs Fake 1.1.0 + t/friendly")
-    expect(r.all).not.toContain("No such file")
-    expect(r.out).toContain("hello from friendly, update 2")
+  test("one from an older openmods is replaced by the next command, and its notes go", async () => {
+    writeFileSync(launcher(), oldLauncher(), { mode: 0o755 })
+    mkdirSync(path.join(sb.om, "updates"), { recursive: true })
+    writeFileSync(path.join(sb.om, "updates", "fake"), "MESSAGE='Fake 1.1.0 is out'\n")
+    expect((await cli(sb, "status")).code).toBe(0)
+    expect(readFileSync(launcher(), "utf8")).not.toContain("check-updates")
+    expect(existsSync(path.join(sb.om, "updates"))).toBe(false)
+    expect((await launch()).out.trim()).toBe("hello from friendly")
+  })
+  test("the daily check an old launcher runs only replaces it, offline, and says nothing", async () => {
+    writeFileSync(launcher(), oldLauncher(), { mode: 0o755 })
+    const r = await cli(sb, "check-updates", "fake")
     expect(r.code).toBe(0)
-    expect(readFileSync(launcher(), "utf8")).toContain("builds/1.1.0+friendly-2")
+    expect(r.all).toBe("")
+    expect(readFileSync(launcher(), "utf8")).not.toContain("check-updates")
+    // Still on the release it was built for: nothing was updated.
+    expect(readFileSync(launcher(), "utf8")).toContain("builds/1.0.0+friendly-1")
   })
-  test("after updating, the next launch does not ask", async () => {
-    await cli(sb, "check-updates", "fake")
-    const r = await launch("")
-    expect(r.out).not.toContain("Update now?")
-    expect(r.out.trim()).toBe("hello from friendly, update 2")
+  test("check-updates is not offered as a command", async () => {
+    expect((await cli(sb, "help")).out).not.toContain("check-updates")
   })
-  test("status shows a pending update only when there is one", async () => {
-    expect((await cli(sb, "status")).out).not.toContain("update  ")
+  test("updating happens with openmods update", async () => {
+    const r = await cli(sb, "update", "fake")
+    expect(r.code, r.all).toBe(0)
+    expect(r.out).toContain("now runs Fake 1.1.0 + t/friendly")
+    expect((await launch()).out.trim()).toBe("hello from friendly")
   })
 })

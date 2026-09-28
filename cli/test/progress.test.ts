@@ -5,7 +5,6 @@
 import { beforeAll, describe, expect, test } from "bun:test"
 import { chmodSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { lastRebuild } from "../src/progress"
 import { cli, createHarness, createMod, run, sandbox, setGreeting } from "./harness"
 
 const sb = sandbox("progress")
@@ -35,13 +34,8 @@ describe("a build in a terminal", () => {
   })
   test("keeps how long each step took, a first build apart from later ones", async () => {
     expect(Object.keys(timings()).sort()).toEqual(["Build:first", "Dependencies:first", "Patches:first", "Source:first"])
-    await cli(sb, "check-updates", "fake")
-    expect(readFileSync(path.join(sb.om, "updates", "fake"), "utf8")).toContain("ESTIMATE=''")
     await run(sb, live, "update", "fake", "--force")
     expect(Object.keys(timings())).toContain("Build")
-    // Now a rebuild was timed, the update question can say how long one takes.
-    await cli(sb, "check-updates", "fake")
-    expect(readFileSync(path.join(sb.om, "updates", "fake"), "utf8")).toContain("ESTIMATE='under a minute'")
   })
   test("a rebuild is not estimated from a first build, and never outlasts the bar", async () => {
     const file = path.join(sb.om, "timings.json")
@@ -190,18 +184,6 @@ describe("when things go wrong", () => {
     rmSync(path.join(sb.om, "harnesses", "fake", "src"), { recursive: true, force: true })
     expect(r.code).not.toBe(0)
     expect(r.out).toMatch(/✗ Source +failed after/)
-  })
-})
-
-describe("the rebuild estimate", () => {
-  test("needs every step of a rebuild timed, not a first build's", () => {
-    const file = path.join(sb.T, "partial.json")
-    writeFileSync(file, JSON.stringify({ fake: { Source: 3, Patches: 1, Dependencies: 20 } }))
-    expect(lastRebuild(file, "fake")).toBeUndefined()
-    writeFileSync(file, JSON.stringify({ fake: { Source: 3, Patches: 1, Dependencies: 20, "Build:first": 500 } }))
-    expect(lastRebuild(file, "fake")).toBeUndefined()
-    writeFileSync(file, JSON.stringify({ fake: { Source: 3, Patches: 1, Dependencies: 20, Build: 90 } }))
-    expect(lastRebuild(file, "fake")).toBe(114)
   })
 })
 

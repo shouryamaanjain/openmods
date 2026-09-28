@@ -49,7 +49,7 @@ describe("local mods", () => {
     expect(list.out.match(/t\/friendly/g)?.length).toBe(1)
     const r = await cli(sb, "install", "t/friendly")
     expect(r.code).toBe(0)
-    const out = await Bun.$`sh ${path.join(sb.om, "bin", "greet")}`.env({ OPENMODS_NO_CHECK: "1" }).text()
+    const out = await Bun.$`sh ${path.join(sb.om, "bin", "greet")}`.text()
     expect(out.trim()).toBe("hello from local friendly")
   })
 })
@@ -99,7 +99,7 @@ describe("trying and publishing from a clone", () => {
     const own = path.join(sb.om, "registry")
     await Bun.$`cp -R ${sb.reg} ${own}`.quiet()
     const p = await Bun.$`bun ${CLI} pack ${path.join(sb.T, "work-branchy")} --name nope --owner t --harness fake --registry ${own}`
-      .env({ ...process.env, HOME: sb.home, OPENMODS_HOME: sb.om, OPENMODS_NO_CHECK: "1" })
+      .env({ ...process.env, HOME: sb.home, OPENMODS_HOME: sb.om, OPENMODS_REVOKED_URL: "" })
       .nothrow()
       .quiet()
     expect(p.exitCode).toBe(1)
