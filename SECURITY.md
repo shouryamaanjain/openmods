@@ -29,7 +29,7 @@ These are checks on the process, not a guarantee about intent. A malicious patch
 
 ## The launcher and updates
 
-The launcher only starts your build: nothing runs in the background, and `openmods` builds or installs nothing you did not ask for. Updates happen only with `openmods update`, and only ever move a mod to a release where CI has checked that it applies and typechecks. Every `openmods` command you run, `help` aside, fetches the list of removed mods (below); a build that has one stops running it.
+The launcher only starts your build: nothing runs in the background, and `openmods` builds or installs nothing you did not ask for. Updates happen only with `openmods update`, and only ever move a mod to a release where CI has checked that it applies and typechecks. Every `openmods` command you run, other than asking for help (`help`, `--help`), fetches the list of removed mods (below); a build that has one stops running it.
 
 ## Reporting a problem
 
@@ -44,7 +44,7 @@ Other problems with a mod go in an issue that names it; its maintainers are list
 A maintainer revokes a mod, or some of its updates, by listing it in `revoked.json` in the registry with the reason. From then on:
 
 - `openmods install`, `on` and `update` refuse to build it.
-- On machines that already have it, the next `openmods` command (any but `help`) replaces the launcher: every launch says the mod was removed and why, and starts the stock harness instead of the modded build. `openmods on` refuses to switch the build back on.
+- On machines that already have it, the next `openmods` command, other than asking for help, replaces the launcher: every launch says the mod was removed and why, and starts the stock harness instead of the modded build. `openmods on` refuses to switch the build back on.
 - `openmods uninstall <owner>/<mod>` removes it, even after the mod's folder is gone from the registry.
 
 A problem with a modded build that does not happen in your stock harness (`openmods off`) belongs here too, not with the harness's own project.

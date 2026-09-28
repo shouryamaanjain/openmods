@@ -2191,7 +2191,7 @@ async function cmdCheck() {
   if (result.unchecked || result.applies !== true || (has("typecheck") && result.typechecks !== true) || (has("build") && result.builds !== true)) process.exit(1)
 }
 
-// Every command but help and registry keeps the launchers current and stops a
+// Every command (asking for help aside) keeps the launchers current and stops a
 // revoked mod; nothing does this in the background. Launchers from before
 // that run \`openmods check-updates\` once a day, which now only does this,
 // offline, and so replaces them with the launcher that just starts the build.
@@ -2331,8 +2331,10 @@ if (cmd === "help" && positional[1]) {
 } else if (commands[cmd]) {
   if (has("help")) console.log(commandHelp(cmd) ?? helpText())
   else {
-    // `registry` shows where things are, even with a damaged checkout.
-    if (cmd !== "registry") await keepCurrent(cmd !== "check-updates")
+    // `registry` shows where things are even when the check cannot run,
+    // with a damaged checkout for one.
+    if (cmd === "registry") await keepCurrent(true).catch(() => {})
+    else await keepCurrent(cmd !== "check-updates")
     await commands[cmd]!()
   }
 } else {

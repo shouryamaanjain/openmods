@@ -254,7 +254,7 @@ export const FILES: Flag[] = [
   { flag: "~/.openmods/logs/", description: "The output of recent builds, one file each, for when a build fails." },
   { flag: "~/.openmods/timings.json", description: "How long each build step took here, for the time left." },
   { flag: "~/.openmods/local/<owner>/<mod>", description: "Your own unpublished mods, laid out like the registry." },
-  { flag: "~/.openmods/revoked.json", description: "The last list of mods removed from OpenMods, fetched on every command you run but `help`. A build with one of them no longer runs." },
+  { flag: "~/.openmods/revoked.json", description: "The last list of mods removed from OpenMods, fetched on every command you run, other than asking for help. A build with one of them no longer runs." },
   { flag: "~/.openmods/dev.json", description: "Which clone `openmods dev` runs, per harness." },
   { flag: "~/.openmods/state.json", description: "What is installed, and on, per harness." },
 ]
