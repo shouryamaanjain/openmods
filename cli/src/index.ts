@@ -7,7 +7,7 @@
 // The stock install of the harness is never touched.
 
 import { $ } from "bun"
-import { cpSync, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
+import { cpSync, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { cpus, homedir, tmpdir, totalmem } from "node:os"
 import path from "node:path"
 import { footprint, incompatibility as whyNot, type Footprint } from "./overlap"
@@ -410,7 +410,7 @@ function revokedIn(reg: string, harness: string, e: State[string]) {
 // the stock harness instead, until the mod is uninstalled. Returns what to say.
 function stopRevoked(h: Harness, e: State[string], bad: { id: string; reason: string }[]) {
   const launcher = path.join(BIN, h.binary)
-  if (e.enabled && existsSync(launcher)) writeFileSync(launcher, revokedLauncherOf(h, bad, stockBinary(h)), { mode: 0o755 })
+  if (e.enabled && existsSync(launcher)) writeScript(launcher, revokedLauncherOf(h, bad, stockBinary(h)))
   return `${bad.map((b) => `${b.id} was removed from OpenMods: ${b.reason}`).join(" ")} \`openmods uninstall ${bad.map((b) => b.id).join(" ")}\` removes it.`
 }
 
@@ -1017,18 +1017,20 @@ function argsOf(h: Harness) {
 
 function launcherOf(h: Harness, artifact: string) {
   const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
-  const cli = Bun.which("openmods") ?? `${process.execPath} ${path.resolve(import.meta.path)}`
+  // The openmods of this home, else the CLI writing this.
+  const own = path.join(BIN, "openmods")
+  const cli = (existsSync(own) ? [own] : [process.execPath, path.resolve(import.meta.path)]).map(q).join(" ")
   return `#!/bin/sh
 # openmods launcher for ${h.binary}. \`openmods off\` makes it start the stock ${h.name}, which is untouched.
 HARNESS=${h.id}
 SELF=${q(path.join(BIN, h.binary))}
-CLI=${JSON.stringify(cli)}
 NOTE=${q(path.join(HOME, "updates", h.id))}
+openmods() { ${cli} "$@"; }
 
 # Only at a terminal. (OPENMODS_ASSUME_TTY=1 lets tests drive it without one.)
 if { [ -t 0 ] && [ -t 1 ]; } || [ -n "$OPENMODS_ASSUME_TTY" ]; then
   # Look for news for next time, in the background.
-  [ -z "$OPENMODS_NO_CHECK" ] && ( $CLI check-updates "$HARNESS" >/dev/null 2>&1 & )
+  [ -z "$OPENMODS_NO_CHECK" ] && ( openmods check-updates "$HARNESS" >/dev/null 2>&1 & )
   KEY= ASK= MESSAGE= ESTIMATE=
   [ -f "$NOTE" ] && . "$NOTE"
   if [ -n "$KEY" ] && ! grep -qxF "$KEY" "$NOTE.seen" 2>/dev/null; then
@@ -1041,7 +1043,7 @@ if { [ -t 0 ] && [ -t 1 ]; } || [ -n "$OPENMODS_ASSUME_TTY" ]; then
         y|Y|yes|YES)
           # The update replaces this launcher and the old build, so start
           # again from the new launcher.
-          if $CLI update "$HARNESS"; then exec "$SELF" "$@"; else
+          if openmods update "$HARNESS"; then exec "$SELF" "$@"; else
             printf '%s\n' "Update failed; starting your current build. \"openmods update $HARNESS\" tries again."
           fi ;;
         *) printf '%s\n' "Not now. You will not be asked about this again; \"openmods update\" does it any time." ;;
@@ -1088,7 +1090,7 @@ function refreshLauncher(reg: string, h: Harness, e: State[string] | undefined) 
   if (dev) {
     if (dev.toolchain === undefined || !h.dev) return
     const want = devLauncherOf(h, dev.path, dev.version, dev.toolchain)
-    if (readFileSync(launcher, "utf8") !== want) writeFileSync(launcher, want, { mode: 0o755 })
+    if (readFileSync(launcher, "utf8") !== want) writeScript(launcher, want)
     return
   }
   if (!e?.enabled || !e.artifact || revokedIn(reg, h.id, e).length) return
@@ -1136,6 +1138,7 @@ function switchOn(h: Harness, artifact: string) {
 
 function switchOff(h: Harness) {
   endDev(h)
+  rmSync(path.join(HOME, "updates", h.id), { force: true })
   writeLauncher(h, stockLauncherOf(h))
 }
 
@@ -1146,9 +1149,15 @@ const LAUNCHERS_SINCE = path.join(HOME, "launchers.json")
 function writeLauncher(h: Harness, script: string) {
   mkdirSync(BIN, { recursive: true })
   const target = path.join(BIN, h.binary)
-  if (existsSync(target)) unlinkSync(target)
-  else writeFileSync(LAUNCHERS_SINCE, JSON.stringify({ ...launchersSince(), [h.binary]: Date.now() }) + "\n")
-  writeFileSync(target, script, { mode: 0o755 })
+  if (!existsSync(target)) writeFileSync(LAUNCHERS_SINCE, JSON.stringify({ ...launchersSince(), [h.binary]: Date.now() }) + "\n")
+  writeScript(target, script)
+}
+// A launcher is written whole and moved into place: a launch, or a background
+// look in another terminal, never finds it missing or half written.
+function writeScript(file: string, script: string) {
+  const tmp = `${file}.${process.pid}`
+  writeFileSync(tmp, script, { mode: 0o755 })
+  renameSync(tmp, file)
 }
 const launchersSince = (): Record<string, number> => {
   try {
@@ -1757,7 +1766,7 @@ async function cmdStatus() {
     for (const m of e.off) log(`          ${m} is off (openmods on ${m} --${id})`)
     log(`  stock   ${stock ? `${(await versionOf(stock)) ?? "?"}  ${pretty(stock)}` : "not found on PATH"}`)
     for (const b of revokedIn(reg, id, e)) log(`  removed ${b.id} was removed from OpenMods: ${b.reason} \`openmods uninstall ${b.id}\``)
-    const note = readNote(id)
+    const note = e.enabled ? readNote(id) : null
     if (note?.MESSAGE) log(`  news    ${note.MESSAGE}${note.ASK === "1" ? ` \`openmods update ${id}\` does it.` : ""}`)
     if (e.enabled && !onPath) log(`  note    ${pretty(BIN)} is not on PATH in this shell; open a new terminal or run: export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"`)
     else if (e.enabled && !reaches && first) log(`  note    in this terminal \`${h.binary}\` finds ${pretty(first)} first; run: export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"`)
@@ -1900,7 +1909,7 @@ async function cmdDev() {
       // launcher is the one that warns and starts the stock harness.
       const bad = e ? revokedIn(reg, id, e) : []
       if (e?.enabled && bad.length) {
-        writeFileSync(path.join(BIN, h.binary), revokedLauncherOf(h, bad, stockBinary(h)), { mode: 0o755 })
+        writeScript(path.join(BIN, h.binary), revokedLauncherOf(h, bad, stockBinary(h)))
         log(`${bad.map((b) => `${b.id} was removed from OpenMods: ${b.reason}`).join(" ")} \`${h.binary}\` runs your stock ${h.name}; \`openmods uninstall ${bad.map((b) => b.id).join(" ")}\` removes it.`)
       } else if (e?.enabled && e.artifact && existsSync(e.artifact)) {
         switchOn(h, e.artifact)
@@ -1934,7 +1943,7 @@ async function cmdDev() {
   d[h.id] = { path: clone, version, toolchain }
   saveDev(d)
   mkdirSync(BIN, { recursive: true })
-  writeFileSync(path.join(BIN, h.binary), devLauncherOf(h, clone, version, toolchain), { mode: 0o755 })
+  writeScript(path.join(BIN, h.binary), devLauncherOf(h, clone, version, toolchain))
   const back = state[h.id]?.enabled ? "your modded build" : `your stock ${h.name}`
   log("")
   log(`\`${h.binary}\` now runs your clone at ${pretty(clone)} from source, as ${h.name} ${version}.`)
@@ -2264,7 +2273,9 @@ async function cmdCheckUpdates() {
   const reg = await ensureRegistry()
   const state = loadState()
   const index = await fetchIndex(reg)
-  for (const id of positional[1] ? [positional[1]] : Object.keys(state)) {
+  const known = allHarnesses(reg).map((h) => h.id)
+  if (positional[1] && !known.includes(positional[1])) fail(`unknown harness "${positional[1]}". Known: ${known.join(", ")}.`)
+  for (const id of positional[1] ? [positional[1]] : Object.keys(state).filter((x) => known.includes(x))) {
     const e = state[id]
     const file = path.join(HOME, "updates", id)
     // Nothing to say for a harness without mods, one running a dev clone, or
@@ -2279,6 +2290,9 @@ async function cmdCheckUpdates() {
       rmSync(file, { force: true })
       continue
     }
+    // A build that started or finished while this looked makes the news
+    // stale: the next look says what is true then.
+    if (existsSync(path.join(HOME, "harnesses", id, "build.lock")) || JSON.stringify(loadState()[id]) !== JSON.stringify(e)) continue
     const took = lastRebuild(path.join(HOME, "timings.json"), id)
     // The launcher sources this file, so every value is single-quoted; written
     // whole and then moved into place, since a launcher may read it meanwhile.
@@ -2292,10 +2306,15 @@ async function cmdCheckUpdates() {
 
 /** The launcher's note for a harness, as check-updates left it. */
 function readNote(id: string): Record<string, string> | null {
-  const file = path.join(HOME, "updates", id)
-  if (!existsSync(file)) return null
+  let text: string
+  try {
+    // A background look may remove it at any moment.
+    text = readFileSync(path.join(HOME, "updates", id), "utf8")
+  } catch {
+    return null
+  }
   const out: Record<string, string> = {}
-  for (const line of readFileSync(file, "utf8").split("\n")) {
+  for (const line of text.split("\n")) {
     const m = /^([A-Z_]+)=(.*)$/.exec(line)
     if (m) out[m[1]!] = m[2]!.replace(/^'|'$/g, "").replaceAll("'\\''", "'")
   }
@@ -2307,7 +2326,7 @@ function readNote(id: string): Record<string, string> | null {
 // official registry only; OPENMODS_INDEX_URL names another, and set empty
 // makes the registry checkout the source, as it is for any other registry.
 type IndexMod = { id: string; harnesses: Record<string, { releases: { release: string; update: number }[] }> }
-type LiveIndex = { harnesses: { id: string; latest: string }[]; mods: IndexMod[] }
+type LiveIndex = { harnesses: { id: string; latest: string }[]; mods: IndexMod[]; base?: Record<string, { release: string; update: number }[]> }
 async function fetchIndex(reg: string): Promise<LiveIndex | null> {
   let url = process.env.OPENMODS_INDEX_URL
   if (url === undefined && reg === path.join(HOME, "registry")) {
@@ -2332,27 +2351,42 @@ async function fetchIndex(reg: string): Promise<LiveIndex | null> {
  * the registry checkout; a local mod always from its own folder.
  */
 function newsFor(reg: string, h: Harness, e: State[string], index: LiveIndex | null) {
-  const active = e.mods.filter((m) => !e.off.includes(m))
-  const releasesOf = (id: string): { release: string; update: number }[] => {
+  type Rel = { release: string; update: number }
+  const mods = listMods(reg, h.id)
+  const releasesOf = (id: string): Rel[] => {
     // A local mod is read from its own folder; a published one from the live list.
-    const m = findMod(reg, id, h.id)
-    const live = index?.mods.find((x) => x.id === id)?.harnesses[h.id]?.releases
+    const m = mods.find((x) => x.id === id)
+    const live = id === BASE_ID ? index?.base?.[h.id] : index?.mods.find((x) => x.id === id)?.harnesses[h.id]?.releases
     if (live && m?.source !== "local") return live
     return m ? m.versions.map((v) => ({ release: rel(v.ref), update: v.update ?? 1 })) : []
   }
-  const all = active.map((id) => ({ id, releases: releasesOf(id) }))
+  const shared = (list: { releases: Rel[] }[]) =>
+    newestFirst(list.reduce<string[]>((acc, m, i) => (i === 0 ? m.releases.map((r) => r.release) : acc.filter((r) => m.releases.some((x) => x.release === r))), []))[0]
+  const active = e.mods.filter((m) => !e.off.includes(m)).map((id) => ({ id, releases: releasesOf(id) }))
+  // As \`openmods update\` picks: with the base patch when it shares a release with the mods.
+  const base = { id: BASE_ID, releases: releasesOf(BASE_ID) }
+  const withBase = base.releases.length && shared([base, ...active]) ? [base, ...active] : active
   const current = rel(e.ref)
-  const shared = newestFirst(all.reduce<string[]>((acc, m, i) => (i === 0 ? m.releases.map((r) => r.release) : acc.filter((r) => m.releases.some((x) => x.release === r))), []))[0]
-  const moveTo = shared && newerRelease(shared, current) ? shared : ""
+  const newest = shared(withBase)
+  const moveTo = newest && newerRelease(newest, current) ? newest : ""
   const target = moveTo || current
-  const fixes = all.flatMap((m) => {
+  const fixes = withBase.flatMap((m) => {
     const have = e.updates[m.id]
     const at = m.releases.find((r) => r.release === target)
     return have !== undefined && at && at.update > have ? [{ id: m.id, update: at.update }] : []
   })
-  const known = [index?.harnesses.find((x) => x.id === h.id)?.latest ?? "", ...all.flatMap((m) => m.releases.map((r) => r.release))].filter(Boolean)
+  // The newest release known: the live list's, else the one the release
+  // watch last checked, and any a mod has a version for.
+  const watched = (() => {
+    try {
+      return readJsonFile(path.join(reg, "status", `${h.id}.json`)).tested as string | undefined
+    } catch {
+      return undefined
+    }
+  })()
+  const known = [index?.harnesses.find((x) => x.id === h.id)?.latest ?? "", watched ? rel(watched) : "", ...withBase.flatMap((m) => m.releases.map((r) => r.release))].filter(Boolean)
   const latest = newestFirst([current, ...known])[0]!
-  const held = newerRelease(latest, target) ? all.filter((m) => !m.releases.some((r) => r.release === latest)).map((m) => m.id) : []
+  const held = newerRelease(latest, target) ? withBase.filter((m) => !m.releases.some((r) => r.release === latest)).map((m) => m.id) : []
   const heldSaid = held.length ? `${h.name} ${latest} is out, but ${held.map(shown).join(", ")} ${held.length === 1 ? "has" : "have"} no version for it yet.` : ""
   const fixesSaid = fixes.map((f) => `${shown(f.id)} update ${f.update}`).join(", ")
   const ask = !!moveTo || fixes.length > 0

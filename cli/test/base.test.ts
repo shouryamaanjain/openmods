@@ -5,7 +5,7 @@
 import { beforeAll, describe, expect, test } from "bun:test"
 import { readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { cli, createHarness, createMod, greeting, sandbox, script, setGreeting, setLine, SITE } from "./harness"
+import { addFile, addVersion, cli, createHarness, createMod, greeting, release, sandbox, script, setGreeting, setLine, SITE } from "./harness"
 
 const sb = sandbox("base")
 const state = () => JSON.parse(readFileSync(path.join(sb.om, "state.json"), "utf8")).fake
@@ -64,5 +64,13 @@ describe("the base patch", () => {
     const out = path.join(sb.T, "site")
     expect((await script(sb, SITE, "--registry", sb.reg, "--out", out, "--offline")).code).toBe(0)
     expect(readFileSync(path.join(out, "index.html"), "utf8")).not.toContain("openmods/base")
+  })
+  test("the launcher's news counts it as update does: a release it has no version for is held back, not offered", async () => {
+    await release(sb, "v1.1.0", addFile("CHANGELOG.md", "1.1.0\n"))
+    await addVersion(sb, path.join(sb.reg, "mods", "t", "friendly", "fake"), "v1.1.0")
+    const r = await cli(sb, "check-updates", "fake", "--json")
+    expect(JSON.parse(r.out)).toMatchObject({ ask: false, held: ["openmods/base"], latest: "1.1.0" })
+    expect(readFileSync(path.join(sb.om, "updates", "fake"), "utf8")).toContain("Fake 1.1.0 is out, but the OpenMods base patch has no version for it yet. You stay on 1.0.0.")
+    expect((await cli(sb, "update", "fake")).out).toContain("already up to date")
   })
 })
