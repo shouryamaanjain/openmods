@@ -23,7 +23,6 @@ async function launch(answer = "", opts: { look?: boolean; script?: boolean; ind
       OPENMODS_HOME: sb.om,
       OPENMODS_REGISTRY: sb.reg,
       OPENMODS_REVOKED_URL: "",
-      OPENMODS_INDEX_URL: opts.index ?? "",
       ...(opts.script ? {} : { OPENMODS_ASSUME_TTY: "1" }),
       ...(opts.look ? {} : { OPENMODS_NO_CHECK: "1" }),
     },
@@ -105,23 +104,12 @@ describe("the launcher's heads-up", () => {
     await look()
     expect((await launch("")).out).not.toContain("is out")
   })
-  test("news comes from the live mods list when there is one, not from the registry copy", async () => {
-    const server = Bun.serve({
-      port: 0,
-      fetch: () =>
-        Response.json({
-          harnesses: [{ id: "fake", latest: "1.3.0" }],
-          mods: [
-            { id: "t/friendly", harnesses: { fake: { releases: [{ release: "1.3.0", update: 2 }, { release: "1.1.0", update: 2 }] } } },
-            { id: "t/notes", harnesses: { fake: { releases: [{ release: "1.3.0", update: 1 }, { release: "1.1.0", update: 1 }] } } },
-          ],
-        }),
-    })
-    const r = await run(sb, { env: { OPENMODS_INDEX_URL: `http://localhost:${server.port}/index.json` } }, "check-updates", "fake")
-    server.stop()
-    expect(r.code, r.err).toBe(0)
-    expect(readFileSync(note(), "utf8")).toContain("Fake 1.3.0 is out, and all your mods support it.")
-    // A rebuild was timed here (the update above), so the question says how long one takes.
+  test("the question says how long a rebuild takes once one was timed", async () => {
+    const work = path.join(sb.T, "work-friendly")
+    writeFileSync(path.join(work, "greet.sh"), "#!/bin/sh\necho hello from friendly, update 3\n")
+    await git(work, "commit", "-qam", "fix: friendlier still")
+    await cli(sb, "pack", work, "--name", "friendly", "--owner", "t", "--harness", "fake", "--force")
+    await look()
     expect((await launch("n\n")).out).toContain("Update now? It rebuilds Fake (under a minute). [y/N]")
   })
   test("news says nothing about a build switched off, and a name that is not a harness is refused", async () => {

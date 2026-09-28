@@ -8,7 +8,7 @@
 import { beforeAll, describe, expect, test } from "bun:test"
 import { appendFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { addFile, createHarness, createMod, git, sandbox } from "./harness"
+import { addFile, addVersion, createHarness, createMod, git, release, sandbox } from "./harness"
 
 const sb = sandbox("live-list")
 const REPO = path.resolve(import.meta.dir, "../..")
@@ -25,12 +25,14 @@ const env = () => ({
   OPENMODS_HOME: sb.om,
   OPENMODS_REGISTRY: `file://${sb.reg}`,
   OPENMODS_REVOKED_URL: "",
-  OPENMODS_INDEX_URL: "",
   OPENMODS_NO_CHECK: "1",
   TMPDIR: sb.tmp,
 })
 async function sh(...a: string[]) {
-  const p = Bun.spawn(["sh", ...a], { env: env(), stdout: "pipe", stderr: "pipe", stdin: "ignore" })
+  return shWith({}, ...a)
+}
+async function shWith(extra: Record<string, string>, ...a: string[]) {
+  const p = Bun.spawn(["sh", ...a], { env: { ...env(), ...extra }, stdout: "pipe", stderr: "pipe", stdin: "ignore" })
   const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()])
   return { code: await p.exited, out, err, all: out + err }
 }
@@ -82,6 +84,27 @@ describe("the mods list", () => {
     expect(r.out).toContain("t/fresh")
     expect(() => JSON.parse(j.out)).not.toThrow()
     expect(j.err).toContain("could not update the mods list")
+  })
+})
+
+describe("one source of mods data", () => {
+  test("the launcher's background look pulls the mods list, so it sees a release published since", async () => {
+    await release(sb, "v1.1.0", addFile("CHANGELOG.md", "1.1.0\n"))
+    await addVersion(sb, path.join(sb.reg, "mods", "t", "fresh", "fake"), "v1.1.0")
+    await commit("t/fresh for 1.1.0")
+    expect((await openmods("check-updates", "fake")).code).toBe(0)
+    expect(readFileSync(path.join(sb.om, "updates", "fake"), "utf8")).toContain("Fake 1.1.0 is out, and all your mods support it.")
+  })
+  test("commands that pull get the removed-mods list with the pull; the others fetch it on their own", async () => {
+    let hits = 0
+    const server = Bun.serve({ port: 0, fetch: () => (hits++, Response.json({ revoked: [] })) })
+    const url = { OPENMODS_REVOKED_URL: `http://localhost:${server.port}/revoked.json` }
+    await shWith(url, wrapper(), "list")
+    await shWith(url, wrapper(), "info", "t/fresh")
+    expect(hits).toBe(0)
+    await shWith(url, wrapper(), "status")
+    expect(hits).toBe(1)
+    server.stop()
   })
 })
 
