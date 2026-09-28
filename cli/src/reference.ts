@@ -96,7 +96,7 @@ export const COMMANDS: Command[] = [
     usage: "openmods status",
     summary: "Which build your command runs right now, per harness.",
     description: [
-      "Shows the modded build (release plus mods, on or off), the stock binary it would fall back to, any mod that is installed but built out, a clone running with `openmods dev`, and a mod removed from OpenMods. Says so if this terminal would not run the launcher: ~/.openmods/bin is not on PATH, or another build comes first.",
+      "Shows the modded build (release plus mods, on or off), the stock binary it would fall back to, any mod that is installed but built out, a clone running with `openmods dev`, a mod removed from OpenMods, and any news the launcher found (an update waiting, or a release some mods hold back). Says so if this terminal would not run the launcher: ~/.openmods/bin is not on PATH, or another build comes first.",
     ],
     flags: [{ flag: "--json", description: "The state file as JSON, with any dev clones." }],
     examples: [{ command: "openmods status" }],
@@ -129,7 +129,7 @@ export const COMMANDS: Command[] = [
     usage: "openmods update [harness]",
     summary: "Pull the registry and rebuild if anything you have installed changed.",
     description: [
-      "Moves you to the newest release that every mod you have on has a version for, using each mod's version for it. The registry's release check adds those versions when a mod still applies and typechecks on a new harness release. A rebuild happens only when that release, or a mod's patches for it, changed; otherwise it says the build is already up to date. When a newer release is out but some of your mods have no version for it yet, it names them. This is the only way OpenMods updates: nothing checks or updates in the background.",
+      "Moves you to the newest release that every mod you have on has a version for, using each mod's version for it. The registry's release check adds those versions when a mod still applies and typechecks on a new harness release. A rebuild happens only when that release, or a mod's patches for it, changed; otherwise it says the build is already up to date. When a newer release is out but some of your mods have no version for it yet, it names them. The launcher tells you when an update is waiting and runs this on a yes.",
     ],
     flags: [{ flag: "--force", description: "Rebuild even if nothing changed." }],
     examples: [{ command: "openmods update" }, { command: "openmods update codex --force" }],
@@ -236,6 +236,8 @@ export const GLOBAL_FLAGS: Flag[] = [
 export const ENVIRONMENT: Flag[] = [
   { flag: "OPENMODS_HOME", description: "Where everything lives. Default ~/.openmods." },
   { flag: "OPENMODS_REGISTRY", description: "A registry checkout, same as --registry; or the git URL ~/.openmods/registry is cloned from on first use." },
+  { flag: "OPENMODS_NO_CHECK=1", description: "The launcher does not look for news in the background. `openmods update` still updates." },
+  { flag: "OPENMODS_INDEX_URL", description: "The live mods list the launcher reads for news. Default: openmods.dev/index.json for the official registry. Empty: the registry checkout instead." },
   { flag: "OPENMODS_REVOKED_URL", description: "Where to fetch the list of mods removed from OpenMods. Default: revoked.json of the registry openmods cloned, else the official one. Empty: no fetch; the registry checkout's own list is used." },
   { flag: "CARGO_BUILD_JOBS", description: "Rust build jobs at once. Default: one per 2.5 GB of memory, at most one per CPU." },
   { flag: "NO_COLOR, CI", description: "No colour; with CI set, build output streams as it is instead of the progress view." },
@@ -252,8 +254,9 @@ export const FILES: Flag[] = [
   { flag: "~/.openmods/toolchains/", description: "The Bun the CLI runs on, and the exact toolchain each harness release pins." },
   { flag: "~/.openmods/cache/", description: "Bun's package and transpiler caches. Safe to delete." },
   { flag: "~/.openmods/logs/", description: "The output of recent builds, one file each, for when a build fails." },
-  { flag: "~/.openmods/timings.json", description: "How long each build step took here, for the time left." },
+  { flag: "~/.openmods/timings.json", description: "How long each build step took here, for the time left and the update question." },
   { flag: "~/.openmods/local/<owner>/<mod>", description: "Your own unpublished mods, laid out like the registry." },
+  { flag: "~/.openmods/updates/<id>", description: "What the launcher's last look found, shown on the next start; <id>.seen lists what it has already said." },
   { flag: "~/.openmods/revoked.json", description: "The last list of mods removed from OpenMods, fetched on every command you run, other than asking for help. A build with one of them no longer runs." },
   { flag: "~/.openmods/dev.json", description: "Which clone `openmods dev` runs, per harness." },
   { flag: "~/.openmods/state.json", description: "What is installed, and on, per harness." },
