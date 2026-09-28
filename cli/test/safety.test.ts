@@ -268,3 +268,19 @@ describe("the list of removed mods, on a first install", () => {
     expect(r.err).toContain("t/early was removed from OpenMods: It deletes your files.")
   })
 })
+
+describe("status and a removed mod", () => {
+  const box = sandbox("safety-status")
+  test("fails, and says why, when the removed mod's launcher cannot be replaced", async () => {
+    await createHarness(box)
+    await createMod(box, "friendly", setGreeting("hello from friendly"))
+    expect((await cli(box, "install", "t/friendly")).code).toBe(0)
+    writeFileSync(path.join(box.reg, "revoked.json"), JSON.stringify({ revoked: [{ id: "t/friendly", reason: "It sends your files to a server." }] }))
+    // A folder where the launcher is: nothing can be written there, whoever runs it.
+    const launcherPath = path.join(box.om, "bin", "greet")
+    rmSync(launcherPath)
+    mkdirSync(path.join(launcherPath, "blocked"), { recursive: true })
+    const r = await cli(box, "status")
+    expect(r.code).not.toBe(0)
+  })
+})

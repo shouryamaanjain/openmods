@@ -2003,7 +2003,8 @@ async function cmdStatus() {
   try {
     state = loadState()
   } catch (e) {
-    log(`${pretty(statePath)} cannot be read (${e instanceof Error ? e.message : String(e)}), so what is installed is not known.`)
+    // On stderr, so --json output stays empty and still says why.
+    console.error(`error: ${pretty(statePath)} cannot be read (${e instanceof Error ? e.message : String(e)}), so what is installed is not known.`)
     whereFrom(reg)
     process.exit(1)
   }
@@ -2501,7 +2502,14 @@ async function keepCurrent(fetchRevoked: boolean) {
     known = (await pulled!) && registryListReadable(reg)
   }
   if (!known) known = await fetchRevocations(reg, !fetchRevoked)
-  const state = loadState()
+  let state: State
+  try {
+    state = loadState()
+  } catch (e) {
+    // status reports a state file it cannot read itself; nothing else goes on.
+    if (positional[0] === "status") return
+    throw e
+  }
   for (const [id, e] of Object.entries(state)) {
     if (!existsSync(path.join(reg, "harnesses", `${id}.json`))) continue
     const h = loadHarness(reg, id)
@@ -2746,9 +2754,7 @@ if (cmd === "help" && positional[1]) {
       }
     }
     if (cmd !== "check-updates") markBusy()
-    // status says what it can even when the check cannot run.
-    if (cmd === "status") await keepCurrent(true).catch(() => {})
-    else await keepCurrent(true)
+    await keepCurrent(true)
     await commands[cmd]!()
   }
 } else {
