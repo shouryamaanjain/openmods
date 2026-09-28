@@ -66,7 +66,7 @@ export const COMMANDS: Command[] = [
     ],
     flags: [
       { flag: "--no-path", description: "Do not edit your shell config to put ~/.openmods/bin on PATH." },
-      { flag: "--yes", description: "Answer yes to its questions (another release, ending dev mode), for scripts; without a terminal and without --yes, it stops at a question and changes nothing." },
+      { flag: "--yes", description: "Answer yes to its questions (another release, ending dev mode, running a missing harness's official installer), for scripts; without a terminal and without --yes, it stops at a question and changes nothing. On several harnesses, every question comes before any build." },
       { flag: "--name <mod>", description: "With a clone: the local mod's name, instead of the branch name." },
       { flag: "--owner <you>", description: "With a clone: your GitHub handle, when git's github.user and the GitHub CLI do not say." },
       { flag: "--registry <dir>", description: "Use another registry checkout." },

@@ -104,6 +104,9 @@ export class Progress {
     }
   }
 
+  /** The step that ran last, or is running: after a failure, the one that failed. */
+  lastStep: string | undefined
+
   get running() {
     return this.step !== undefined
   }
@@ -118,6 +121,7 @@ export class Progress {
     // several times as long as a rebuild.
     const key = this.first ? `${name}:first` : name
     this.step = { name, start: Date.now(), expect: loadTimings(this.timings)[this.harness]?.[key], output: false }
+    this.lastStep = name
     this.carry = ""
     this.recent = ""
     this.errors = []
