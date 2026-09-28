@@ -59,6 +59,8 @@ describe("the installer", () => {
     expect(lstatSync(copy()).isSymbolicLink()).toBe(true)
     expect(readFileSync(path.join(copy(), ".version"), "utf8")).toMatch(/^0\.1\.0 \([0-9a-f]+\)$/m)
     expect(readFileSync(wrapper(), "utf8")).toContain('"$OM/cli/src/index.ts"')
+    // status names the version running: the installed copy's.
+    expect((await openmods("status")).out).toMatch(/openmods {3}0\.1\.0 \([0-9a-f]+\), home /)
   })
 })
 

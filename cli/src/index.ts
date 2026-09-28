@@ -1998,7 +1998,15 @@ async function cmdUninstall() {
 
 async function cmdStatus() {
   const reg = await ensureRegistry()
-  const state = loadState()
+  // A state file that cannot be read still leaves where things are to say.
+  let state: State
+  try {
+    state = loadState()
+  } catch (e) {
+    log(`${pretty(statePath)} cannot be read (${e instanceof Error ? e.message : String(e)}), so what is installed is not known.`)
+    whereFrom(reg)
+    process.exit(1)
+  }
   const dev = loadDev()
   if (has("json")) {
     const out: Record<string, unknown> = { ...state }
@@ -2040,15 +2048,17 @@ async function cmdStatus() {
   whereFrom(reg)
 }
 
-// Where the mods list and OpenMods itself come from, at the end of status.
+// Where the mods list and OpenMods itself come from, at the end of status:
+// the version of the program running now, which an installed copy records
+// beside its code; a checkout has none.
 function whereFrom(reg: string) {
   let version = ""
   try {
-    version = readFileSync(path.join(CLI_DIR, ".version"), "utf8").trim()
+    version = readFileSync(path.join(import.meta.dir, "..", ".version"), "utf8").trim()
   } catch {}
   log("")
   log(`mods list  ${pretty(reg)}${reg === path.join(HOME, "registry") ? "" : " (a registry checkout)"}`)
-  log(`openmods   ${version || "run from a checkout"}, in ${pretty(HOME)}`)
+  log(`openmods   ${version || `run from ${pretty(path.resolve(import.meta.dir, "..", ".."))}`}, home ${pretty(HOME)}`)
 }
 
 // \`on\`/\`off\` switch a harness's command between its modded build and the
@@ -2736,7 +2746,9 @@ if (cmd === "help" && positional[1]) {
       }
     }
     if (cmd !== "check-updates") markBusy()
-    await keepCurrent(true)
+    // status says what it can even when the check cannot run.
+    if (cmd === "status") await keepCurrent(true).catch(() => {})
+    else await keepCurrent(true)
     await commands[cmd]!()
   }
 } else {

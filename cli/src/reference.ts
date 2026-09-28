@@ -94,7 +94,7 @@ export const COMMANDS: Command[] = [
     usage: "openmods status",
     summary: "Which build your command runs right now, per harness.",
     description: [
-      "Shows the modded build (release plus mods, on or off), the stock binary it would fall back to, any mod that is installed but built out, a clone running with `openmods dev`, a mod removed from OpenMods, and any news the launcher found (an update waiting, or a release some mods hold back). Says so if this terminal would not run the launcher: ~/.openmods/bin is not on PATH, or another build comes first. Ends with where the mods list comes from and which OpenMods this is.",
+      "Shows the modded build (release plus mods, on or off), the stock binary it would fall back to, any mod that is installed but built out, a clone running with `openmods dev`, a mod removed from OpenMods, and any news the launcher found (an update waiting, or a release some mods hold back). Says so if this terminal would not run the launcher: ~/.openmods/bin is not on PATH, or another build comes first. Ends with where the mods list comes from and which OpenMods is running: its version, or the checkout it runs from. With a state file that cannot be read, it still says those.",
     ],
     flags: [{ flag: "--json", description: "The state file as JSON, with any dev clones." }],
     examples: [{ command: "openmods status" }],

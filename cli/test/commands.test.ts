@@ -1,7 +1,7 @@
 // The commands a user runs: install, status, on, off, uninstall, update.
 import { beforeAll, describe, expect, test } from "bun:test"
 import { $ } from "bun"
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { cli, createHarness, createMod, greeting, sandbox, setGreeting } from "./harness"
 
@@ -93,6 +93,34 @@ describe("the commands", () => {
   test("setup and check-updates still run, for the installer and the launcher", async () => {
     expect((await cli(sb, "setup")).code).toBe(0)
     expect((await cli(sb, "check-updates")).code).toBe(0)
+  })
+})
+
+describe("mods built out by an older openmods", () => {
+  test("stay listed as built out, and install builds one back in", async () => {
+    expect((await cli(sb, "install", "t/friendly")).code).toBe(0)
+    const file = path.join(sb.om, "state.json")
+    const state = JSON.parse(readFileSync(file, "utf8"))
+    // As \`openmods off t/friendly\` used to leave it, before it was rebuilt out.
+    state.fake.off = ["t/friendly"]
+    writeFileSync(file, JSON.stringify(state))
+    expect((await cli(sb, "status")).out).toContain("t/friendly is built out (openmods install t/friendly --fake builds it back in)")
+    const r = await cli(sb, "install", "t/friendly")
+    expect(r.code, r.all).toBe(0)
+    const after = JSON.parse(readFileSync(file, "utf8")).fake
+    expect(after.off).toEqual([])
+    expect(after.mods).toEqual(["t/friendly"])
+  })
+  test("a state file that cannot be read still gets where things come from", async () => {
+    const file = path.join(sb.om, "state.json")
+    const kept = readFileSync(file, "utf8")
+    writeFileSync(file, "{ damaged")
+    const r = await cli(sb, "status")
+    writeFileSync(file, kept)
+    expect(r.code).toBe(1)
+    expect(r.out).toContain("cannot be read")
+    expect(r.out).toContain("mods list  ")
+    expect(r.out).toMatch(/openmods {3}run from /)
   })
 })
 
