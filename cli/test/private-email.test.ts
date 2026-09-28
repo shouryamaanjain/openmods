@@ -55,20 +55,34 @@ describe("repacking a mod packed before this", () => {
 })
 
 describe("the scrubbing", () => {
-  test("reads the whole message, past a --- line in it, up to the diff", () => {
-    const patch = "From: A <a@example.com>\nSubject: x\n\nnotes\n---\nmore\n\nSigned-off-by: A <a@example.com>\n---\ndiff --git a/f b/f\n+x\n"
-    expect(emailsIn(patch)).toEqual(["a@example.com"])
-    expect(emailsIn(withPrivateEmails(patch, "t"))).toEqual([])
+  test("replaces the From line's and trailers' addresses, whatever they look like, up to the diff", () => {
+    const patch = [
+      "From: A <alice@1example.com>",
+      "Subject: x",
+      "",
+      "notes",
+      "---",
+      "more",
+      "",
+      "Signed-off-by: A <alice@intranet>",
+      "Co-authored-by: B <bob@bücher.de>",
+      "Reviewed-by: C <c@9.9.9.9>",
+      "Cc: D <d@users.noreply.github.com>",
+      "---",
+      "diff --git a/f b/f",
+      "+alice@example.com",
+      "",
+    ].join("\n")
+    expect(emailsIn(patch)).toEqual(["alice@1example.com", "alice@intranet", "bob@bücher.de", "c@9.9.9.9"])
+    const clean = withPrivateEmails(patch, "t")
+    expect(emailsIn(clean)).toEqual([])
+    expect(clean).toContain("From: A <t@users.noreply.github.com>")
+    expect(clean).toContain("Cc: D <d@users.noreply.github.com>")
+    expect(clean).toContain("+alice@example.com")
   })
-  test("finds addresses with a dotless or non-ASCII domain, not versions", () => {
-    const patch = "From: A <alice@intranet>\nSubject: x\n\nwith bob@bücher.de and carol@1example.com, see pkg@1.2.3\nCo-authored-by: D <d@9.9.9.9>\n---\ndiff --git a/f b/f\n"
-    expect(emailsIn(patch)).toEqual(["alice@intranet", "bob@bücher.de", "carol@1example.com", "d@9.9.9.9"])
-    expect(emailsIn(withPrivateEmails(patch, "t"))).toEqual([])
-    expect(withPrivateEmails(patch, "t")).toContain("see pkg@1.2.3")
-  })
-
-  test("leaves private addresses and everything after the header alone", () => {
-    const patch = "From: A <me@users.noreply.github.com>\nSubject: x\n\nsee me@site.io\n---\ndiff --git a/f b/f\n+me@site.io\n"
-    expect(withPrivateEmails(patch, "t")).toBe("From: A <me@users.noreply.github.com>\nSubject: x\n\nsee t@users.noreply.github.com\n---\ndiff --git a/f b/f\n+me@site.io\n")
+  test("leaves the rest of the message as written: links and versions are the author's text", () => {
+    const patch = "From: A <me@users.noreply.github.com>\nSubject: bump pkg@1.2.3-rc1\n\nSee <https://x.dev/u/alice@example.com?y@users.noreply.github.com> and <pkg@1.2.3-rc1>.\n---\ndiff --git a/f b/f\n"
+    expect(withPrivateEmails(patch, "t")).toBe(patch)
+    expect(emailsIn(patch)).toEqual([])
   })
 })
