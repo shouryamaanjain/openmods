@@ -38,12 +38,26 @@ export const clock = (ms: number) => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`
 }
 
+/** "about 2 min", or "under a minute", from seconds. */
+export const roughly = (seconds: number) => (seconds < 60 ? "under a minute" : `about ${Math.round(seconds / 60)} min`)
+
 export function loadTimings(file: string): Timings {
   try {
     return JSON.parse(readFileSync(file, "utf8"))
   } catch {
     return {}
   }
+}
+
+/**
+ * How long a rebuild of `harness` took here last time, all steps, in seconds;
+ * nothing unless every step of a rebuild was timed. A first build, several
+ * times longer, says nothing about a rebuild.
+ */
+export function lastRebuild(file: string, harness: string): number | undefined {
+  const t = loadTimings(file)[harness] ?? {}
+  const steps = ["Source", "Patches", "Dependencies", "Build"].map((s) => t[s])
+  return steps.some((s) => s === undefined) ? undefined : steps.reduce<number>((a, s) => a + s!, 0)
 }
 
 export class Progress {

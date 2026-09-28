@@ -205,7 +205,7 @@ describe("the list of removed mods, fetched on its own", () => {
     const r = await withUrl(url, "status")
     expect(r.out).toContain("t/later was removed from OpenMods")
   })
-  test("the daily call of an old launcher uses the last copy, offline", async () => {
+  test("the launcher's background look keeps a stopped build stopped when the list cannot be fetched", async () => {
     const r = await withUrl("http://127.0.0.1:9/never-fetched.json", "check-updates")
     expect(r.all).toBe("")
     expect((await withUrl(url, "check-updates")).all).toBe("")

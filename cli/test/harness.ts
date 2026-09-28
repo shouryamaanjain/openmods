@@ -53,6 +53,7 @@ export async function run(sb: Sandbox, opts: { answer?: string; env?: Record<str
       // No network: the list of removed mods comes only from the registry
       // checkout, unless a test names a URL.
       OPENMODS_REVOKED_URL: "",
+      OPENMODS_INDEX_URL: "",
       PATH: process.env.PATH ?? "",
       ...(opts.answer !== undefined ? { OPENMODS_ASSUME_TTY: "1" } : {}),
       ...opts.env,

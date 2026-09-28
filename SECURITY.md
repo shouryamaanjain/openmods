@@ -29,7 +29,7 @@ These are checks on the process, not a guarantee about intent. A malicious patch
 
 ## The launcher and updates
 
-The launcher only starts your build: nothing runs in the background, and `openmods` builds or installs nothing you did not ask for. Updates happen only with `openmods update`, and only ever move a mod to a release where CI has checked that it applies and typechecks. Every `openmods` command you run, other than asking for help (`help`, `--help`), fetches the list of removed mods (below); a build that has one stops running it.
+The launcher starts your build at once. At a terminal it also reads the live mods list and the list of removed mods in the background. That never pulls the registry or updates OpenMods or your build: it only refreshes its own launchers and stops a removed mod, and it asks before any update; `OPENMODS_NO_CHECK=1` turns that off. `openmods` builds or installs nothing you did not ask for. Updates happen only with `openmods update`, and only ever move a mod to a release where CI has checked that it applies and typechecks. Every `openmods` command you run, other than asking for help (`help`, `--help`), fetches the list of removed mods (below); a build that has one stops running it.
 
 ## Reporting a problem
 
