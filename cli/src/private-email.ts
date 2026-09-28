@@ -9,9 +9,13 @@
 const PRIVATE = /@users\.noreply\.github\.com$/i
 // The lines that carry addresses: "From:", "Cc:", and "<Something>-by:".
 const ADDRESSED = /^((?:From|Cc|[A-Za-z][A-Za-z-]*-[Bb]y):)(.*)$/gm
-// On those lines: a <...> with an @ in it, or a bare word with one.
+// On those lines: a <...> or a bare word with an @ in it...
 const ADDRESS = /<([^<>]*@[^<>]*)>|([^\s<>,;]+@[^\s<>,;]+)/g
-const addressesOn = (rest: string) => [...rest.matchAll(ADDRESS)].map((m) => (m[1] ?? m[2]!).trim())
+// ...that is shaped like an address: one @, something before it, and no
+// path. A handle such as @jane@mastodon.social, or a link such as
+// https://user@host/path, is not one, and stays.
+const addressShaped = (s: string) => !s.startsWith("@") && s.split("@").length === 2 && !s.includes("/")
+const addressesOn = (rest: string) => [...rest.matchAll(ADDRESS)].map((m) => (m[1] ?? m[2]!).trim()).filter(addressShaped)
 
 /** GitHub's private address for a handle. */
 export const noreply = (handle: string) => `${handle}@users.noreply.github.com`
@@ -32,7 +36,7 @@ export function withPrivateEmails(text: string, handle: string): string {
     head.replace(ADDRESSED, (_line, key: string, rest: string) =>
       key + rest.replace(ADDRESS, (m, inBrackets?: string, bare?: string) => {
         const address = (inBrackets ?? bare!).trim()
-        if (PRIVATE.test(address)) return m
+        if (!addressShaped(address) || PRIVATE.test(address)) return m
         return inBrackets !== undefined ? `<${noreply(handle)}>` : noreply(handle)
       }),
     ) + diff
