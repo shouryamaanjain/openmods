@@ -10,6 +10,7 @@
 //   - the README says what the mod may do, under "## Permissions"
 //   - every new update says what changed (openmods pack --note)
 //   - its patches carry no binary files and no minified or generated code
+//   - its patches' headers carry no email address but GitHub's private ones
 //
 // Changes to dependencies or build files in the harness are allowed, but
 // listed so reviewers look at them first.
@@ -30,6 +31,7 @@
 // check can run from the base branch without running the pull request's code.
 //
 //   bun script/pr-check.ts --base <sha> [--head <sha>] --author <github login> [--admins a,b] [--registry <dir>]
+import { emailsIn } from "../cli/src/private-email"
 import { $ } from "bun"
 import { writeFileSync } from "node:fs"
 import path from "node:path"
@@ -147,6 +149,9 @@ async function modStandards() {
       if (text === undefined) continue
       if (text.length > 1_000_000) problems.push(`${file} is over 1 MB. Split the change, or leave generated files out of the mod.`)
       if (/^(GIT binary patch|Binary files )/m.test(text)) problems.push(`${file} carries a binary file. Mods are readable source only.`)
+      const emails = emailsIn(text)
+      if (emails.length)
+        problems.push(`${file} has an email address in its header (${emails.join(", ")}), which would be published with the mod. Pack it again with the current openmods, which puts GitHub's private address there instead.`)
       const long = text.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++") && l.length > 1000)
       if (long.length) problems.push(`${file} adds ${long.length} line${long.length === 1 ? "" : "s"} over 1000 characters. Minified or generated code cannot be reviewed; add the source instead.`)
       const touched = [...text.matchAll(/^diff --git a\/(.+?) b\//gm)].map((m) => m[1]!)

@@ -90,6 +90,7 @@ A check called **standards** enforces these, alongside Greptile's review:
 - The README has a `## Permissions` section that says what the mod does with the network, files, commands and the agent's instructions. Write "none" or "unchanged" where it does nothing. `openmods pack` writes the section for you to fill in; no TODO may be left in it.
 - Every new update says what changed: `openmods pack --note "..."`.
 - The patches are readable source: no binary files, no line over 1,000 characters (how minified or generated code shows), and no patch over 1 MB.
+- The addresses git puts in a patch's header, which is published, are GitHub's private ones: `openmods pack` puts the private address for your handle (`<you>@users.noreply.github.com`) in the `From:` line and in trailers such as `Signed-off-by:` and `Co-authored-by:`. A patch with any other address there is refused until it is packed again. The rest of your commit message is published as you wrote it.
 - The mod's folder holds only `mod.json`, `README.md`, and per harness `support.json` and its patches. `status.json` is written by CI.
 - Only registry maintainers change `revoked.json`.
 

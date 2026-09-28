@@ -1,0 +1,70 @@
+// A patch's header is published with the mod, on GitHub and on openmods.dev.
+// The addresses git puts in it are replaced with GitHub's private address for
+// the author's handle, so publishing a mod never publishes an email: on the
+// From line and on trailers (Signed-off-by, Co-authored-by, Reviewed-by, Cc
+// and the like), every address, in <...> or bare, whatever it looks like. A
+// value there without an @, such as a link, stays. The rest of the commit
+// message, like the diff, is the author's own text and is left as written.
+
+const PRIVATE = /@users\.noreply\.github\.com$/i
+// The lines that carry addresses: "From:", "Cc:", and "<Something>-by:".
+const ADDRESSED = /^((?:From|Cc|[A-Za-z][A-Za-z-]*-[Bb]y):)(.*)$/gm
+// On those lines: a <...> or a bare word with an @ in it...
+const ADDRESS = /<([^<>]*@[^<>]*)>|([^\s<>,;]+@[^\s<>,;]+)/g
+// ...that is shaped like an address: one @, something before it, and no URL
+// scheme. In <...>, that is all (so <user@[IPv6:::1]> is one). A bare word
+// loses trailing punctuation first, and must have no : after the @ (a domain
+// never has one): a handle such as @jane@mastodon.social, or a link such as
+// https://user@host/path or git@github.com:org/repo, is not an address and
+// stays; alice/team@example.org, and alice@example.com in
+// "alice@example.com: follow-up", are.
+const shaped = (s: string) => !s.startsWith("@") && s.split("@").length === 2 && !s.includes("://")
+const bareAddress = (w: string) => {
+  const s = w.replace(/[.,;:!?)]+$/, "")
+  return shaped(s) && !s.split("@")[1]!.includes(":") ? s : null
+}
+const addressesOn = (rest: string) =>
+  [...rest.matchAll(ADDRESS)].flatMap((m) => (m[1] !== undefined ? (shaped(m[1].trim()) ? [m[1].trim()] : []) : [bareAddress(m[2]!)].filter((a): a is string => !!a)))
+
+/** GitHub's private address for a handle. */
+export const noreply = (handle: string) => `${handle}@users.noreply.github.com`
+
+/**
+ * A patch split into its header and its diff, at the first "diff --git"
+ * line: a "---" in the commit message does not end the header.
+ */
+export function headerAndDiff(text: string): [string, string] {
+  const at = text.search(/^diff --git /m)
+  return at < 0 ? [text, ""] : [text.slice(0, at), text.slice(at)]
+}
+
+/** The patch with the addresses on its From line and trailers replaced by the handle's private address. */
+export function withPrivateEmails(text: string, handle: string): string {
+  const [head, diff] = headerAndDiff(text)
+  return (
+    head.replace(ADDRESSED, (_line, key: string, rest: string) =>
+      key + rest.replace(ADDRESS, (m, inBrackets?: string, bare?: string) => {
+        if (inBrackets !== undefined) return shaped(inBrackets.trim()) && !PRIVATE.test(inBrackets.trim()) ? `<${noreply(handle)}>` : m
+        const address = bareAddress(bare!)
+        return address && !PRIVATE.test(address) ? m.replace(address, noreply(handle)) : m
+      }),
+    ) + diff
+  )
+}
+
+/** The addresses on a patch's From line and trailers that are not private ones. */
+export function emailsIn(text: string): string[] {
+  const [head] = headerAndDiff(text)
+  return [...new Set([...head.matchAll(ADDRESSED)].flatMap((m) => addressesOn(m[2]!)).filter((a) => !PRIVATE.test(a)))]
+}
+
+/**
+ * What a set of patches changes, without line numbers, context or commit
+ * messages: the same code rebased onto another release, or with a reworded
+ * or scrubbed message, compares equal. Numbers updates (pack) and guards the
+ * release watch's rebases.
+ */
+export const codeOf = (texts: string[]) =>
+  texts
+    .flatMap((t) => headerAndDiff(t)[1].split("\n").filter((l) => /^[-+]/.test(l) && !/^(\+\+\+|---)( |$)/.test(l)))
+    .join("\n")
