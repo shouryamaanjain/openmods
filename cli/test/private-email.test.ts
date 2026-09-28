@@ -41,7 +41,31 @@ describe("a packed mod", () => {
   })
 })
 
+describe("repacking a mod packed before this", () => {
+  test("keeps its update number: a scrubbed message is not new code", async () => {
+    const dir = path.join(sb.reg, "mods", "t", "contact", "fake", "v1.0.0")
+    const file = path.join(dir, readdirSync(dir)[0]!)
+    // As an older openmods wrote it: the real email, and a message bullet with one.
+    writeFileSync(file, readFileSync(file, "utf8").replace("From: Real <t@users.noreply.github.com>", "From: Real <real.person@example.com>").replace("feat: contact\n", "feat: contact\n\n- Contact alice@example.com\n"))
+    const r = await cli(sb, "pack", work(), "--name", "contact", "--owner", "t", "--harness", "fake", "--force")
+    expect(r.code, r.all).toBe(0)
+    const support = JSON.parse(readFileSync(path.join(sb.reg, "mods", "t", "contact", "fake", "support.json"), "utf8"))
+    expect(support.versions[0].update).toBe(1)
+  })
+})
+
 describe("the scrubbing", () => {
+  test("reads the whole message, past a --- line in it, up to the diff", () => {
+    const patch = "From: A <a@example.com>\nSubject: x\n\nnotes\n---\nmore\n\nSigned-off-by: A <a@example.com>\n---\ndiff --git a/f b/f\n+x\n"
+    expect(emailsIn(patch)).toEqual(["a@example.com"])
+    expect(emailsIn(withPrivateEmails(patch, "t"))).toEqual([])
+  })
+  test("finds addresses with a dotless or non-ASCII domain, not versions", () => {
+    const patch = "From: A <alice@intranet>\nSubject: x\n\nwith bob@bücher.de, see pkg@1.2.3\n---\ndiff --git a/f b/f\n"
+    expect(emailsIn(patch)).toEqual(["alice@intranet", "bob@bücher.de"])
+    expect(withPrivateEmails(patch, "t")).toContain("see pkg@1.2.3")
+  })
+
   test("leaves private addresses and everything after the header alone", () => {
     const patch = "From: A <me@users.noreply.github.com>\nSubject: x\n\nsee me@site.io\n---\ndiff --git a/f b/f\n+me@site.io\n"
     expect(withPrivateEmails(patch, "t")).toBe("From: A <me@users.noreply.github.com>\nSubject: x\n\nsee t@users.noreply.github.com\n---\ndiff --git a/f b/f\n+me@site.io\n")

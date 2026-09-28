@@ -13,7 +13,7 @@ import path from "node:path"
 import { footprint, incompatibility as whyNot, type Footprint } from "./overlap"
 import { lastRebuild, Progress, roughly } from "./progress"
 import { managerHere, missingMessage, type Requirement } from "./requirements"
-import { withPrivateEmails } from "./private-email"
+import { codeOf, withPrivateEmails } from "./private-email"
 import { sameRepo } from "./same-repo"
 
 type Harness = {
@@ -792,14 +792,6 @@ function incompatibleWith(reg: string, mod: Mod): { mod: Mod; why: string }[] {
       const why = clashBetween(mod, o)
       return why ? [{ mod: o, why }] : []
     })
-}
-
-// What a set of patches changes, without line numbers or context: two sets
-// with the same code rebased onto different releases compare equal.
-function codeOf(texts: string[]): string {
-  return texts
-    .flatMap((t) => t.split("\n").filter((l) => /^[-+]/.test(l) && !/^(\+\+\+|---)( |$)/.test(l)))
-    .join("\n")
 }
 
 function touchedFiles(mod: Mod): string[] {

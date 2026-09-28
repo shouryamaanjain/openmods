@@ -24,6 +24,7 @@
 // little as it is anyone's: nothing is recorded against it and it is tried
 // again the next hour. After three such runs in a row, one issue asks the
 // registry's maintainers to look.
+import { codeOf } from "../cli/src/private-email"
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { $ } from "bun"
@@ -70,13 +71,8 @@ type Version = { ref: string; commit: string; patches: string[]; update?: number
 const byRelease = (a: Version, b: Version) => (newer(a.ref, b.ref) ? -1 : newer(b.ref, a.ref) ? 1 : 0)
 const newestOf = (support: { versions: Version[] }) => support.versions.slice().sort(byRelease)[0]!
 
-// What a set of patches changes, without line numbers or context: the same
-// code rebased onto another release compares equal. The same rule as
-// openmods pack uses to number updates.
-const codeOf = (texts: string[]) =>
-  texts
-    .flatMap((t) => t.split("\n").filter((l) => /^[-+]/.test(l) && !/^(\+\+\+|---)( |$)/.test(l)))
-    .join("\n")
+// What a set of patches changes: the same rule as openmods pack uses to
+// number updates (cli/src/private-email.ts).
 
 const readJson = (file: string) => (existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : undefined)
 // A check's result, or nothing when the check left none that can be read.
