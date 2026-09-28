@@ -357,9 +357,10 @@ async function revokedUrl(reg: string) {
   const gh = /github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(origin)
   return gh ? `https://raw.githubusercontent.com/${gh[1]}/${gh[2]}/HEAD/revoked.json` : ""
 }
-async function fetchRevocations(reg: string) {
+// Whether the list is known: fetched now, or a copy of this same list kept.
+async function fetchRevocations(reg: string): Promise<boolean> {
   const url = await revokedUrl(reg)
-  if (!url) return
+  if (!url) return true
   let kept: { url?: string; revoked?: unknown[] } = {}
   try {
     kept = readJsonFile(REVOKED_COPY)
@@ -370,12 +371,13 @@ async function fetchRevocations(reg: string) {
     // No file means nothing is revoked.
     const body = res.status === 404 ? { revoked: [] } : res.ok ? ((await res.json()) as { revoked?: unknown }) : null
     // A list with anything malformed in it is not taken; the last copy stands.
-    if (!body || !Array.isArray(body.revoked) || !body.revoked.every(isRevocation)) return
+    if (!body || !Array.isArray(body.revoked) || !body.revoked.every(isRevocation)) return fetchedRevocations !== null
     fetchedRevocations = { list: body.revoked, fresh: true }
     const tmp = `${REVOKED_COPY}.${process.pid}`
     writeFileSync(tmp, JSON.stringify({ url, revoked: body.revoked }) + "\n")
     renameSync(tmp, REVOKED_COPY)
   } catch {}
+  return fetchedRevocations !== null
 }
 const revocationOf = (reg: string, id: string, update: number | undefined) =>
   revocations(reg).find((r) => r.id === id && (!r.updates || update === undefined || r.updates.includes(update)))
@@ -1067,6 +1069,7 @@ function endDev(h: Harness) {
 
 // The launcher for a build that contains a revoked mod: it never runs the
 // build again. It says why on every launch and starts the stock harness.
+const REVOKED_MARK = "openmods removed-mod launcher"
 function revokedLauncherOf(h: Harness, bad: { id: string; reason: string }[], stock: string | null) {
   const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
   const ids = bad.map((b) => b.id).join(" ")
@@ -1077,7 +1080,7 @@ function revokedLauncherOf(h: Harness, bad: { id: string; reason: string }[], st
       : `Your modded ${h.name} will not run again. \`openmods uninstall ${ids}\` removes the mod.`,
   ].join("\n")
   return `#!/bin/sh
-# openmods: this ${h.name} build contains a mod removed from OpenMods, so it does not run.
+# ${REVOKED_MARK}: this ${h.name} build contains a mod removed from OpenMods, so it does not run.
 printf '%s\\n' ${q(message)} >&2
 ${stock ? `exec ${JSON.stringify(stock)} "$@"` : "exit 1"}
 `
@@ -2193,14 +2196,18 @@ async function keepCurrent(fetchRevoked: boolean) {
   rmSync(path.join(HOME, "updates"), { recursive: true, force: true })
   const reg = await ensureRegistry()
   // Before anything is installed too: install refuses a removed mod.
-  if (fetchRevoked) await fetchRevocations(reg)
+  const known = fetchRevoked ? await fetchRevocations(reg) : true
   const state = loadState()
   for (const [id, e] of Object.entries(state)) {
     if (!existsSync(path.join(reg, "harnesses", `${id}.json`))) continue
     const h = loadHarness(reg, id)
     const bad = devOf(id) ? [] : revokedIn(reg, id, e)
     if (!bad.length) {
-      refreshLauncher(reg, h, e)
+      // A build stopped for a removed mod stays stopped while the list
+      // cannot be known.
+      const launcher = path.join(BIN, h.binary)
+      const stopped = existsSync(launcher) && readFileSync(launcher, "utf8").includes(REVOKED_MARK)
+      if (known || !stopped) refreshLauncher(reg, h, e)
       continue
     }
     // Said once, when it stops; status and update say it again.

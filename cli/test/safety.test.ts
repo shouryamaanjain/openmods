@@ -200,6 +200,13 @@ describe("the list of removed mods, fetched on its own", () => {
     expect(r.code).toBe(0)
     expect(r.out).toContain("t/later was removed from OpenMods")
   })
+  test("with no list at all (the copy damaged, the fetch failing), a stopped build stays stopped", async () => {
+    writeFileSync(path.join(sb.om, "revoked.json"), "{ damaged")
+    down = true
+    expect((await withUrl(url, "status")).code).toBe(0)
+    down = false
+    expect((await $`sh ${launcher()}`.nothrow().quiet()).stdout.toString().trim()).toBe("stock greet")
+  })
   test("once it is taken off the list, the mod can be switched back on", async () => {
     listed = null
     expect((await withUrl(url, "status")).out).not.toContain("removed from OpenMods")
