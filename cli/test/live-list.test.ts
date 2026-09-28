@@ -6,7 +6,7 @@
 // installer run again, does. An install from before that layout moves over
 // the first time it runs this code.
 import { beforeAll, describe, expect, test } from "bun:test"
-import { appendFileSync, chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { appendFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { addFile, createHarness, createMod, git, sandbox } from "./harness"
 
@@ -136,10 +136,20 @@ describe("the program", () => {
   test("the installer fails, and says so, when it cannot set the program up", async () => {
     appendFileSync(path.join(sb.reg, "cli", "src", "reference.ts"), "\n// another openmods\n")
     await commit("another openmods")
+    // A file where the version folders go: nothing can be set up there, for
+    // any user, root included. The current copy is kept elsewhere meanwhile.
     const versions = path.join(sb.om, "cli-versions")
-    chmodSync(versions, 0o555)
+    const aside = path.join(sb.T, "versions-aside")
+    const current = path.basename(realpathSync(copy()))
+    renameSync(versions, aside)
+    rmSync(copy())
+    symlinkSync(path.join(aside, current), copy())
+    writeFileSync(versions, "not a folder\n")
     const r = await installer()
-    chmodSync(versions, 0o755)
+    rmSync(versions)
+    renameSync(aside, versions)
+    rmSync(copy())
+    symlinkSync(path.join(versions, current), copy())
     expect(r.code).not.toBe(0)
     expect(r.all).toContain("openmods could not set itself up")
   })
