@@ -211,7 +211,9 @@ function otherCommandRuns() {
   try {
     return readdirSync(BUSY).some((f) => {
       if (Number(f) === process.pid) return false
-      if (isRunning(Number(f))) return true
+      // Its process must have started before the marker was written: a
+      // process that took the number of a killed command is not it.
+      if (lockOwnerRuns(Number(f), lstatSync(path.join(BUSY, f)).mtimeMs)) return true
       // Left by a command that was killed.
       rmSync(path.join(BUSY, f), { force: true })
       return false
@@ -2507,7 +2509,7 @@ async function keepCurrent(fetchRevoked: boolean) {
   const reg = await ensureRegistry()
   // Before anything is installed too: install refuses a removed mod.
   let known = false
-  if (pullsFirst() && reg === path.join(HOME, "registry") && pullsAllowed && process.env.OPENMODS_REVOKED_URL === undefined) {
+  if (pullsFirst() && reg === path.join(HOME, "registry") && pullsAllowed && !process.env.OPENMODS_REVOKED_URL) {
     await refreshRegistry()
     known = (await pulled!) && registryListReadable(reg)
   }

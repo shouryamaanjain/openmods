@@ -6,7 +6,7 @@
 // installer run again, does. An install from before that layout moves over
 // the first time it runs this code.
 import { beforeAll, describe, expect, test } from "bun:test"
-import { appendFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { appendFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { addFile, addVersion, createHarness, createMod, git, release, sandbox } from "./harness"
 
@@ -115,6 +115,37 @@ describe("one source of mods data", () => {
     rmSync(path.join(sb.om, "busy", String(process.pid)))
     await openmods("check-updates", "fake")
     expect(await head()).not.toBe(before)
+  })
+  test("a mod revoked in the registry is stopped by the pull that brings the news", async () => {
+    writeFileSync(path.join(sb.reg, "revoked.json"), JSON.stringify({ revoked: [{ id: "t/fresh", reason: "It deletes your files." }] }))
+    await commit("revoke t/fresh")
+    const r = await openmods("list")
+    expect(r.out).toContain("t/fresh was removed from OpenMods")
+    expect(readFileSync(path.join(sb.om, "bin", "greet"), "utf8")).toContain("build contains a mod removed from OpenMods")
+    writeFileSync(path.join(sb.reg, "revoked.json"), JSON.stringify({ revoked: [] }))
+    await commit("unrevoke t/fresh")
+    await openmods("list")
+    expect(readFileSync(path.join(sb.om, "bin", "greet"), "utf8")).not.toContain("removed from OpenMods")
+  })
+  test("a marker whose process number another process took does not hold the look back", async () => {
+    await createMod(sb, "later-still", addFile("LATER.md", "x\n"))
+    await commit("t/later-still")
+    const clone = path.join(sb.om, "registry")
+    const before = (await git(clone, "rev-parse", "HEAD")).stdout.toString().trim()
+    // A process started after the marker was written: not the command that left it.
+    const other = Bun.spawn(["sleep", "30"])
+    const marker = path.join(sb.om, "busy", String(other.pid))
+    mkdirSync(path.dirname(marker), { recursive: true })
+    writeFileSync(marker, "")
+    const old = Date.now() / 1000 - 60
+    utimesSync(marker, old, old)
+    try {
+      await openmods("check-updates", "fake")
+    } finally {
+      other.kill()
+    }
+    expect((await git(clone, "rev-parse", "HEAD")).stdout.toString().trim()).not.toBe(before)
+    expect(existsSync(marker)).toBe(false)
   })
   test("a removed-mods list named with OPENMODS_REVOKED_URL is fetched even by commands that pull", async () => {
     let hits = 0
