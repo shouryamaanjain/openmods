@@ -15,7 +15,7 @@ const setArgs = (args: string[] | undefined) => {
   writeFileSync(definition, JSON.stringify(args ? { ...rest, args } : rest))
 }
 const greet = async (...a: string[]) =>
-  (await $`sh ${path.join(sb.om, "bin", "greet")} ${a}`.env({ OPENMODS_NO_CHECK: "1", OPENMODS_NO_PROMPT: "1" }).text()).trim()
+  (await $`sh ${path.join(sb.om, "bin", "greet")} ${a}`.text()).trim()
 
 beforeAll(async () => {
   await createHarness(sb)
@@ -25,12 +25,12 @@ beforeAll(async () => {
 })
 
 describe("a harness's args", () => {
-  test("come before the user's, and reach a build made before they existed with the daily check", async () => {
+  test("come before the user's, and reach a build made before they existed with the next command", async () => {
     setArgs(undefined)
-    await cli(sb, "check-updates", "fake")
+    await cli(sb, "status")
     expect(await greet("mine")).toBe("args:[mine]")
     setArgs(["-c", "check_for_update_on_startup=false", "it's quoted"])
-    await cli(sb, "check-updates", "fake")
+    await cli(sb, "status")
     expect(await greet("mine", "too")).toBe("args:[-c][check_for_update_on_startup=false][it's quoted][mine][too]")
   })
   test("are passed to a clone under openmods dev", async () => {

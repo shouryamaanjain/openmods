@@ -18,14 +18,12 @@ beforeAll(async () => {
 })
 
 describe("the base patch", () => {
-  test("a build from before it existed is offered it once, as an update", async () => {
+  test("a build from before it existed gets it with the next update", async () => {
     expect((await cli(sb, "install", "t/friendly")).code).toBe(0)
     const dir = await createMod(sb, "base", setLine(1, "line 1, by openmods"), { owner: "openmods" })
     const meta = path.join(dir, "..", "mod.json")
     writeFileSync(meta, JSON.stringify({ ...JSON.parse(readFileSync(meta, "utf8")), internal: true, description: "Points bug reports from modded builds to OpenMods." }, null, 2))
-    const r = JSON.parse((await cli(sb, "check-updates", "fake", "--json")).out)
-    expect(r).toMatchObject({ ask: true, updates: [{ id: "openmods/base", update: 1 }] })
-    expect(r.message).toBe("New in your Fake mods: the OpenMods base patch update 1.")
+    expect(state().updates["openmods/base"]).toBeUndefined()
   })
   test("goes first into every build, and stays out of the version stamp and the mod list", async () => {
     const r = await cli(sb, "update", "fake")

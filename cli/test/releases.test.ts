@@ -186,29 +186,18 @@ describe("after the release watch wrote its results", () => {
 })
 
 describe("the user's side", () => {
-  test("check-updates says a newer release is blocked while one mod lags", async () => {
+  test("update says a newer release is blocked while one mod lags", async () => {
     // friendly is on v1.1.0 now, notes is still on v1.0.0.
-    const r = await cli(sb, "check-updates", "fake", "--json")
+    const r = await cli(sb, "update", "fake")
     expect(r.code).toBe(0)
-    const j = JSON.parse(r.out)
-    expect(j.available).toBe("1.1.0")
-    expect(j.allSupport).toBe(false)
-    expect(j.blocked).toEqual(["t/notes"])
-    expect(readFileSync(path.join(sb.om, "updates", "fake"), "utf8")).toContain("MESSAGE='Fake 1.1.0 is out, but t/notes has no version for it yet, so you stay on 1.0.0.'")
+    expect(r.out).toContain("Fake 1.1.0 is out, but t/notes has no version for it yet, so you stay on 1.0.0.")
   })
   test("once every mod supports it, update moves the user to the new release", async () => {
     // Bump notes by hand, as the release watch would have.
     await addVersion(sb, path.join(sb.reg, "mods", "t", "notes", "fake"), "v1.1.0")
-    const note = await cli(sb, "check-updates", "fake", "--json")
-    expect(JSON.parse(note.out)).toMatchObject({ available: "1.1.0", allSupport: true })
     const r = await cli(sb, "update", "fake")
     expect(r.code).toBe(0)
     expect(r.out).toContain("now runs Fake 1.1.0 + t/friendly + t/notes")
     expect(await greeting(sb)).toBe("hello from friendly")
-  })
-  test("the launcher never prompts when not at a terminal", async () => {
-    writeFileSync(path.join(sb.om, "updates", "fake"), "CURRENT='1.1.0'\nKEY='update v9.9.9 '\nASK=1\nMESSAGE='Fake 9.9.9 is out, and all your mods support it.'\nCHECKED=1\n")
-    const out = await Bun.$`sh ${path.join(sb.om, "bin", "greet")}`.env({ OPENMODS_NO_CHECK: "1" }).text()
-    expect(out.trim()).toBe("hello from friendly")
   })
 })

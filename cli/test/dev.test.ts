@@ -29,7 +29,7 @@ describe("openmods dev", () => {
     expect((await cli(sb, "status")).out).toContain("dev     Fake 1.0.0+my-mod-dev")
   })
   test("the daily check leaves the clone's launcher alone", async () => {
-    await cli(sb, "check-updates", "fake")
+    await cli(sb, "status")
     expect(await greeting(sb)).toBe("hello from my edit")
   })
   test("--stop goes back to stock when there is no modded build", async () => {

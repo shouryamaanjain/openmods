@@ -10,7 +10,7 @@ import path from "node:path"
 import { cli, createHarness, createMod, greeting, registerHarness, run, sandbox, setGreeting, stockInstaller } from "./harness"
 
 const sb = sandbox("harnesses")
-const hello = async () => (await $`sh ${path.join(sb.om, "bin", "hello")}`.env({ OPENMODS_NO_CHECK: "1", OPENMODS_NO_PROMPT: "1" }).text()).trim()
+const hello = async () => (await $`sh ${path.join(sb.om, "bin", "hello")}`.text()).trim()
 const otherInstalled = () => existsSync(path.join(sb.home, ".hello", "bin", "hello"))
 
 beforeAll(async () => {
