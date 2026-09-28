@@ -33,27 +33,19 @@ if [ ! -x "$BUN" ]; then
   sh "$OM/registry/cli/get-bun.sh" "$BUN_VERSION" "$OM/toolchains/bun-$BUN_VERSION"
 fi
 
-# The program runs from its own copy, so pulling the mods list never changes
-# it; `openmods update` replaces the copy and says so.
-VERSION=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$OM/registry/cli/package.json" | head -n 1)
-COMMIT=$(git -C "$OM/registry" rev-parse --short HEAD)
-rm -rf "$OM/cli.new"
-mkdir -p "$OM/cli.new"
-cp -R "$OM/registry/cli/src" "$OM/registry/cli/get-bun.sh" "$OM/registry/cli/package.json" "$OM/cli.new/"
-printf '%s (%s)\n' "$VERSION" "$COMMIT" > "$OM/cli.new/.version"
-rm -rf "$OM/cli"
-mv "$OM/cli.new" "$OM/cli"
-
 # Bun caches the CLI's transpiled code; on Linux it would go in ~/.bun.
 cat > "$OM/bin/openmods" <<WRAP
 #!/bin/sh
 OM="\${OPENMODS_HOME:-\$HOME/.openmods}"
 export BUN_RUNTIME_TRANSPILER_CACHE_PATH="\${BUN_RUNTIME_TRANSPILER_CACHE_PATH-\$OM/cache/transpiler}"
-exec "\$OM/toolchains/bun-$BUN_VERSION/bin/bun" "\$OM/cli/src/index.ts" "\$@"
+exec "\$OM/toolchains/bun-$BUN_VERSION/bin/bun" "\$OM/registry/cli/src/index.ts" "\$@"
 WRAP
 chmod 755 "$OM/bin/openmods"
 
 # PATH, and a launcher in front of each harness you have (see `openmods help setup`).
+# Run from the fresh clone, this also copies the program to ~/.openmods/cli,
+# where it runs from then on, so pulling the mods list never changes it.
 "$OM/bin/openmods" setup
+[ -f "$OM/cli/src/index.ts" ] || { echo "openmods could not set itself up in $OM/cli."; exit 1; }
 
 echo "openmods is installed. Try: openmods list"
