@@ -30,8 +30,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
-      # Each mod version the change touches, with the mods on top of a changed
-      # base patch, and every mod's newest version for a CLI or harness change
+      # Each mod version the change touches, and every mod's newest version
+      # for a CLI or harness change
       # (script/changed-versions.ts). The selection runs as the base branch
       # has it, so a pull request cannot change what it is checked for.
       - id: list

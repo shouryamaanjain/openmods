@@ -4,8 +4,6 @@
 //
 //   - a version whose patches, or whose entry in support.json, changed
 //   - a mod's newest version, when its shared files (mod.json, README) changed
-//   - for a changed version of the OpenMods base patch, every other mod's
-//     version for that release, since they are checked on top of it
 //   - every mod's newest version when the CLI or how mods are checked
 //     changed, and every newest version on a harness whose definition changed
 //
@@ -60,9 +58,4 @@ for (const dir of dirs) {
     for (const v of versions(dir)) if (was[v.ref] !== JSON.stringify(v)) add(dir, v.ref)
   }
 }
-// Mods are checked on top of the base patch, so a change to it checks them too.
-for (const [dir, refs] of [...out].filter(([d]) => d.startsWith("mods/openmods/base/")))
-  for (const other of dirs.filter((d) => path.basename(d) === path.basename(dir) && !d.startsWith("mods/openmods/base/")))
-    for (const ref of refs) add(other, ref)
-
 console.log(JSON.stringify([...out].flatMap(([mod, refs]) => [...refs].map((at) => ({ mod, at })))))

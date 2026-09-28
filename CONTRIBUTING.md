@@ -75,7 +75,7 @@ The registry check rejects fields it does not know, so a misspelled one is caugh
 openmods check mods/<you>/my-mod/opencode --build
 ```
 
-This clones the harness into a folder in your temp directory, checks out the release, applies your patches, on their own and then after the OpenMods base patch as users build them, and builds. Run it before opening a PR: CI does not build mods, it runs the quick version, `--typecheck`, on each version a pull request changes and against each new harness release.
+This clones the harness into a folder in your temp directory, checks out the release, applies your patches as users build them, and builds. Run it before opening a PR: CI does not build mods, it runs the quick version, `--typecheck`, on each version a pull request changes and against each new harness release.
 
 ## 5. Open a pull request
 
@@ -97,7 +97,7 @@ Changes to the harness's dependencies or build files are allowed, but the check 
 
 ### The reviews
 
-1. **Apply and typecheck.** CI applies each version your pull request changes to the release it names, after the OpenMods base patch, and typechecks the result. A failure blocks the merge.
+1. **Apply and typecheck.** CI applies each version your pull request changes to the release it names and typechecks the result. A failure blocks the merge.
 2. **Greptile** reviews the code your patches add, for correctness and fit with the harness, and for security: anything malicious, and anything the README's Permissions section does not disclose.
 3. **For an update,** a comment shows what it changes compared with the published update, as plain code.
 4. **A maintainer** reads the diff, the reviews and the README, and merges. Every pull request needs this approval; the bots help the maintainer, they do not replace them. The release bot's own commits, which only add versions CI has checked on a new release, go straight to main.
@@ -140,4 +140,4 @@ The definition needs:
 - `recipe`: the files, or lines of files, those commands depend on, such as the build script and toolchain pin. The release watch compares them on every release and holds the harness's mods when they change.
 - `releaseTagPattern`: which tags are releases.
 
-The **standards** check makes sure each of these is there, except `installer.paths`, which is optional. Greptile and a maintainer then read every command in it, because they run on users' machines and in CI. A maintainer runs the **harness build** workflow to prove it builds, and adds the OpenMods base patch for it before any mod ships. A harness that is already supported is changed only by maintainers; open an issue to suggest a change.
+The **standards** check makes sure each of these is there, except `installer.paths`, which is optional. Greptile and a maintainer then read every command in it, because they run on users' machines and in CI. A maintainer runs the **harness build** workflow to prove it builds before any mod ships. If a modded build and the stock one would clash side by side, the fix is the harness's own switches in `args` or `argsUnless`, never a patch: OpenMods does not change a harness's code. A harness that is already supported is changed only by maintainers; open an issue to suggest a change.
