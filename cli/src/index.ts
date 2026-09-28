@@ -7,7 +7,7 @@
 // The stock install of the harness is never touched.
 
 import { $ } from "bun"
-import { cpSync, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { accessSync, constants, cpSync, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
 import { cpus, homedir, tmpdir, totalmem } from "node:os"
 import path from "node:path"
 import { footprint, incompatibility as whyNot, type Footprint } from "./overlap"
@@ -1401,12 +1401,20 @@ async function versionOf(bin: string | null) {
 const pathHasBin = () => (process.env.PATH ?? "").split(path.delimiter).some((d) => d && path.resolve(d) === BIN)
 
 // What `binary` runs in this shell: the first one on its PATH.
+// As the shell looks: the first executable file of that name, not a folder.
 const firstOnPath = (binary: string) =>
   (process.env.PATH ?? "")
     .split(path.delimiter)
     .filter(Boolean)
     .map((d) => path.join(path.resolve(d), binary))
-    .find((f) => existsSync(f)) ?? null
+    .find((f) => {
+      try {
+        accessSync(f, constants.X_OK)
+        return statSync(f).isFile()
+      } catch {
+        return false
+      }
+    }) ?? null
 
 // A line that can put a folder in front of ~/.openmods/bin: one that sets
 // PATH, or runs a script that may, as nvm's `\. "$NVM_DIR/nvm.sh"` does.

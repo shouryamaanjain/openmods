@@ -292,10 +292,12 @@ describe("status and a removed mod", () => {
     const launcherPath = path.join(box2.om, "bin", "greet")
     rmSync(launcherPath)
     mkdirSync(path.join(launcherPath, "blocked"), { recursive: true })
-    const r = await cli(box2, "status")
+    const r = await run(box2, { env: { PATH: `${path.join(box2.om, "bin")}:${process.env.PATH}` } }, "status")
     expect(r.code, r.all).toBe(0)
     expect(r.err).toContain("note: could not update")
     expect(r.out).toContain("mods list  ")
+    // A folder there is not a launcher: status does not claim the modded build runs.
+    expect(r.out).not.toContain("greet → modded")
   })
 })
 
