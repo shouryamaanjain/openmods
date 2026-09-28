@@ -13,6 +13,7 @@ import path from "node:path"
 import { footprint, incompatibility as whyNot, type Footprint } from "./overlap"
 import { lastRebuild, Progress, roughly } from "./progress"
 import { managerHere, missingMessage, type Requirement } from "./requirements"
+import { withPrivateEmails } from "./private-email"
 import { sameRepo } from "./same-repo"
 
 type Harness = {
@@ -2282,6 +2283,8 @@ async function cmdPack(opts: { quiet?: boolean } = {}): Promise<{ owner: string;
     .filter((f) => f.endsWith(".patch"))
     .sort()
     .map((f) => `${base}/${f}`)
+  // Published with the mod: no author's email in them.
+  for (const p of patches) writeFileSync(path.join(out, p), withPrivateEmails(readFileSync(path.join(out, p), "utf8"), owner))
   // The update number: the latest one again when the changed lines are the
   // same as the latest update's (a rebase onto another release, or a repack),
   // else one more. The note goes with the update.
@@ -2430,7 +2433,7 @@ async function cmdCheck() {
       result.patches = readdirSync(dir)
         .filter((f) => f.endsWith(".patch"))
         .sort()
-        .map((f) => ({ name: f, text: readFileSync(path.join(dir, f), "utf8") }))
+        .map((f) => ({ name: f, text: withPrivateEmails(readFileSync(path.join(dir, f), "utf8"), mod.id.split("/")[0]!) }))
       rmSync(dir, { recursive: true, force: true })
     }
     if (!result.applies) {

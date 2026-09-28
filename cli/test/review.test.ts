@@ -6,7 +6,7 @@
 // changes on top of main and checks them.
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import { $ } from "bun"
-import { readFileSync, writeFileSync } from "node:fs"
+import { readdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { cli, createHarness, createMod, git, sandbox, setGreeting, setLine } from "./harness"
 
@@ -97,6 +97,16 @@ describe("the mod standards", () => {
     expect(r.code).toBe(1)
     expect(r.out).toContain("update 2 on fake needs a note")
     expect(r.out).toContain("Labels: mod: update")
+  })
+  test("a patch whose header carries an email address is refused", async () => {
+    const patch = path.join(sb.reg, "mods", "t", "friendly", "fake", "v1.0.0")
+    const file = path.join(patch, readdirSync(patch)[0]!)
+    const text = readFileSync(file, "utf8")
+    writeFileSync(file, text.replace(/^From: .*$/m, "From: Someone <someone@example.com>"))
+    await commit("t/friendly with an email")
+    const r = await check("t")
+    expect(r.code).toBe(1)
+    expect(r.out).toContain("has an email address in its header (someone@example.com)")
   })
   test("patches may not carry binary files, and build files are pointed out", async () => {
     await createMod(sb, "lines", (d) => {
