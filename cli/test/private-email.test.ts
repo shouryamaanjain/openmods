@@ -74,6 +74,7 @@ describe("the scrubbing", () => {
       "Cc: https://user@host.example/path <https://u@h.example/p>",
       "Acked-by: Jane @jane@mastodon.social <jane@example.org>",
       "Signed-off-by: Team <alice/team@example.org>",
+      "Cc: git@github.com:org/repo",
       "---",
       "diff --git a/f b/f",
       "+alice@example.com",
@@ -89,6 +90,7 @@ describe("the scrubbing", () => {
     expect(clean).toContain("Signed-off-by: t@users.noreply.github.com")
     expect(clean).toContain("Reviewed-by: CI <https://ci.example/run/7>")
     expect(clean).toContain("Cc: https://user@host.example/path <https://u@h.example/p>")
+    expect(clean).toContain("Cc: git@github.com:org/repo")
     expect(clean).toContain("Acked-by: Jane @jane@mastodon.social <t@users.noreply.github.com>")
   })
   test("leaves the rest of the message as written: links and versions are the author's text", () => {

@@ -11,10 +11,11 @@ const PRIVATE = /@users\.noreply\.github\.com$/i
 const ADDRESSED = /^((?:From|Cc|[A-Za-z][A-Za-z-]*-[Bb]y):)(.*)$/gm
 // On those lines: a <...> or a bare word with an @ in it...
 const ADDRESS = /<([^<>]*@[^<>]*)>|([^\s<>,;]+@[^\s<>,;]+)/g
-// ...that is shaped like an address: one @, something before it, and no
-// URL scheme. A handle such as @jane@mastodon.social, or a link such as
-// https://user@host/path, is not one, and stays; alice/team@example.org is.
-const addressShaped = (s: string) => !s.startsWith("@") && s.split("@").length === 2 && !s.includes("://")
+// ...that is shaped like an address: one @, something before it, no URL
+// scheme, and no : after the @ (an address's domain never has one). A handle
+// such as @jane@mastodon.social, or a link such as https://user@host/path or
+// git@github.com:org/repo, is not one, and stays; alice/team@example.org is.
+const addressShaped = (s: string) => !s.startsWith("@") && s.split("@").length === 2 && !s.includes("://") && !s.split("@")[1]!.includes(":")
 const addressesOn = (rest: string) => [...rest.matchAll(ADDRESS)].map((m) => (m[1] ?? m[2]!).trim()).filter(addressShaped)
 
 /** GitHub's private address for a handle. */
