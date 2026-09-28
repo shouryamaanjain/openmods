@@ -254,8 +254,14 @@ async function installCli(reg: string): Promise<{ from: string; to: string } | n
     cpSync(path.join(src, "src"), path.join(next, "src"), { recursive: true })
     for (const f of ["get-bun.sh", "package.json"]) if (existsSync(path.join(src, f))) cpSync(path.join(src, f), path.join(next, f))
     writeFileSync(path.join(next, ".version"), `${to}\n`)
-    rmSync(dest, { recursive: true, force: true })
-    renameSync(next, dest)
+    // A version folder, once there, is whole and never replaced: another
+    // command may have put it there first and linked to it already.
+    try {
+      renameSync(next, dest)
+    } catch {
+      rmSync(next, { recursive: true, force: true })
+    }
+    if (readVersion(dest) !== to) throw new Error(`could not set up ${pretty(dest)}`)
   }
   // A folder left by an earlier layout is moved aside, then the link swapped in.
   if (existsSync(CLI_DIR) && !lstatSync(CLI_DIR).isSymbolicLink()) renameSync(CLI_DIR, path.join(CLI_VERSIONS, `old-${process.pid}`))

@@ -6,7 +6,7 @@
 // installer run again, does. An install from before that layout moves over
 // the first time it runs this code.
 import { beforeAll, describe, expect, test } from "bun:test"
-import { appendFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { appendFileSync, chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { addFile, createHarness, createMod, git, sandbox } from "./harness"
 
@@ -116,6 +116,32 @@ describe("the program", () => {
     expect(r.code, r.all).toBe(0)
     expect(existsSync(path.join(copy(), "src", "index.ts"))).toBe(true)
     expect(readFileSync(wrapper(), "utf8")).toContain('"$OM/cli/src/index.ts"')
+  })
+  test("a version folder that is already there is used as it is, never replaced", async () => {
+    const versions = path.join(sb.om, "cli-versions")
+    const current = realpathSync(copy())
+    // As if another command had set up the current version already, while
+    // this one still runs an older one.
+    writeFileSync(path.join(current, "in-use"), "")
+    const older = path.join(versions, "0000000")
+    cpSync(current, older, { recursive: true })
+    writeFileSync(path.join(older, ".version"), "0.1.0 (0000000)\n")
+    rmSync(path.join(older, "in-use"))
+    rmSync(copy())
+    symlinkSync(older, copy())
+    const r = await openmods("update")
+    expect(r.code, r.all).toBe(0)
+    expect(existsSync(path.join(copy(), "in-use"))).toBe(true)
+  })
+  test("the installer fails, and says so, when it cannot set the program up", async () => {
+    appendFileSync(path.join(sb.reg, "cli", "src", "reference.ts"), "\n// another openmods\n")
+    await commit("another openmods")
+    const versions = path.join(sb.om, "cli-versions")
+    chmodSync(versions, 0o555)
+    const r = await installer()
+    chmodSync(versions, 0o755)
+    expect(r.code).not.toBe(0)
+    expect(r.all).toContain("openmods could not set itself up")
   })
   test("running the installer again leaves it working", async () => {
     const r = await installer()

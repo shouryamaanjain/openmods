@@ -46,6 +46,9 @@ chmod 755 "$OM/bin/openmods"
 # Run from the fresh clone, this also copies the program to ~/.openmods/cli,
 # where it runs from then on, so pulling the mods list never changes it.
 "$OM/bin/openmods" setup
-[ -f "$OM/cli/src/index.ts" ] || { echo "openmods could not set itself up in $OM/cli."; exit 1; }
+if [ ! -f "$OM/cli/.version" ] || ! grep -q '"\$OM/cli/src/index.ts"' "$OM/bin/openmods"; then
+  echo "openmods could not set itself up in $OM/cli; the message above says why."
+  exit 1
+fi
 
 echo "openmods is installed. Try: openmods list"
