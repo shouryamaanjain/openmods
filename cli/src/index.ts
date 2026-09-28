@@ -2478,6 +2478,15 @@ async function cmdCheck() {
   if (result.unchecked || result.applies !== true || (has("typecheck") && result.typechecks !== true) || (has("build") && result.builds !== true)) process.exit(1)
 }
 
+// Whether a launcher's text holds \`mark\`; one that cannot be read does not.
+function launcherSays(launcher: string, mark: string) {
+  try {
+    return readFileSync(launcher, "utf8").includes(mark)
+  } catch {
+    return false
+  }
+}
+
 // Every command (asking for help aside), and the launcher's background look,
 // keeps the launchers current and stops a revoked mod.
 // Commands that pull the registry anyway (aliases included, as they run the
@@ -2518,13 +2527,25 @@ async function keepCurrent(fetchRevoked: boolean) {
       // A build stopped for a removed mod stays stopped while the list
       // cannot be known.
       const launcher = path.join(BIN, h.binary)
-      const stopped = existsSync(launcher) && readFileSync(launcher, "utf8").includes(REVOKED_MARK)
-      if (known || !stopped) refreshLauncher(reg, h, e)
+      if (known || !launcherSays(launcher, REVOKED_MARK)) {
+        try {
+          refreshLauncher(reg, h, e)
+        } catch (err) {
+          // A launcher that could not be brought up to date does not stop
+          // status, which is how one finds out; everything else stops.
+          if (positional[0] !== "status") throw err
+          console.error(`note: could not update ${pretty(path.join(BIN, h.binary))}: ${err instanceof Error ? err.message : String(err)}`)
+        }
+      }
       continue
     }
     // Said once, when it stops; status and update say it again.
     const launcher = path.join(BIN, h.binary)
-    const stopped = existsSync(launcher) && readFileSync(launcher, "utf8") === revokedLauncherOf(h, bad, stockBinary(h))
+    let now = ""
+    try {
+      now = readFileSync(launcher, "utf8")
+    } catch {}
+    const stopped = now === revokedLauncherOf(h, bad, stockBinary(h))
     const said = stopRevoked(h, e, bad)
     if (!stopped && e.enabled) log(said)
   }

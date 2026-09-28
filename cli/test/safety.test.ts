@@ -283,4 +283,19 @@ describe("status and a removed mod", () => {
     const r = await cli(box, "status")
     expect(r.code).not.toBe(0)
   })
+  test("a launcher that merely cannot be brought up to date does not stop status", async () => {
+    const box2 = sandbox("safety-status-refresh")
+    await createHarness(box2)
+    await createMod(box2, "friendly", setGreeting("hello from friendly"))
+    expect((await cli(box2, "install", "t/friendly")).code).toBe(0)
+    // A launcher from an older openmods (so it is due a refresh), where no file can be written.
+    const launcherPath = path.join(box2.om, "bin", "greet")
+    rmSync(launcherPath)
+    mkdirSync(path.join(launcherPath, "blocked"), { recursive: true })
+    const r = await cli(box2, "status")
+    expect(r.code, r.all).toBe(0)
+    expect(r.err).toContain("note: could not update")
+    expect(r.out).toContain("mods list  ")
+  })
 })
+
