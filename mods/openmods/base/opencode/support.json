@@ -1,0 +1,14 @@
+{
+  "$schema": "../../../../schema/support.schema.json",
+  "versions": [
+    {
+      "ref": "v2.0.18",
+      "commit": "cd9a14a6b688d4021bee381dfd39d2cef9c0f862",
+      "patches": [
+        "v2.0.18/0001-openmods-send-crash-reports-from-modded-builds-to-Op.patch"
+      ],
+      "update": 2,
+      "note": "OpenCode 2: the crash screen reports to OpenMods"
+    }
+  ]
+}

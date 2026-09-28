@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: OpenMods <openmods@localhost>
+Date: Fri, 25 Sep 2026 11:12:00 +0530
+Subject: [PATCH] openmods: run modded builds without Codex's shared background
+ server
+
+The shared background server is installed from the first Codex that
+starts it and then serves stock Codex too. A modded build runs on its
+own instead, as with --no-daemon: its mods are what runs, and the server
+stays stock Codex's. The agents overview and --remote still use a server.
+
+diff --git a/codex-rs/cli/src/main.rs b/codex-rs/cli/src/main.rs
+index be141103c33c923bf651612c32a070d5f4268a9b..2d405515d6274790b80baf93868a571b70fd9e77 100644
+--- a/codex-rs/cli/src/main.rs
++++ b/codex-rs/cli/src/main.rs
+@@ -2380,6 +2380,11 @@ async fn run_interactive_tui(
+     remote_auth_token_env: Option<String>,
+     arg0_paths: Arg0DispatchPaths,
+ ) -> std::io::Result<AppExitInfo> {
++    // OpenMods: a modded build runs on its own, as with --no-daemon, so the
++    // mods are what runs and the shared background server stays stock Codex's.
++    if !interactive.agents_overview && remote.is_none() {
++        interactive.no_daemon = true;
++    }
+     if interactive.no_daemon {
+         if interactive.agents_overview {
+             return Ok(AppExitInfo::fatal(

@@ -102,7 +102,7 @@ type Mod = {
 
 // mods: every installed mod, in apply order. off: the subset built out for now.
 // updates: which update of each mod the build holds.
-type State = Record<string, { ref: string; commit: string; mods: string[]; off: string[]; hashes: Record<string, string>; updates: Record<string, number>; artifact: string; enabled: boolean }>
+type State = Record<string, { ref: string; commit: string; mods: string[]; off: string[]; hashes: Record<string, string>; updates: Record<string, number>; artifact: string; enabled: boolean; plain?: boolean }>
 
 const HOME = process.env.OPENMODS_HOME ?? path.join(homedir(), ".openmods")
 // A release as people see it: "1.18.31" for the tag v1.18.31, "0.155.1" for
@@ -413,11 +413,11 @@ function listMods(reg: string, harness?: string): Mod[] {
   return [...published, ...local].sort((a, b) => a.id.localeCompare(b.id) || a.harness.localeCompare(b.harness))
 }
 
-// OpenMods used to put a patch of its own into every modded build
-// (openmods/base). It never changes a harness's code now; a build that still
-// carries that patch is rebuilt without it on the next update.
-const BASE_ID = "openmods/base"
-const carriesBase = (e: State[string]) => e.hashes[BASE_ID] !== undefined || e.updates[BASE_ID] !== undefined
+// OpenMods used to change harness code itself: a patch of its own in every
+// build (openmods/base), and a version stamp in the build's files. It never
+// does now. A build made since is marked \`plain\` in the state; any other is
+// made again, without either, on the next update.
+const carriesBase = (e: State[string]) => !e.plain
 const shown = (id: string) => id
 
 function allHarnesses(reg: string): Harness[] {
@@ -829,6 +829,7 @@ const loadState = (): State => {
         updates: e.updates ?? {},
         artifact: e.artifact ?? "",
         enabled: e.enabled ?? existsSync(path.join(HOME, "bin", id)),
+        ...(e.plain ? { plain: true } : {}),
       },
     ]),
   )
@@ -1176,7 +1177,7 @@ function argsUnlessOf(h: Harness) {
   // A trailing * matches the start of an argument; nothing else is a pattern.
   const pattern = (w: string) => (w.endsWith("*") ? `${q(w.slice(0, -1))}*` : q(w))
   return `OPENMODS_ADD=1
-for a in "$@"; do case "$a" in ${u.given.map(pattern).join("|")}) OPENMODS_ADD= ;; esac; done
+for a in "$@"; do case "$a" in --) break ;; ${u.given.map(pattern).join("|")}) OPENMODS_ADD= ;; esac; done
 [ -n "$OPENMODS_ADD" ] && set -- ${u.args.map(q).join(" ")} "$@"
 `
 }
@@ -1701,6 +1702,7 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     updates: Object.fromEntries(mods.map((m) => [m.id, m.update])),
     artifact,
     enabled: true,
+    plain: true,
   }
   saveState(state)
   // The launcher's note described the build this replaces; cleared again now,
@@ -2625,7 +2627,7 @@ function newsFor(reg: string, h: Harness, e: State[string]) {
   const old = carriesBase(e) && !moveTo && !fixes.length
   const ask = !!moveTo || fixes.length > 0 || old
   const message = old
-    ? `Your ${h.name} build still has the patch OpenMods used to add to every build; updating builds your mods without it.`
+    ? `Your ${h.name} build was made when OpenMods still changed the code of ${h.name} (a patch and a version stamp of its own); updating builds your mods without them.${heldSaid ? ` ${heldSaid}` : ""}`
     : moveTo
     ? `${h.name} ${moveTo} is out, and all your mods support it.${fixesSaid ? ` New in your mods: ${fixesSaid}.` : ""}${heldSaid ? ` ${heldSaid}` : ""}`
     : fixes.length

@@ -62,6 +62,8 @@ describe("a harness's argsUnless", () => {
     expect(await greet("agents")).toBe("args:[-c][x=1][agents]")
     expect(await greet("--remote", "ws://h")).toBe("args:[-c][x=1][--remote][ws://h]")
     expect(await greet("--remote=ws://h")).toBe("args:[-c][x=1][--remote=ws://h]")
+    // After --, words are the user's text, not a command.
+    expect(await greet("--", "agents")).toBe("args:[-c][x=1][--no-daemon][--][agents]")
     // A word inside a longer argument is not the word.
     expect(await greet("fix the agents page")).toBe("args:[-c][x=1][--no-daemon][fix the agents page]")
   })

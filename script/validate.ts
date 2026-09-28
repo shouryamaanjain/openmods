@@ -54,8 +54,16 @@ for (const id of harnesses) {
     errors.push(`harnesses/${id}.json: args must be a list of arguments, none of them empty`)
   const unless = h.argsUnless
   const words = (v: unknown) => Array.isArray(v) && v.length > 0 && v.every((a) => typeof a === "string" && a)
-  if (unless !== undefined && (typeof unless !== "object" || !words(unless.args) || !words(unless.given)))
-    errors.push(`harnesses/${id}.json: argsUnless needs "args" and "given", each a list of arguments, none of them empty`)
+  if (
+    unless !== undefined &&
+    (unless === null ||
+      typeof unless !== "object" ||
+      Array.isArray(unless) ||
+      Object.keys(unless).some((k) => !["args", "given"].includes(k)) ||
+      !words(unless.args) ||
+      !words(unless.given))
+  )
+    errors.push(`harnesses/${id}.json: argsUnless accepts only "args" and "given", each a list of non-empty arguments`)
   // Set for the modded build when it starts.
   if (h.env !== undefined) {
     if (typeof h.env !== "object" || h.env === null || Array.isArray(h.env)) errors.push(`harnesses/${id}.json: env must be an object of variable names to strings`)

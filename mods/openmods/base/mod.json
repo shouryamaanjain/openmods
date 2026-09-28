@@ -1,0 +1,16 @@
+{
+  "$schema": "../../../schema/mod.schema.json",
+  "owner": "openmods",
+  "name": "base",
+  "description": "OpenMods' own patch in every modded build: feedback and crash reports go to OpenMods, not to the upstream project.",
+  "author": {
+    "name": "OpenMods",
+    "github": "shouryamaanjain"
+  },
+  "maintainers": [
+    "shouryamaanjain"
+  ],
+  "license": "MIT",
+  "tags": [],
+  "internal": true
+}

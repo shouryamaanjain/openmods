@@ -67,7 +67,7 @@
     },
     "internal": {
       "type": "boolean",
-      "description": "Kept out of listings, and cannot be installed or removed by users. Not used by any mod now; OpenMods used it for a patch of its own, which it no longer adds."
+      "description": "Kept out of listings, and cannot be installed or removed by users. OpenMods used it for a patch of its own (openmods/base), which it no longer adds to builds."
     }
   }
 }

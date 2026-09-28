@@ -1,0 +1,47 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: OpenMods <bot@openmods>
+Date: Wed, 23 Sep 2026 16:38:05 +0530
+Subject: [PATCH] openmods: point /feedback in modded builds to OpenMods
+
+
+diff --git a/codex-rs/tui/src/chatwidget/slash_dispatch.rs b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
+index 50081a03fd26bfecfe483c44d0b35f9a0200d93e..bff6274d6f44766f84033e8066d0cc5e6924ee6b 100644
+--- a/codex-rs/tui/src/chatwidget/slash_dispatch.rs
++++ b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
+@@ -189,17 +189,12 @@ impl ChatWidget {
+ 
+         match cmd {
+             SlashCommand::Feedback => {
+-                if !self.config.feedback_enabled {
+-                    let params = crate::bottom_pane::feedback_disabled_params();
+-                    self.bottom_pane.show_selection_view(params);
+-                    self.request_redraw();
+-                    return;
+-                }
+-                // Step 1: pick a category (UI built in feedback_view)
+-                let params =
+-                    crate::bottom_pane::feedback_selection_params(self.app_event_tx.clone());
+-                self.bottom_pane.show_selection_view(params);
+-                self.request_redraw();
++                // OpenMods: this is a modded build, so its logs do not go to
++                // the Codex maintainers, who did not ship the mods.
++                self.add_info_message(
++                    "This is a modded Codex build made with OpenMods, so /feedback does not send logs to OpenAI.".to_string(),
++                    Some("Check whether it also happens after `openmods off`. If it does, use /feedback there; if not, report it at https://github.com/shouryamaanjain/openmods/issues".to_string()),
++                );
+             }
+             SlashCommand::New => {
+                 self.show_session_checkout_picker(ManagedWorktreeMode::New, /*name*/ None);
+diff --git a/codex-rs/tui/src/slash_command.rs b/codex-rs/tui/src/slash_command.rs
+index 160d0407ec4ee346d785d24a3dc82787f9787d6e..6e86dc4f2bf911cf6994a5f6d439c87ed87aedd4 100644
+--- a/codex-rs/tui/src/slash_command.rs
++++ b/codex-rs/tui/src/slash_command.rs
+@@ -89,7 +89,7 @@ impl SlashCommand {
+     /// User-visible description shown in the popup.
+     pub fn description(self) -> &'static str {
+         match self {
+-            SlashCommand::Feedback => "send logs to maintainers",
++            SlashCommand::Feedback => "how to report a problem with this modded build",
+             SlashCommand::New => "start a new chat during a conversation",
+             SlashCommand::Init => "create an AGENTS.md file with instructions for Codex",
+             SlashCommand::Compact => "summarize conversation to prevent hitting the context limit",

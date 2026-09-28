@@ -38,20 +38,19 @@ describe("a modded build", () => {
   })
 })
 
-describe("a build made with OpenMods' old patch", () => {
+describe("a build made while OpenMods still changed harness code", () => {
   test("is offered a rebuild, and update makes it again without the patch", async () => {
     const state = JSON.parse(readFileSync(stateFile(), "utf8"))
-    state.fake.hashes["openmods/base"] = "old"
-    state.fake.updates["openmods/base"] = 2
+    // As an older openmods left it: no mark that the build is plain.
+    delete state.fake.plain
     writeFileSync(stateFile(), JSON.stringify(state))
     const look = await cli(sb, "check-updates", "fake", "--json")
     expect(JSON.parse(look.out)).toMatchObject({ ask: true })
-    expect(readFileSync(path.join(sb.om, "updates", "fake"), "utf8")).toContain("still has the patch OpenMods used to add to every build")
+    expect(readFileSync(path.join(sb.om, "updates", "fake"), "utf8")).toContain("was made when OpenMods still changed the code of Fake")
     const r = await cli(sb, "update", "fake")
     expect(r.code, r.all).toBe(0)
     expect(r.out).toContain("now runs Fake 1.0.0 + t/friendly")
-    const after = JSON.parse(readFileSync(stateFile(), "utf8")).fake
-    expect(after.hashes["openmods/base"]).toBeUndefined()
+    expect(JSON.parse(readFileSync(stateFile(), "utf8")).fake.plain).toBe(true)
     expect((await cli(sb, "update", "fake")).out).toContain("already up to date")
   })
 })
