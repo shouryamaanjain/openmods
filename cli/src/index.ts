@@ -7,7 +7,7 @@
 // The stock install of the harness is never touched.
 
 import { $ } from "bun"
-import { cpSync, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { cpSync, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { cpus, homedir, tmpdir, totalmem } from "node:os"
 import path from "node:path"
 import { footprint, incompatibility as whyNot, type Footprint } from "./overlap"
@@ -174,13 +174,59 @@ async function ensureRegistry(): Promise<string> {
   return dir
 }
 
+// The registry openmods cloned holds the mods list, the build recipes and the
+// list of removed mods; list, info, install and update pull it first, so new
+// mods show up without updating anything. The program itself runs from its
+// own copy (see installCli), so a pull never changes it. Offline, or on any
+// error, the copy on this machine is used, and said so.
 async function refreshRegistry(): Promise<string> {
   const dir = await ensureRegistry()
-  if (dir === path.join(HOME, "registry")) {
-    log("Updating registry")
-    await $`git -C ${dir} pull --ff-only`.quiet()
-  }
+  if (dir !== path.join(HOME, "registry")) return dir
+  const r = await $`git -C ${dir} pull -q --ff-only`
+    .env({ ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_HTTP_LOW_SPEED_LIMIT: "1000", GIT_HTTP_LOW_SPEED_TIME: "15" })
+    .nothrow()
+    .quiet()
+  if (r.exitCode !== 0) log("Could not reach the OpenMods registry, so this uses the mods list this machine fetched last.")
   return dir
+}
+
+// The program runs from ~/.openmods/cli, a copy of the registry's cli/ taken
+// by the installer and by \`openmods update\`, never from the registry clone
+// itself: pulling the mods list must not change what runs. Returns the
+// versions when it replaced the copy.
+const CLI_DIR = path.join(HOME, "cli")
+const runsFromRegistry = () => {
+  try {
+    return realpathSync(import.meta.dir).startsWith(realpathSync(path.join(HOME, "registry")) + path.sep)
+  } catch {
+    return false
+  }
+}
+async function installCli(reg: string): Promise<{ from: string; to: string } | null> {
+  const src = path.join(reg, "cli")
+  if (reg !== path.join(HOME, "registry") || !existsSync(path.join(src, "src", "index.ts"))) return null
+  const commit = (await $`git -C ${reg} rev-parse --short HEAD`.nothrow().text()).trim()
+  const to = `${readJsonFile(path.join(src, "package.json")).version} (${commit})`
+  const versionFile = path.join(CLI_DIR, ".version")
+  const from = existsSync(versionFile) ? readFileSync(versionFile, "utf8").trim() : ""
+  if (from === to && existsSync(path.join(CLI_DIR, "src", "index.ts"))) return null
+  // Put together beside it, then swapped in.
+  const next = `${CLI_DIR}.${process.pid}`
+  rmSync(next, { recursive: true, force: true })
+  mkdirSync(next, { recursive: true })
+  cpSync(path.join(src, "src"), path.join(next, "src"), { recursive: true })
+  for (const f of ["get-bun.sh", "package.json"]) if (existsSync(path.join(src, f))) cpSync(path.join(src, f), path.join(next, f))
+  writeFileSync(path.join(next, ".version"), `${to}\n`)
+  rmSync(CLI_DIR, { recursive: true, force: true })
+  renameSync(next, CLI_DIR)
+  // The openmods command runs the copy from now on.
+  const wrapper = path.join(BIN, "openmods")
+  if (existsSync(wrapper)) {
+    const text = readFileSync(wrapper, "utf8")
+    const moved = text.replaceAll("/registry/cli/src/index.ts", "/cli/src/index.ts")
+    if (moved !== text) writeScript(wrapper, moved)
+  }
+  return { from, to }
 }
 
 function loadHarness(reg: string, id: string): Harness {
@@ -1600,7 +1646,7 @@ async function tidy(root: string, ref: string, moved: boolean) {
 // ---------------------------------------------------------------- commands
 
 async function cmdList() {
-  const reg = await ensureRegistry()
+  const reg = await refreshRegistry()
   const only = positional[1] ?? harnessFlags(reg)[0]
   const mods = listMods(reg, only).filter((m) => !m.internal)
   if (has("json")) return console.log(JSON.stringify(mods.map(({ dir, root, ...m }) => m), null, 2))
@@ -1625,7 +1671,7 @@ async function cmdList() {
 }
 
 async function cmdInfo() {
-  const reg = await ensureRegistry()
+  const reg = await refreshRegistry()
   const spec = positional[1] ?? fail("usage: openmods info <owner>/<mod> [--<harness>]")
   const picked = harnessFlags(reg)
   const variants = supportsOf(reg, spec).filter((m) => !picked.length || picked.includes(m.harness))
@@ -1671,7 +1717,7 @@ async function harnessOfClone(reg: string, checkout: string): Promise<Harness> {
 const isPathSpec = (s: string) => s === "." || s === ".." || /^(\.{1,2}\/|\/|~)/.test(s)
 
 async function cmdInstall() {
-  const reg = await ensureRegistry()
+  const reg = await refreshRegistry()
   let specs = positional.slice(1)
   if (specs.length === 0) fail("install needs a mod, e.g. openmods install shouryamaanjain/space-invaders --opencode. `openmods list` shows what is available.")
   // `openmods install .` in a clone of a harness: pack its commits on top of
@@ -1861,6 +1907,8 @@ async function cmdOff() {
 
 async function cmdUpdate() {
   const reg = await refreshRegistry()
+  const cli = await installCli(reg)
+  if (cli) log(cli.from ? `OpenMods is updated: ${cli.from} → ${cli.to}. Your next command runs it.` : `OpenMods ${cli.to} is set up in ${pretty(CLI_DIR)}.`)
   const state = loadState()
   const ids = positional[1] ? [positional[1]] : Object.keys(state)
   for (const id of ids) {
@@ -2527,6 +2575,9 @@ if (cmd === "help" && positional[1]) {
 } else if (commands[cmd]) {
   if (has("help")) console.log(commandHelp(cmd) ?? helpText())
   else {
+    // An install from before the program had its own copy runs it from the
+    // registry clone: move it out once, so pulls never change it again.
+    if (runsFromRegistry()) await installCli(path.join(HOME, "registry")).catch(() => null)
     // `registry` shows where things are even when the check cannot run,
     // with a damaged checkout for one.
     if (cmd === "registry") await keepCurrent(true).catch(() => {})

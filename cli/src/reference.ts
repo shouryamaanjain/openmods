@@ -25,7 +25,7 @@ export const COMMANDS: Command[] = [
     usage: "openmods list [--<harness>]",
     summary: "Mods in the registry: every harness each one supports, and the release it is for there.",
     description: [
-      "Reads the registry as it is on disk, with no network once it is there (the first run clones it). One line per mod, owner/name, then each harness it supports with the release its patches are for; an asterisk marks where you have it installed. Unpublished mods from ~/.openmods/local are listed too, marked (local).",
+      "Pulls the registry first, so a mod published a minute ago is listed; offline, it lists what this machine fetched last, and says so. One line per mod, owner/name, then each harness it supports with the release its patches are for; an asterisk marks where you have it installed. Unpublished mods from ~/.openmods/local are listed too, marked (local).",
     ],
     flags: [
       { flag: "--<harness>", description: "Only mods that support this harness, e.g. --codex." },
@@ -129,7 +129,7 @@ export const COMMANDS: Command[] = [
     usage: "openmods update [harness]",
     summary: "Pull the registry and rebuild if anything you have installed changed.",
     description: [
-      "Moves you to the newest release that every mod you have on has a version for, using each mod's version for it. The registry's release check adds those versions when a mod still applies and typechecks on a new harness release. A rebuild happens only when that release, or a mod's patches for it, changed; otherwise it says the build is already up to date. When a newer release is out but some of your mods have no version for it yet, it names them. The launcher tells you when an update is waiting and runs this on a yes.",
+      "Moves you to the newest release that every mod you have on has a version for, using each mod's version for it. The registry's release check adds those versions when a mod still applies and typechecks on a new harness release. A rebuild happens only when that release, or a mod's patches for it, changed; otherwise it says the build is already up to date. When a newer release is out but some of your mods have no version for it yet, it names them. The launcher tells you when an update is waiting and runs this on a yes. It also updates OpenMods itself when the registry has a newer version, and says from which to which; nothing else changes the program.",
     ],
     flags: [{ flag: "--force", description: "Rebuild even if nothing changed." }],
     examples: [{ command: "openmods update" }, { command: "openmods update codex --force" }],
@@ -245,8 +245,9 @@ export const ENVIRONMENT: Flag[] = [
 ]
 
 export const FILES: Flag[] = [
-  { flag: "~/.openmods/bin/openmods", description: "The openmods command itself, which runs the CLI from ~/.openmods/registry on its own Bun." },
-  { flag: "~/.openmods/registry", description: "The registry, with the CLI's source; `openmods update` pulls it." },
+  { flag: "~/.openmods/bin/openmods", description: "The openmods command itself, which runs the CLI from ~/.openmods/cli on its own Bun." },
+  { flag: "~/.openmods/cli", description: "The program itself, a copy of the registry's cli/. Only the installer and `openmods update` replace it, and update says from which version to which." },
+  { flag: "~/.openmods/registry", description: "The registry: the mods list, their patches, the build recipes. `list`, `info`, `install` and `update` pull it; pulling never changes the program." },
   { flag: "~/.openmods/bin/<binary>", description: "The launcher for a harness: the modded build while on, your stock one while off or before you install a mod. It stays put so a shell that remembers commands (bash, zsh) keeps finding it." },
   { flag: "~/.openmods/launchers.json", description: "When each launcher first appeared, so a terminal opened before that is told to run `hash -r`." },
   { flag: "~/.openmods/harnesses/<id>/src", description: "The harness checkout, patched, kept as a cache." },
