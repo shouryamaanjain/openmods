@@ -15,14 +15,14 @@ const note = () => path.join(sb.om, "updates", "fake")
 // As from a terminal, unless `script`. The background look is turned off
 // here unless `look`, and run by hand with `look()`, so each test knows
 // which note the launcher reads.
-async function launch(answer = "", opts: { look?: boolean; script?: boolean; index?: string; shell?: string } = {}) {
+async function launch(answer = "", opts: { look?: boolean; script?: boolean; revoked?: string; shell?: string } = {}) {
   const p = Bun.spawn([opts.shell ?? "sh", launcher()], {
     env: {
       ...process.env,
       HOME: sb.home,
       OPENMODS_HOME: sb.om,
       OPENMODS_REGISTRY: sb.reg,
-      OPENMODS_REVOKED_URL: "",
+      OPENMODS_REVOKED_URL: opts.revoked ?? "",
       ...(opts.script ? {} : { OPENMODS_ASSUME_TTY: "1" }),
       ...(opts.look ? {} : { OPENMODS_NO_CHECK: "1" }),
     },
@@ -52,16 +52,16 @@ describe("the launcher's heads-up", () => {
     expect(existsSync(note())).toBe(false)
   })
   test("at a terminal it starts the build at once and looks in the background", async () => {
-    // A live list that takes 3 seconds to answer: the start must not wait for it.
+    // A removed-mods list that takes 3 seconds to answer: the start must not wait for it.
     const slow = Bun.serve({ port: 0, fetch: async () => (await Bun.sleep(3000), new Response("", { status: 503 })) })
     // sh, and dash where there is one: Linux's sh, which once held the start.
     for (const shell of ["sh", ...(existsSync("/bin/dash") ? ["/bin/dash"] : [])]) {
       const started = Date.now()
-      const r = await launch("", { look: true, index: `http://localhost:${slow.port}/index.json`, shell })
+      const r = await launch("", { look: true, revoked: `http://localhost:${slow.port}/revoked.json`, shell })
       expect(Date.now() - started, shell).toBeLessThan(2000)
       expect(r.out.trim()).toBe("hello from friendly")
     }
-    // Unanswered, the look falls back to the registry copy.
+    // Unanswered, the look goes on with what it has.
     for (let i = 0; i < 60 && !existsSync(note()); i++) await Bun.sleep(250)
     slow.stop(true)
     expect(readFileSync(note(), "utf8")).toContain("Fake 1.1.0 is out, and all your mods support it.")

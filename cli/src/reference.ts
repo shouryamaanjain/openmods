@@ -238,7 +238,7 @@ export const ENVIRONMENT: Flag[] = [
   { flag: "OPENMODS_HOME", description: "Where everything lives. Default ~/.openmods." },
   { flag: "OPENMODS_REGISTRY", description: "A registry checkout, same as --registry; or the git URL ~/.openmods/registry is cloned from on first use." },
   { flag: "OPENMODS_NO_CHECK=1", description: "The launcher does not look for news in the background. `openmods update` still updates." },
-  { flag: "OPENMODS_REVOKED_URL", description: "Where to fetch the list of mods removed from OpenMods. Default: revoked.json of the registry openmods cloned, else the official one. Empty: no fetch; the registry checkout's own list is used." },
+  { flag: "OPENMODS_REVOKED_URL", description: "Where to fetch the list of mods removed from OpenMods. Default: revoked.json of the registry openmods cloned, else the official one. Empty: no fetch; the registry checkout's own list is used. A list named here is fetched by every command, the ones that pull the registry included." },
   { flag: "CARGO_BUILD_JOBS", description: "Rust build jobs at once. Default: one per 2.5 GB of memory, at most one per CPU." },
   { flag: "NO_COLOR, CI", description: "No colour; with CI set, build output streams as it is instead of the progress view." },
   { flag: "BUN_INSTALL_CACHE_DIR, BUN_RUNTIME_TRANSPILER_CACHE_PATH", description: "Where Bun's caches go, instead of ~/.openmods/cache." },
@@ -258,7 +258,8 @@ export const FILES: Flag[] = [
   { flag: "~/.openmods/timings.json", description: "How long each build step took here, for the time left and the update question." },
   { flag: "~/.openmods/local/<owner>/<mod>", description: "Your own unpublished mods, laid out like the registry." },
   { flag: "~/.openmods/updates/<id>", description: "What the launcher's last look found, shown on the next start; <id>.seen lists what it has already said." },
-  { flag: "~/.openmods/revoked.json", description: "The last list of mods removed from OpenMods, fetched by the commands that do not pull the registry (the others get it with the pull). A build with one of them no longer runs." },
+  { flag: "~/.openmods/revoked.json", description: "The last list of mods removed from OpenMods, fetched by the commands that do not pull the registry (the others get it with the pull, unless it fails or OPENMODS_REVOKED_URL names another list). A build with one of them no longer runs." },
+  { flag: "~/.openmods/busy/", description: "One marker per running openmods command, so the launcher's background look does not pull the registry while a command reads from it." },
   { flag: "~/.openmods/dev.json", description: "Which clone `openmods dev` runs, per harness." },
   { flag: "~/.openmods/state.json", description: "What is installed, and on, per harness." },
 ]

@@ -190,9 +190,35 @@ let pulled: Promise<boolean> | undefined
 async function refreshRegistry(): Promise<string> {
   const dir = await ensureRegistry()
   if (dir !== path.join(HOME, "registry") || !pullsAllowed) return dir
+  // The launcher's background look leaves the registry alone while another
+  // openmods command runs: that one may be reading mods and patches from it.
+  if (positional[0] === "check-updates" && otherCommandRuns()) return dir
   pulled ??= pullRegistry(dir)
   await pulled
   return dir
+}
+// Each command but the background look leaves a marker while it runs.
+const BUSY = path.join(HOME, "busy")
+function markBusy() {
+  try {
+    mkdirSync(BUSY, { recursive: true })
+    const me = path.join(BUSY, String(process.pid))
+    writeFileSync(me, "")
+    process.on("exit", () => rmSync(me, { force: true }))
+  } catch {}
+}
+function otherCommandRuns() {
+  try {
+    return readdirSync(BUSY).some((f) => {
+      if (Number(f) === process.pid) return false
+      if (isRunning(Number(f))) return true
+      // Left by a command that was killed.
+      rmSync(path.join(BUSY, f), { force: true })
+      return false
+    })
+  } catch {
+    return false
+  }
 }
 async function pullRegistry(dir: string): Promise<boolean> {
   const p = Bun.spawn(["git", "-C", dir, "pull", "-q", "--ff-only"], {
@@ -2464,17 +2490,28 @@ async function cmdCheck() {
 
 // Every command (asking for help aside), and the launcher's background look,
 // keeps the launchers current and stops a revoked mod.
-// Commands that pull the registry anyway; for them the list of removed mods
-// comes with it, and is fetched on its own only when the pull fails.
-const PULLS = new Set(["list", "info", "install", "update", "check-updates"])
+// Commands that pull the registry anyway (aliases included, as they run the
+// same function); for them the list of removed mods comes with the pull,
+// unless OPENMODS_REVOKED_URL names another list, or the pull failed, or the
+// registry's own list cannot be read: then it is fetched on its own.
+const pullsFirst = () => [cmdList, cmdInfo, cmdInstall, cmdUpdate, cmdCheckUpdates].includes(commands[positional[0] ?? ""]!)
+function registryListReadable(reg: string) {
+  try {
+    const r = readJsonFile(path.join(reg, "revoked.json")).revoked
+    return Array.isArray(r) && r.every(isRevocation)
+  } catch {
+    return false
+  }
+}
 async function keepCurrent(fetchRevoked: boolean) {
   const reg = await ensureRegistry()
   // Before anything is installed too: install refuses a removed mod.
-  let known: boolean
-  if (PULLS.has(positional[0] ?? "") && reg === path.join(HOME, "registry") && pullsAllowed) {
+  let known = false
+  if (pullsFirst() && reg === path.join(HOME, "registry") && pullsAllowed && process.env.OPENMODS_REVOKED_URL === undefined) {
     await refreshRegistry()
-    known = (await pulled!) || (await fetchRevocations(reg, !fetchRevoked))
-  } else known = await fetchRevocations(reg, !fetchRevoked)
+    known = (await pulled!) && registryListReadable(reg)
+  }
+  if (!known) known = await fetchRevocations(reg, !fetchRevoked)
   const state = loadState()
   for (const [id, e] of Object.entries(state)) {
     if (!existsSync(path.join(reg, "harnesses", `${id}.json`))) continue
@@ -2731,6 +2768,7 @@ if (cmd === "help" && positional[1]) {
     }
     // `registry` shows where things are even when the check cannot run,
     // with a damaged checkout for one.
+    if (cmd !== "check-updates") markBusy()
     if (cmd === "registry") await keepCurrent(true).catch(() => {})
     else await keepCurrent(true)
     await commands[cmd]!()
