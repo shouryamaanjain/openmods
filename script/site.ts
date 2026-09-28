@@ -568,13 +568,5 @@ const installer = path.join(root, "install.sh")
 if (existsSync(installer)) write("install.sh", readFileSync(installer, "utf8"))
 write("404.html", layout({ title: `Not found · ${SITE_NAME}`, depth: 0, nav: "", body: `<div class="wrap"><section class="hero"><h1>Not found</h1><p>There is no page here. <a href="./">Back to the mods.</a></p></section></div>`, path: "404" }))
 if (process.env.SITE_DOMAIN) write("CNAME", process.env.SITE_DOMAIN.trim() + "\n")
-// The OpenMods base patch's releases per harness: the CLI's update question
-// counts it the way \`openmods update\` does.
-const baseReleases = Object.fromEntries(
-  harnesses.flatMap((h) => {
-    const file = path.join(root, "mods", "openmods", "base", h.id, "support.json")
-    return existsSync(file) ? [[h.id, (readJson(file).versions as { ref: string; update?: number }[]).map((v) => ({ release: rel(v.ref), update: v.update ?? 1 }))]] : []
-  }),
-)
-write("index.json", JSON.stringify({ generated: new Date().toISOString(), harnesses: harnesses.map((h) => ({ id: h.id, name: h.name, latest: rel(h.latest ?? ""), tag: h.latest })), base: baseReleases, mods: entries.map((e) => ({ id: e.id, owner: e.owner, name: e.name, description: e.description, harnesses: Object.fromEntries(e.variants.map((m) => [m.harness, { for: rel(m.upstream.ref), tag: m.upstream.ref, behind: behind(m), files: m.files.length, update: m.versions[0]!.update ?? 1, releases: m.versions.map((v) => ({ release: rel(v.ref), update: v.update ?? 1 })), incompatible: (clashes.get(m) ?? []).map((c) => c.mod.id) }])) })) }, null, 2))
+write("index.json", JSON.stringify({ generated: new Date().toISOString(), harnesses: harnesses.map((h) => ({ id: h.id, name: h.name, latest: rel(h.latest ?? ""), tag: h.latest })), mods: entries.map((e) => ({ id: e.id, owner: e.owner, name: e.name, description: e.description, harnesses: Object.fromEntries(e.variants.map((m) => [m.harness, { for: rel(m.upstream.ref), tag: m.upstream.ref, behind: behind(m), files: m.files.length, update: m.versions[0]!.update ?? 1, releases: m.versions.map((v) => ({ release: rel(v.ref), update: v.update ?? 1 })), incompatible: (clashes.get(m) ?? []).map((c) => c.mod.id) }])) })) }, null, 2))
 console.log(`site: ${entries.length} mod${entries.length === 1 ? "" : "s"}, ${harnesses.length} harness${harnesses.length === 1 ? "" : "es"} → ${path.relative(process.cwd(), out) || "."}`)

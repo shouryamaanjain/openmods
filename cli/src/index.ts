@@ -184,9 +184,53 @@ async function ensureRegistry(): Promise<string> {
 // or takes more than 20 seconds, leaves the copy on this machine, and says so
 // on stderr, so --json output stays clean.
 let pullsAllowed = true
+// Whether this run pulled the registry: then its list of removed mods is
+// fresh too, and no separate fetch is needed. One pull per run.
+let pulled: Promise<boolean> | undefined
 async function refreshRegistry(): Promise<string> {
   const dir = await ensureRegistry()
   if (dir !== path.join(HOME, "registry") || !pullsAllowed) return dir
+  // The launcher's background look leaves the registry alone while another
+  // openmods command runs: that one may be reading mods and patches from it.
+  if (positional[0] === "check-updates" && otherCommandRuns()) return dir
+  pulled ??= pullRegistry(dir)
+  await pulled
+  return dir
+}
+// Each command but the background look leaves a marker while it runs.
+const BUSY = path.join(HOME, "busy")
+function markBusy() {
+  try {
+    mkdirSync(BUSY, { recursive: true })
+    const me = path.join(BUSY, String(process.pid))
+    writeFileSync(me, "")
+    process.on("exit", () => rmSync(me, { force: true }))
+  } catch {}
+}
+function otherCommandRuns() {
+  try {
+    return readdirSync(BUSY).some((f) => {
+      if (Number(f) === process.pid) return false
+      // Its process must have started before the marker was written: a
+      // process that took the number of a killed command is not it.
+      let written: number
+      try {
+        written = lstatSync(path.join(BUSY, f)).mtimeMs
+      } catch (e) {
+        // Gone since the listing: that command has ended. Anything else
+        // unreadable counts as running, to be safe.
+        return (e as NodeJS.ErrnoException).code !== "ENOENT"
+      }
+      if (lockOwnerRuns(Number(f), written)) return true
+      // Left by a command that was killed.
+      rmSync(path.join(BUSY, f), { force: true })
+      return false
+    })
+  } catch {
+    return false
+  }
+}
+async function pullRegistry(dir: string): Promise<boolean> {
   const p = Bun.spawn(["git", "-C", dir, "pull", "-q", "--ff-only"], {
     env: {
       ...process.env,
@@ -205,7 +249,7 @@ async function refreshRegistry(): Promise<string> {
     const why = p.signalCode ? "it took too long" : err.trim().split("\n").filter(Boolean).at(-1)?.replace(/^(fatal|error): /, "") || `git exited with ${code}`
     console.error(`note: could not update the mods list (${why}); using the copy this machine fetched last.`)
   }
-  return dir
+  return code === 0
 }
 
 // The program runs from ~/.openmods/cli, a copy of the registry's cli/ taken
@@ -2456,10 +2500,28 @@ async function cmdCheck() {
 
 // Every command (asking for help aside), and the launcher's background look,
 // keeps the launchers current and stops a revoked mod.
+// Commands that pull the registry anyway (aliases included, as they run the
+// same function); for them the list of removed mods comes with the pull,
+// unless OPENMODS_REVOKED_URL names another list, or the pull failed, or the
+// registry's own list cannot be read: then it is fetched on its own.
+const pullsFirst = () => [cmdList, cmdInfo, cmdInstall, cmdUpdate, cmdCheckUpdates].includes(commands[positional[0] ?? ""]!)
+function registryListReadable(reg: string) {
+  try {
+    const r = readJsonFile(path.join(reg, "revoked.json")).revoked
+    return Array.isArray(r) && r.every(isRevocation)
+  } catch {
+    return false
+  }
+}
 async function keepCurrent(fetchRevoked: boolean) {
   const reg = await ensureRegistry()
   // Before anything is installed too: install refuses a removed mod.
-  const known = await fetchRevocations(reg, !fetchRevoked)
+  let known = false
+  if (pullsFirst() && reg === path.join(HOME, "registry") && pullsAllowed && !process.env.OPENMODS_REVOKED_URL) {
+    await refreshRegistry()
+    known = (await pulled!) && registryListReadable(reg)
+  }
+  if (!known) known = await fetchRevocations(reg, !fetchRevoked)
   const state = loadState()
   for (const [id, e] of Object.entries(state)) {
     if (!existsSync(path.join(reg, "harnesses", `${id}.json`))) continue
@@ -2482,13 +2544,14 @@ async function keepCurrent(fetchRevoked: boolean) {
 }
 
 // The launcher's look for news, run in the background at every start at a
-// terminal (keepCurrent has already stopped any removed mod). It reads the
-// live mods list the site publishes, never pulls the registry or changes any
-// code, and leaves a note the launcher shows on its next start.
+// terminal (keepCurrent has already pulled the registry and stopped any
+// removed mod). It reads the mods list the pull brought, which never changes
+// OpenMods itself or the build, and leaves a note the launcher shows on its
+// next start.
 async function cmdCheckUpdates() {
-  const reg = await ensureRegistry()
+  // Pulled already, by keepCurrent: the registry is the news.
+  const reg = await refreshRegistry()
   const state = loadState()
-  const index = await fetchIndex(reg)
   const known = allHarnesses(reg).map((h) => h.id)
   if (positional[1] && !known.includes(positional[1])) fail(`unknown harness "${positional[1]}". Known: ${known.join(", ")}.`)
   // A harness the registry no longer has gets no news, and loses any old note.
@@ -2503,7 +2566,7 @@ async function cmdCheckUpdates() {
       continue
     }
     const h = loadHarness(reg, id)
-    const n = newsFor(reg, h, e, index)
+    const n = newsFor(reg, h, e)
     if (!n.key) {
       rmSync(file, { force: true })
       continue
@@ -2539,43 +2602,18 @@ function readNote(id: string): Record<string, string> | null {
   return out
 }
 
-// The live mods list: what openmods.dev publishes on every change to the
-// registry, so news reaches users without pulling the registry. For the
-// official registry only; OPENMODS_INDEX_URL names another, and set empty
-// makes the registry checkout the source, as it is for any other registry.
-type IndexMod = { id: string; harnesses: Record<string, { releases: { release: string; update: number }[] }> }
-type LiveIndex = { harnesses: { id: string; latest: string }[]; mods: IndexMod[]; base?: Record<string, { release: string; update: number }[]> }
-async function fetchIndex(reg: string): Promise<LiveIndex | null> {
-  let url = process.env.OPENMODS_INDEX_URL
-  if (url === undefined && reg === path.join(HOME, "registry")) {
-    const origin = (await $`git -C ${reg} remote get-url origin`.nothrow().quiet()).stdout.toString().trim()
-    if (sameRepo(origin, DEFAULT_REGISTRY)) url = "https://openmods.dev/index.json"
-  }
-  if (!url) return null
-  try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(5000) })
-    const body = res.ok ? ((await res.json()) as LiveIndex) : null
-    return body && Array.isArray(body.mods) && Array.isArray(body.harnesses) ? body : null
-  } catch {
-    return null
-  }
-}
-
 /**
  * What to tell a user about one harness: a newer release every mod that is on
  * supports (\`moveTo\`), and fixes of their mods at the release they would be
  * on (\`fixes\`), either one asked about; else a newer release some mods hold
- * back (\`held\`), said once. From the live list when there is one, else from
- * the registry checkout; a local mod always from its own folder.
+ * back (\`held\`), said once. From the registry, and a local mod from its own
+ * folder.
  */
-function newsFor(reg: string, h: Harness, e: State[string], index: LiveIndex | null) {
+function newsFor(reg: string, h: Harness, e: State[string]) {
   type Rel = { release: string; update: number }
   const mods = listMods(reg, h.id)
   const releasesOf = (id: string): Rel[] => {
-    // A local mod is read from its own folder; a published one from the live list.
     const m = mods.find((x) => x.id === id)
-    const live = id === BASE_ID ? index?.base?.[h.id] : index?.mods.find((x) => x.id === id)?.harnesses[h.id]?.releases
-    if (live && m?.source !== "local") return live
     return m ? m.versions.map((v) => ({ release: rel(v.ref), update: v.update ?? 1 })) : []
   }
   const shared = (list: { releases: Rel[] }[]) =>
@@ -2593,8 +2631,8 @@ function newsFor(reg: string, h: Harness, e: State[string], index: LiveIndex | n
     const at = m.releases.find((r) => r.release === target)
     return have !== undefined && at && at.update > have ? [{ id: m.id, update: at.update }] : []
   })
-  // The newest release known: the live list's, else the one the release
-  // watch last checked, and any a mod has a version for.
+  // The newest release known: the one the release watch last checked, and
+  // any a mod has a version for.
   const watched = (() => {
     try {
       return readJsonFile(path.join(reg, "status", `${h.id}.json`)).tested as string | undefined
@@ -2602,7 +2640,7 @@ function newsFor(reg: string, h: Harness, e: State[string], index: LiveIndex | n
       return undefined
     }
   })()
-  const known = [index?.harnesses.find((x) => x.id === h.id)?.latest ?? "", watched ? rel(watched) : "", ...withBase.flatMap((m) => m.releases.map((r) => r.release))].filter(Boolean)
+  const known = [watched ? rel(watched) : "", ...withBase.flatMap((m) => m.releases.map((r) => r.release))].filter(Boolean)
   const latest = newestFirst([current, ...known])[0]!
   const held = newerRelease(latest, target) ? withBase.filter((m) => !m.releases.some((r) => r.release === latest)).map((m) => m.id) : []
   const heldSaid = held.length ? `${h.name} ${latest} is out, but ${held.map(shown).join(", ")} ${held.length === 1 ? "has" : "have"} no version for it yet.` : ""
@@ -2740,6 +2778,7 @@ if (cmd === "help" && positional[1]) {
     }
     // `registry` shows where things are even when the check cannot run,
     // with a damaged checkout for one.
+    if (cmd !== "check-updates") markBusy()
     if (cmd === "registry") await keepCurrent(true).catch(() => {})
     else await keepCurrent(true)
     await commands[cmd]!()

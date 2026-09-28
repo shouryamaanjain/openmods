@@ -6,9 +6,9 @@
 // installer run again, does. An install from before that layout moves over
 // the first time it runs this code.
 import { beforeAll, describe, expect, test } from "bun:test"
-import { appendFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { appendFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { addFile, createHarness, createMod, git, sandbox } from "./harness"
+import { addFile, addVersion, createHarness, createMod, git, release, sandbox } from "./harness"
 
 const sb = sandbox("live-list")
 const REPO = path.resolve(import.meta.dir, "../..")
@@ -25,12 +25,14 @@ const env = () => ({
   OPENMODS_HOME: sb.om,
   OPENMODS_REGISTRY: `file://${sb.reg}`,
   OPENMODS_REVOKED_URL: "",
-  OPENMODS_INDEX_URL: "",
   OPENMODS_NO_CHECK: "1",
   TMPDIR: sb.tmp,
 })
 async function sh(...a: string[]) {
-  const p = Bun.spawn(["sh", ...a], { env: env(), stdout: "pipe", stderr: "pipe", stdin: "ignore" })
+  return shWith({}, ...a)
+}
+async function shWith(extra: Record<string, string>, ...a: string[]) {
+  const p = Bun.spawn(["sh", ...a], { env: { ...env(), ...extra }, stdout: "pipe", stderr: "pipe", stdin: "ignore" })
   const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()])
   return { code: await p.exited, out, err, all: out + err }
 }
@@ -82,6 +84,77 @@ describe("the mods list", () => {
     expect(r.out).toContain("t/fresh")
     expect(() => JSON.parse(j.out)).not.toThrow()
     expect(j.err).toContain("could not update the mods list")
+  })
+})
+
+describe("one source of mods data", () => {
+  test("the launcher's background look pulls the mods list, so it sees a release published since", async () => {
+    await release(sb, "v1.1.0", addFile("CHANGELOG.md", "1.1.0\n"))
+    await addVersion(sb, path.join(sb.reg, "mods", "t", "fresh", "fake"), "v1.1.0")
+    await commit("t/fresh for 1.1.0")
+    // The launcher itself, at a terminal, with its background look on.
+    const started = Date.now()
+    const r = await shWith({ OPENMODS_ASSUME_TTY: "1", OPENMODS_NO_CHECK: "" }, path.join(sb.om, "bin", "greet"))
+    expect(Date.now() - started).toBeLessThan(2000)
+    expect(r.code, r.all).toBe(0)
+    const note = path.join(sb.om, "updates", "fake")
+    for (let i = 0; i < 60 && !existsSync(note); i++) await Bun.sleep(250)
+    expect(readFileSync(note, "utf8")).toContain("Fake 1.1.0 is out, and all your mods support it.")
+  })
+  test("the background look leaves the registry alone while another command runs", async () => {
+    await createMod(sb, "busy", addFile("BUSY.md", "x\n"))
+    await commit("t/busy")
+    const clone = path.join(sb.om, "registry")
+    const head = async () => (await git(clone, "rev-parse", "HEAD")).stdout.toString().trim()
+    const before = await head()
+    // A command running now: this test's own process.
+    mkdirSync(path.join(sb.om, "busy"), { recursive: true })
+    writeFileSync(path.join(sb.om, "busy", String(process.pid)), "")
+    await openmods("check-updates", "fake")
+    expect(await head()).toBe(before)
+    rmSync(path.join(sb.om, "busy", String(process.pid)))
+    await openmods("check-updates", "fake")
+    expect(await head()).not.toBe(before)
+  })
+  test("a mod revoked in the registry is stopped by the pull that brings the news", async () => {
+    writeFileSync(path.join(sb.reg, "revoked.json"), JSON.stringify({ revoked: [{ id: "t/fresh", reason: "It deletes your files." }] }))
+    await commit("revoke t/fresh")
+    const r = await openmods("list")
+    expect(r.out).toContain("t/fresh was removed from OpenMods")
+    expect(readFileSync(path.join(sb.om, "bin", "greet"), "utf8")).toContain("build contains a mod removed from OpenMods")
+    writeFileSync(path.join(sb.reg, "revoked.json"), JSON.stringify({ revoked: [] }))
+    await commit("unrevoke t/fresh")
+    await openmods("list")
+    expect(readFileSync(path.join(sb.om, "bin", "greet"), "utf8")).not.toContain("removed from OpenMods")
+  })
+  test("a marker whose process number another process took does not hold the look back", async () => {
+    await createMod(sb, "later-still", addFile("LATER.md", "x\n"))
+    await commit("t/later-still")
+    const clone = path.join(sb.om, "registry")
+    const before = (await git(clone, "rev-parse", "HEAD")).stdout.toString().trim()
+    // A process started after the marker was written: not the command that left it.
+    const other = Bun.spawn(["sleep", "30"])
+    const marker = path.join(sb.om, "busy", String(other.pid))
+    mkdirSync(path.dirname(marker), { recursive: true })
+    writeFileSync(marker, "")
+    const old = Date.now() / 1000 - 60
+    utimesSync(marker, old, old)
+    try {
+      await openmods("check-updates", "fake")
+    } finally {
+      other.kill()
+    }
+    expect((await git(clone, "rev-parse", "HEAD")).stdout.toString().trim()).not.toBe(before)
+    expect(existsSync(marker)).toBe(false)
+  })
+  test("a removed-mods list named with OPENMODS_REVOKED_URL is fetched even by commands that pull", async () => {
+    let hits = 0
+    const server = Bun.serve({ port: 0, fetch: () => (hits++, Response.json({ revoked: [] })) })
+    const url = { OPENMODS_REVOKED_URL: `http://localhost:${server.port}/revoked.json` }
+    await shWith(url, wrapper(), "list")
+    await shWith(url, wrapper(), "add", "t/fresh", "--yes")
+    expect(hits).toBe(2)
+    server.stop()
   })
 })
 
