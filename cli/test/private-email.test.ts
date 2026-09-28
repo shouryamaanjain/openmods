@@ -73,12 +73,13 @@ describe("the scrubbing", () => {
       "Reviewed-by: CI <https://ci.example/run/7>",
       "Cc: https://user@host.example/path <https://u@h.example/p>",
       "Acked-by: Jane @jane@mastodon.social <jane@example.org>",
+      "Signed-off-by: Team <alice/team@example.org>",
       "---",
       "diff --git a/f b/f",
       "+alice@example.com",
       "",
     ].join("\n")
-    expect(emailsIn(patch)).toEqual(["alice@1example.com", "alice@intranet", "bob@bücher.de", "c@9.9.9.9", "eve@example.com", "fay@example.com", "gus@example.com", "jane@example.org"])
+    expect(emailsIn(patch)).toEqual(["alice@1example.com", "alice@intranet", "bob@bücher.de", "c@9.9.9.9", "eve@example.com", "fay@example.com", "gus@example.com", "jane@example.org", "alice/team@example.org"])
     const clean = withPrivateEmails(patch, "t")
     expect(emailsIn(clean)).toEqual([])
     expect(clean).toContain("From: A <t@users.noreply.github.com>")
