@@ -1,15 +1,17 @@
 // A patch's header is published with the mod, on GitHub and on openmods.dev.
 // The addresses git puts in it are replaced with GitHub's private address for
-// the author's handle, so publishing a mod never publishes an email: the one
-// in the From line, and those of trailers such as Signed-off-by and
-// Co-authored-by. Whatever the address looks like, the <...> of those lines
-// is replaced. The rest of the commit message, like the diff, is the author's
-// own text and is left as written.
+// the author's handle, so publishing a mod never publishes an email: on the
+// From line and on trailers (Signed-off-by, Co-authored-by, Reviewed-by, Cc
+// and the like), every address, in <...> or bare, whatever it looks like. A
+// value there without an @, such as a link, stays. The rest of the commit
+// message, like the diff, is the author's own text and is left as written.
 
 const PRIVATE = /@users\.noreply\.github\.com$/i
-// "From: Name <address>", and trailers: "Signed-off-by:", "Co-authored-by:",
-// "Reviewed-by:", "Cc:" and the like, each "Name <address>".
-const ADDRESSED = /^(From|Cc|[A-Za-z][A-Za-z-]*-[Bb]y): (.*?)<([^<>\n]*)>[ \t]*$/gm
+// The lines that carry addresses: "From:", "Cc:", and "<Something>-by:".
+const ADDRESSED = /^((?:From|Cc|[A-Za-z][A-Za-z-]*-[Bb]y):)(.*)$/gm
+// On those lines: a <...> with an @ in it, or a bare word with one.
+const ADDRESS = /<([^<>]*@[^<>]*)>|([^\s<>,;]+@[^\s<>,;]+)/g
+const addressesOn = (rest: string) => [...rest.matchAll(ADDRESS)].map((m) => (m[1] ?? m[2]!).trim())
 
 /** GitHub's private address for a handle. */
 export const noreply = (handle: string) => `${handle}@users.noreply.github.com`
@@ -23,16 +25,24 @@ export function headerAndDiff(text: string): [string, string] {
   return at < 0 ? [text, ""] : [text.slice(0, at), text.slice(at)]
 }
 
-/** The patch with the addresses in its From line and trailers replaced by the handle's private address. */
+/** The patch with the addresses on its From line and trailers replaced by the handle's private address. */
 export function withPrivateEmails(text: string, handle: string): string {
   const [head, diff] = headerAndDiff(text)
-  return head.replace(ADDRESSED, (line, key: string, name: string, address: string) => (PRIVATE.test(address.trim()) ? line : `${key}: ${name}<${noreply(handle)}>`)) + diff
+  return (
+    head.replace(ADDRESSED, (_line, key: string, rest: string) =>
+      key + rest.replace(ADDRESS, (m, inBrackets?: string, bare?: string) => {
+        const address = (inBrackets ?? bare!).trim()
+        if (PRIVATE.test(address)) return m
+        return inBrackets !== undefined ? `<${noreply(handle)}>` : noreply(handle)
+      }),
+    ) + diff
+  )
 }
 
-/** The addresses in a patch's From line and trailers that are not private ones. */
+/** The addresses on a patch's From line and trailers that are not private ones. */
 export function emailsIn(text: string): string[] {
   const [head] = headerAndDiff(text)
-  return [...new Set([...head.matchAll(ADDRESSED)].map((m) => m[3]!.trim()).filter((a) => a && !PRIVATE.test(a)))]
+  return [...new Set([...head.matchAll(ADDRESSED)].flatMap((m) => addressesOn(m[2]!)).filter((a) => !PRIVATE.test(a)))]
 }
 
 /**
