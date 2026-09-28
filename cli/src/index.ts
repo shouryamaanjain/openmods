@@ -1615,10 +1615,10 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
   const failing = adding.length ? `${adding.join(" and ")} could not be built${active.length > adding.length ? ` with your other ${h.name} mods` : ""}.` : `The new ${h.name} build could not be made.`
   failNote = () => {
     const step = progress?.lastStep
+    // Fetching the source or dependencies: the progress output already says
+    // when that was a download, so nothing is guessed here.
     const advice =
-      step === "Source" || step === "Dependencies"
-        ? "A download failed: check your connection and run it again."
-        : adding.length && (step === "Patches" || step === "Build")
+      adding.length && (step === "Patches" || step === "Build")
           ? `If it fails again, \`openmods info ${adding[0]}\` shows who maintains it, to tell them.`
           : ""
     return ["", `${failing} Nothing changed: \`${h.binary}\` still runs ${runs}.`, ...(advice ? [advice] : [])]
@@ -1897,8 +1897,15 @@ async function cmdInstall() {
   })
   // Every check and question first, on every harness, so a no or a refusal
   // leaves all of them as they were.
-  for (const p of plans) await rebuild(reg, p.id, p.merged, p.off, p.adding, undefined, { plan: true })
-  for (const p of plans) await rebuild(reg, p.id, p.merged, p.off, p.adding, undefined, { asked: true })
+  // What each harness looked like when asked: if it changed before its turn
+  // to build (a dev session started in another terminal, say), it asks again.
+  const looked = (id: string) => JSON.stringify([loadState()[id] ?? null, devOf(id) ?? null])
+  const seen = new Map<string, string>()
+  for (const p of plans) {
+    await rebuild(reg, p.id, p.merged, p.off, p.adding, undefined, { plan: true })
+    seen.set(p.id, looked(p.id))
+  }
+  for (const p of plans) await rebuild(reg, p.id, p.merged, p.off, p.adding, undefined, { asked: seen.get(p.id) === looked(p.id) })
 }
 
 async function cmdUninstall() {
