@@ -322,36 +322,59 @@ const findMod = (reg: string, id: string, harness: string) => listMods(reg, harn
 // doing harm. They are never built, and a build that has one stops running
 // it: the launcher warns and starts the stock harness instead.
 type Revocation = { id: string; updates?: number[]; reason: string }
+const isRevocation = (r: unknown): r is Revocation => {
+  const x = r as Revocation
+  return !!x && typeof x.id === "string" && typeof x.reason === "string" && (x.updates === undefined || (Array.isArray(x.updates) && x.updates.every((u) => typeof u === "number")))
+}
+// The list for this run: the registry checkout's own, unless a list fetched
+// on its own says otherwise (see fetchRevocations).
+let fetchedRevocations: { list: Revocation[]; fresh: boolean } | null = null
 function revocations(reg: string): Revocation[] {
-  const read = (file: string): Revocation[] => {
-    try {
-      return existsSync(file) ? ((readJsonFile(file).revoked ?? []) as Revocation[]) : []
-    } catch {
-      return []
-    }
-  }
-  return [...read(path.join(reg, "revoked.json")), ...read(REVOKED_COPY)]
+  let local: Revocation[] = []
+  try {
+    const file = path.join(reg, "revoked.json")
+    if (existsSync(file)) local = ((readJsonFile(file).revoked ?? []) as unknown[]).filter(isRevocation)
+  } catch {}
+  if (!fetchedRevocations) return local
+  // Fetched just now: it is the list. Only the last copy, offline: whichever
+  // of it and the checkout is newer may list more, so both count.
+  return fetchedRevocations.fresh ? fetchedRevocations.list : [...local, ...fetchedRevocations.list]
 }
 
-// revoked.json is also fetched on its own, on every command the user runs,
-// so a removed mod stops running without pulling the registry (which also
-// holds the CLI's code). Only for the registry openmods cloned itself, or
-// the URL in OPENMODS_REVOKED_URL. Offline, or on any error, the last copy
-// stands; it never holds a command up for more than a few seconds.
+// The list of removed mods is fetched on its own, on every command the user
+// runs, so a removed mod stops running without pulling the registry (which
+// also holds the CLI's code). By default the list of the registry openmods
+// cloned, else the official one; OPENMODS_REVOKED_URL names another, and set
+// empty turns the fetch off. The copy kept is used only for the same list.
+// Offline, or on any error, the last copy stands; it never holds a command
+// up for more than a few seconds.
 const REVOKED_COPY = path.join(HOME, "revoked.json")
+async function revokedUrl(reg: string) {
+  const set = process.env.OPENMODS_REVOKED_URL
+  if (set !== undefined) return set
+  const origin =
+    reg === path.join(HOME, "registry") ? (await $`git -C ${reg} remote get-url origin`.nothrow().quiet()).stdout.toString().trim() : DEFAULT_REGISTRY
+  const gh = /github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(origin)
+  return gh ? `https://raw.githubusercontent.com/${gh[1]}/${gh[2]}/HEAD/revoked.json` : ""
+}
 async function fetchRevocations(reg: string) {
-  let url = process.env.OPENMODS_REVOKED_URL
-  if (!url && reg === path.join(HOME, "registry")) {
-    const origin = (await $`git -C ${reg} remote get-url origin`.nothrow().quiet()).stdout.toString().trim()
-    const gh = /github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(origin)
-    if (gh) url = `https://raw.githubusercontent.com/${gh[1]}/${gh[2]}/HEAD/revoked.json`
-  }
+  const url = await revokedUrl(reg)
   if (!url) return
+  let kept: { url?: string; revoked?: unknown[] } = {}
+  try {
+    kept = readJsonFile(REVOKED_COPY)
+  } catch {}
+  if (kept.url === url && Array.isArray(kept.revoked)) fetchedRevocations = { list: kept.revoked.filter(isRevocation), fresh: false }
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(3000) })
     // No file means nothing is revoked.
     const body = res.status === 404 ? { revoked: [] } : res.ok ? ((await res.json()) as { revoked?: unknown }) : null
-    if (body && Array.isArray(body.revoked)) writeFileSync(REVOKED_COPY, JSON.stringify({ revoked: body.revoked }) + "\n")
+    // A list with anything malformed in it is not taken; the last copy stands.
+    if (!body || !Array.isArray(body.revoked) || !body.revoked.every(isRevocation)) return
+    fetchedRevocations = { list: body.revoked, fresh: true }
+    const tmp = `${REVOKED_COPY}.${process.pid}`
+    writeFileSync(tmp, JSON.stringify({ url, revoked: body.revoked }) + "\n")
+    renameSync(tmp, REVOKED_COPY)
   } catch {}
 }
 const revocationOf = (reg: string, id: string, update: number | undefined) =>
@@ -2161,18 +2184,17 @@ async function cmdCheck() {
   if (result.unchecked || result.applies !== true || (has("typecheck") && result.typechecks !== true) || (has("build") && result.builds !== true)) process.exit(1)
 }
 
-// Every command the user runs keeps the launchers current and stops a
+// Every command keeps the launchers current and stops a
 // revoked mod; nothing does this in the background. Launchers from before
 // that run \`openmods check-updates\` once a day, which now only does this,
 // offline, and so replaces them with the launcher that just starts the build.
-const KEEPS_CURRENT = new Set(["list", "info", "install", "uninstall", "status", "on", "off", "update", "check-updates"])
 async function keepCurrent(fetchRevoked: boolean) {
   // The notes the old launcher read.
   rmSync(path.join(HOME, "updates"), { recursive: true, force: true })
-  const state = loadState()
-  if (!Object.keys(state).length) return
   const reg = await ensureRegistry()
+  // Before anything is installed too: install refuses a removed mod.
   if (fetchRevoked) await fetchRevocations(reg)
+  const state = loadState()
   for (const [id, e] of Object.entries(state)) {
     if (!existsSync(path.join(reg, "harnesses", `${id}.json`))) continue
     const h = loadHarness(reg, id)
@@ -2298,7 +2320,7 @@ if (cmd === "help" && positional[1]) {
 } else if (commands[cmd]) {
   if (has("help")) console.log(commandHelp(cmd) ?? helpText())
   else {
-    if (KEEPS_CURRENT.has(cmd)) await keepCurrent(cmd !== "check-updates")
+    await keepCurrent(cmd !== "check-updates")
     await commands[cmd]!()
   }
 } else {

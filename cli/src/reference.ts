@@ -236,7 +236,7 @@ export const GLOBAL_FLAGS: Flag[] = [
 export const ENVIRONMENT: Flag[] = [
   { flag: "OPENMODS_HOME", description: "Where everything lives. Default ~/.openmods." },
   { flag: "OPENMODS_REGISTRY", description: "A registry checkout, same as --registry; or the git URL ~/.openmods/registry is cloned from on first use." },
-  { flag: "OPENMODS_REVOKED_URL", description: "Where to fetch the list of mods removed from OpenMods. Default: revoked.json in the registry openmods cloned." },
+  { flag: "OPENMODS_REVOKED_URL", description: "Where to fetch the list of mods removed from OpenMods. Default: revoked.json of the registry openmods cloned, else the official one. Empty: no fetch; the registry checkout's own list is used." },
   { flag: "CARGO_BUILD_JOBS", description: "Rust build jobs at once. Default: one per 2.5 GB of memory, at most one per CPU." },
   { flag: "NO_COLOR, CI", description: "No colour; with CI set, build output streams as it is instead of the progress view." },
   { flag: "BUN_INSTALL_CACHE_DIR, BUN_RUNTIME_TRANSPILER_CACHE_PATH", description: "Where Bun's caches go, instead of ~/.openmods/cache." },

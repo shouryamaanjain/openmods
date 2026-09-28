@@ -179,7 +179,8 @@ describe("mods deleted from the registry", () => {
 describe("the list of removed mods, fetched on its own", () => {
   // As raw.githubusercontent.com would serve it: the registry's revoked.json.
   let listed: object | null = null
-  const server = Bun.serve({ port: 0, fetch: () => (listed ? Response.json(listed) : new Response("", { status: 404 })) })
+  let down = false
+  const server = Bun.serve({ port: 0, fetch: () => (down ? new Response("", { status: 503 }) : listed ? Response.json(listed) : new Response("", { status: 404 })) })
   const url = `http://localhost:${server.port}/revoked.json`
   const withUrl = (u: string, ...a: string[]) => run(sb, { env: { OPENMODS_REVOKED_URL: u } }, ...a)
   test("stops a mod the registry copy on this machine does not list yet, on any command", async () => {
@@ -192,8 +193,10 @@ describe("the list of removed mods, fetched on its own", () => {
     const launched = await $`sh ${launcher()}`.nothrow().quiet()
     expect(launched.stderr.toString()).toContain("t/later was removed from OpenMods")
   })
-  test("offline, the last list stands and the command still runs", async () => {
-    const r = await withUrl("http://127.0.0.1:9/revoked.json", "status")
+  test("when the list cannot be fetched, the last copy stands and the command still runs", async () => {
+    down = true
+    const r = await withUrl(url, "status")
+    down = false
     expect(r.code).toBe(0)
     expect(r.out).toContain("t/later was removed from OpenMods")
   })
@@ -202,6 +205,41 @@ describe("the list of removed mods, fetched on its own", () => {
     expect((await withUrl(url, "status")).out).not.toContain("removed from OpenMods")
     expect((await withUrl(url, "on")).code).toBe(0)
     expect((await $`sh ${launcher()}`.nothrow().quiet()).stdout.toString().trim()).not.toBe("stock greet")
+  })
+  test("every command checks, second names included", async () => {
+    listed = { revoked: [{ id: "t/later", reason: "It deletes your files." }] }
+    expect((await withUrl(url, "installed")).out).toContain("t/later was removed from OpenMods")
+  })
+  test("a list with anything malformed in it is not taken; the last one stands", async () => {
+    listed = { revoked: [null, { id: 3 }] }
+    const r = await withUrl(url, "status")
+    expect(r.code).toBe(0)
+    expect(r.out).toContain("t/later was removed from OpenMods")
+  })
+  test("a fresh list is the list, even if this machine's registry copy still names the mod", async () => {
+    writeFileSync(path.join(sb.reg, "revoked.json"), JSON.stringify({ revoked: [{ id: "t/later", reason: "It deletes your files." }] }))
+    listed = { revoked: [] }
+    expect((await withUrl(url, "status")).out).not.toContain("removed from OpenMods")
+    rmSync(path.join(sb.reg, "revoked.json"))
+  })
+  test("the copy kept of one list is not used for another", async () => {
+    listed = { revoked: [{ id: "t/later", reason: "It deletes your files." }] }
+    expect((await withUrl(url, "status")).out).toContain("removed from OpenMods")
+    // Another list, which cannot be reached: nothing is known about it.
+    expect((await withUrl("http://127.0.0.1:9/other.json", "status")).out).not.toContain("removed from OpenMods")
     server.stop()
+  })
+})
+
+describe("the list of removed mods, on a first install", () => {
+  const fresh = sandbox("safety-first")
+  const server = Bun.serve({ port: 0, fetch: () => Response.json({ revoked: [{ id: "t/early", reason: "It deletes your files." }] }) })
+  test("is fetched before anything is installed, so a removed mod is refused", async () => {
+    await createHarness(fresh)
+    await createMod(fresh, "early", setGreeting("hello from early"))
+    const r = await run(fresh, { env: { OPENMODS_REVOKED_URL: `http://localhost:${server.port}/revoked.json` } }, "install", "t/early")
+    server.stop()
+    expect(r.code).toBe(1)
+    expect(r.err).toContain("t/early was removed from OpenMods: It deletes your files.")
   })
 })

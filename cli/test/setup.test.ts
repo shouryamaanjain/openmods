@@ -19,6 +19,7 @@ async function bash(lines: string[]) {
     env: {
       HOME: sb.home,
       OPENMODS_HOME: sb.om,
+      OPENMODS_REVOKED_URL: "",
       OM_CLI: CLI,
       OM_REG: sb.reg,
       PATH: [bin(), stockDir(), path.dirname(process.execPath), "/usr/bin", "/bin"].join(":"),

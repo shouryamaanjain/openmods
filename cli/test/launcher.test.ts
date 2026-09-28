@@ -12,7 +12,7 @@ const launcher = () => path.join(sb.om, "bin", "greet")
 // As from a terminal, where the old launcher would have asked.
 async function launch() {
   const p = Bun.spawn(["sh", launcher()], {
-    env: { ...process.env, HOME: sb.home, OPENMODS_HOME: sb.om, OPENMODS_REGISTRY: sb.reg, OPENMODS_ASSUME_TTY: "1" },
+    env: { ...process.env, HOME: sb.home, OPENMODS_HOME: sb.om, OPENMODS_REGISTRY: sb.reg, OPENMODS_REVOKED_URL: "", OPENMODS_ASSUME_TTY: "1" },
     stdin: new TextEncoder().encode("y\n"),
     stdout: "pipe",
     stderr: "pipe",
