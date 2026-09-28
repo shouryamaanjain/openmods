@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Shouryamaan Jain <jainshouryamaan@gmail.com>
+From: Shouryamaan Jain <shouryamaanjain@users.noreply.github.com>
 Date: Thu, 24 Sep 2026 13:47:09 +0530
 Subject: [PATCH] feat(tui): add /invaders, Space Invaders in the bottom pane
  while Codex works
