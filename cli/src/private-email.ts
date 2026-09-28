@@ -11,12 +11,20 @@ const PRIVATE = /@users\.noreply\.github\.com$/i
 const ADDRESSED = /^((?:From|Cc|[A-Za-z][A-Za-z-]*-[Bb]y):)(.*)$/gm
 // On those lines: a <...> or a bare word with an @ in it...
 const ADDRESS = /<([^<>]*@[^<>]*)>|([^\s<>,;]+@[^\s<>,;]+)/g
-// ...that is shaped like an address: one @, something before it, no URL
-// scheme, and no : after the @ (an address's domain never has one). A handle
-// such as @jane@mastodon.social, or a link such as https://user@host/path or
-// git@github.com:org/repo, is not one, and stays; alice/team@example.org is.
-const addressShaped = (s: string) => !s.startsWith("@") && s.split("@").length === 2 && !s.includes("://") && !s.split("@")[1]!.includes(":")
-const addressesOn = (rest: string) => [...rest.matchAll(ADDRESS)].map((m) => (m[1] ?? m[2]!).trim()).filter(addressShaped)
+// ...that is shaped like an address: one @, something before it, and no URL
+// scheme. In <...>, that is all (so <user@[IPv6:::1]> is one). A bare word
+// loses trailing punctuation first, and must have no : after the @ (a domain
+// never has one): a handle such as @jane@mastodon.social, or a link such as
+// https://user@host/path or git@github.com:org/repo, is not an address and
+// stays; alice/team@example.org, and alice@example.com in
+// "alice@example.com: follow-up", are.
+const shaped = (s: string) => !s.startsWith("@") && s.split("@").length === 2 && !s.includes("://")
+const bareAddress = (w: string) => {
+  const s = w.replace(/[.,;:!?)]+$/, "")
+  return shaped(s) && !s.split("@")[1]!.includes(":") ? s : null
+}
+const addressesOn = (rest: string) =>
+  [...rest.matchAll(ADDRESS)].flatMap((m) => (m[1] !== undefined ? (shaped(m[1].trim()) ? [m[1].trim()] : []) : [bareAddress(m[2]!)].filter((a): a is string => !!a)))
 
 /** GitHub's private address for a handle. */
 export const noreply = (handle: string) => `${handle}@users.noreply.github.com`
@@ -36,9 +44,9 @@ export function withPrivateEmails(text: string, handle: string): string {
   return (
     head.replace(ADDRESSED, (_line, key: string, rest: string) =>
       key + rest.replace(ADDRESS, (m, inBrackets?: string, bare?: string) => {
-        const address = (inBrackets ?? bare!).trim()
-        if (!addressShaped(address) || PRIVATE.test(address)) return m
-        return inBrackets !== undefined ? `<${noreply(handle)}>` : noreply(handle)
+        if (inBrackets !== undefined) return shaped(inBrackets.trim()) && !PRIVATE.test(inBrackets.trim()) ? `<${noreply(handle)}>` : m
+        const address = bareAddress(bare!)
+        return address && !PRIVATE.test(address) ? m.replace(address, noreply(handle)) : m
       }),
     ) + diff
   )

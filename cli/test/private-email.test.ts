@@ -75,12 +75,14 @@ describe("the scrubbing", () => {
       "Acked-by: Jane @jane@mastodon.social <jane@example.org>",
       "Signed-off-by: Team <alice/team@example.org>",
       "Cc: git@github.com:org/repo",
+      "Cc: hal@example.com: follow-up",
+      "Cc: Ivy <ivy@[IPv6:2001:db8::1]>",
       "---",
       "diff --git a/f b/f",
       "+alice@example.com",
       "",
     ].join("\n")
-    expect(emailsIn(patch)).toEqual(["alice@1example.com", "alice@intranet", "bob@bücher.de", "c@9.9.9.9", "eve@example.com", "fay@example.com", "gus@example.com", "jane@example.org", "alice/team@example.org"])
+    expect(emailsIn(patch)).toEqual(["alice@1example.com", "alice@intranet", "bob@bücher.de", "c@9.9.9.9", "eve@example.com", "fay@example.com", "gus@example.com", "jane@example.org", "alice/team@example.org", "hal@example.com", "ivy@[IPv6:2001:db8::1]"])
     const clean = withPrivateEmails(patch, "t")
     expect(emailsIn(clean)).toEqual([])
     expect(clean).toContain("From: A <t@users.noreply.github.com>")
@@ -91,6 +93,8 @@ describe("the scrubbing", () => {
     expect(clean).toContain("Reviewed-by: CI <https://ci.example/run/7>")
     expect(clean).toContain("Cc: https://user@host.example/path <https://u@h.example/p>")
     expect(clean).toContain("Cc: git@github.com:org/repo")
+    expect(clean).toContain("Cc: t@users.noreply.github.com: follow-up")
+    expect(clean).toContain("Cc: Ivy <t@users.noreply.github.com>")
     expect(clean).toContain("Acked-by: Jane @jane@mastodon.social <t@users.noreply.github.com>")
   })
   test("leaves the rest of the message as written: links and versions are the author's text", () => {
