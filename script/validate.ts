@@ -54,6 +54,11 @@ for (const id of harnesses) {
     errors.push(`harnesses/${id}.json: args must be a list of arguments, none of them empty`)
   if (h.stockWhen !== undefined && (!Array.isArray(h.stockWhen) || !h.stockWhen.length || h.stockWhen.some((a: unknown) => typeof a !== "string" || !a)))
     errors.push(`harnesses/${id}.json: stockWhen must be a list of arguments, none of them empty`)
+  if (h.valueOptions !== undefined && (!Array.isArray(h.valueOptions) || h.valueOptions.some((a: unknown) => typeof a !== "string" || !a.startsWith("-"))))
+    errors.push(`harnesses/${id}.json: valueOptions must be a list of options, each starting with -`)
+  const server = h.sharedServer
+  if (server !== undefined && (typeof server !== "object" || server === null || ["home", "binary", "reset"].some((k) => typeof server[k] !== "string" || !server[k])))
+    errors.push(`harnesses/${id}.json: sharedServer needs "home", "binary" and "reset"`)
   const unless = h.argsUnless
   const words = (v: unknown) => Array.isArray(v) && v.length > 0 && v.every((a) => typeof a === "string" && a)
   if (
