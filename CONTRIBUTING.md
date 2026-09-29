@@ -142,3 +142,7 @@ The definition needs:
 - `releaseTagPattern`: which tags are releases.
 
 The **standards** check makes sure each of these is there, except `installer.paths`, which is optional. Greptile and a maintainer then read every command in it, because they run on users' machines and in CI. A maintainer runs the **harness build** workflow to prove it builds before any mod ships. If a modded build and the stock one would clash side by side, the fix is the harness's own switches in `args` or `argsUnless`, never a patch: OpenMods does not change a harness's code. A harness that is already supported is changed only by maintainers; open an issue to suggest a change.
+
+## Releasing OpenMods
+
+Users only ever run a release of OpenMods, a `vX.Y.Z` tag: the installer and `openmods update` take the newest one, so a change merged into `cli/` reaches nobody until it is released. To release, raise the version in `cli/package.json` in a pull request. Once it is merged and the tests pass on main, the **release** workflow tags that commit and publishes a GitHub release with its notes. A change that the registry relies on, such as a new field in a harness definition, raises the version in the same pull request, so its release goes out with it. Users' copies read the registry as soon as it changes, and ignore what they do not know until they update.

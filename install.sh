@@ -1,7 +1,8 @@
 #!/bin/sh
 # Installs the openmods CLI: a clone of the registry (the mods list) under
-# ~/.openmods, the program itself in ~/.openmods/cli, and an `openmods`
-# command in ~/.openmods/bin, which install also puts first on your PATH.
+# ~/.openmods, the newest release of the program itself in ~/.openmods/cli,
+# and an `openmods` command in ~/.openmods/bin, which install also puts first
+# on your PATH.
 # The CLI runs on its own copy of Bun, kept in ~/.openmods/toolchains with
 # the versions harness builds pin; nothing outside ~/.openmods changes
 # except the PATH line in your shell's startup files. Needs git, curl and tar.
@@ -28,28 +29,43 @@ else
   esac
 fi
 
+# The newest release (a vX.Y.Z tag): code merged since then never runs here.
+# A remote that stalls gives up rather than hanging.
+export GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=15 GIT_TERMINAL_PROMPT=0
+TAG=$(git -C "$OM/registry" ls-remote --tags --refs origin 'v*' | sed -n 's#.*refs/tags/\(v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$#\1#p' |
+  awk -F. '{ sub(/^v/, "", $1); printf "%09d%09d%09d v%s.%s.%s\n", $1, $2, $3, $1, $2, $3 }' | sort | tail -n 1 | cut -d' ' -f2)
+[ -n "$TAG" ] || { echo "openmods: found no release of OpenMods at $REG; is it reachable?"; exit 1; }
+git -C "$OM/registry" fetch -q --depth 1 origin "+refs/tags/$TAG:refs/tags/$TAG"
+NEW="$OM/.install-$$"
+rm -rf "$NEW" && mkdir -p "$NEW"
+trap 'rm -rf "$NEW"' EXIT
+git -C "$OM/registry" archive --format=tar "$TAG" cli/src cli/package.json cli/get-bun.sh | tar -x -C "$NEW"
+
 if [ ! -x "$BUN" ]; then
   echo "Getting Bun $BUN_VERSION for the CLI, into $OM/toolchains"
-  sh "$OM/registry/cli/get-bun.sh" "$BUN_VERSION" "$OM/toolchains/bun-$BUN_VERSION"
+  sh "$NEW/cli/get-bun.sh" "$BUN_VERSION" "$OM/toolchains/bun-$BUN_VERSION"
 fi
 
-# Bun caches the CLI's transpiled code; on Linux it would go in ~/.bun.
-cat > "$OM/bin/openmods" <<WRAP
-#!/bin/sh
-OM="\${OPENMODS_HOME:-\$HOME/.openmods}"
-export BUN_RUNTIME_TRANSPILER_CACHE_PATH="\${BUN_RUNTIME_TRANSPILER_CACHE_PATH-\$OM/cache/transpiler}"
-exec "\$OM/toolchains/bun-$BUN_VERSION/bin/bun" "\$OM/registry/cli/src/index.ts" "\$@"
-WRAP
-chmod 755 "$OM/bin/openmods"
-
-# PATH, and a launcher in front of each harness you have, which starts your
-# stock one until you install a mod for it (`setup`, run only from here).
-# Run from the fresh clone, this also copies the program to ~/.openmods/cli,
-# where it runs from then on, so pulling the mods list never changes it.
-"$OM/bin/openmods" setup
-if [ ! -f "$OM/cli/.version" ] || ! grep -q '"\$OM/cli/src/index.ts"' "$OM/bin/openmods"; then
+# The program in ~/.openmods/cli, where it runs from then on, so pulling the
+# mods list never changes it; PATH; and a launcher in front of each harness
+# you have, which starts your stock one until you install a mod for it
+# (`setup`, run only from here, from the release just fetched). Bun caches
+# the CLI's transpiled code; on Linux it would go in ~/.bun.
+if ! OPENMODS_RELEASE="${TAG#v}" BUN_RUNTIME_TRANSPILER_CACHE_PATH="${BUN_RUNTIME_TRANSPILER_CACHE_PATH-$OM/cache/transpiler}" "$BUN" "$NEW/cli/src/index.ts" setup ||
+  [ "$(cat "$OM/cli/.version" 2>/dev/null)" != "${TAG#v}" ]; then
   echo "openmods could not set itself up in $OM/cli; the message above says why."
   exit 1
 fi
+
+# The openmods command, only now that the program it runs is there: until
+# then an older one keeps working.
+cat > "$OM/bin/openmods.$$" <<WRAP
+#!/bin/sh
+OM="\${OPENMODS_HOME:-\$HOME/.openmods}"
+export BUN_RUNTIME_TRANSPILER_CACHE_PATH="\${BUN_RUNTIME_TRANSPILER_CACHE_PATH-\$OM/cache/transpiler}"
+exec "\$OM/toolchains/bun-$BUN_VERSION/bin/bun" "\$OM/cli/src/index.ts" "\$@"
+WRAP
+chmod 755 "$OM/bin/openmods.$$"
+mv -f "$OM/bin/openmods.$$" "$OM/bin/openmods"
 
 echo "openmods is installed. Try: openmods list"

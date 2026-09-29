@@ -125,7 +125,7 @@ export const COMMANDS: Command[] = [
     usage: "openmods update [harness]",
     summary: "Pull the registry and rebuild if anything you have installed changed.",
     description: [
-      "Moves you to the newest release that every mod you have on has a version for, using each mod's version for it. The registry's release check adds those versions when a mod still applies and typechecks on a new harness release. A rebuild happens only when that release, or a mod's patches for it, changed; otherwise it says the build is already up to date. When a newer release is out but some of your mods have no version for it yet, it names them. The launcher tells you when an update is waiting and runs this on a yes. It also updates OpenMods itself when the registry has a newer version, and says from which to which; the only other thing that changes the program is running the installer again.",
+      "Moves you to the newest release that every mod you have on has a version for, using each mod's version for it. The registry's release check adds those versions when a mod still applies and typechecks on a new harness release. A rebuild happens only when that release, or a mod's patches for it, changed; otherwise it says the build is already up to date. When a newer release is out but some of your mods have no version for it yet, it names them. The launcher tells you when an update is waiting and runs this on a yes. It also updates OpenMods itself when a newer release of it is out (a vX.Y.Z tag of the registry; code merged since is never used), and says from which version to which; the only other thing that changes the program is running the installer again.",
     ],
     flags: [{ flag: "--force", description: "Rebuild even if nothing changed." }],
     examples: [{ command: "openmods update" }, { command: "openmods update codex --force" }],
@@ -223,7 +223,7 @@ export const ENVIRONMENT: Flag[] = [
 
 export const FILES: Flag[] = [
   { flag: "~/.openmods/bin/openmods", description: "The openmods command itself, which runs the CLI from ~/.openmods/cli on its own Bun." },
-  { flag: "~/.openmods/cli", description: "The program itself, a copy of the registry's cli/. Only the installer and `openmods update` replace it, and update says from which version to which." },
+  { flag: "~/.openmods/cli", description: "The program itself: the newest release of OpenMods (a vX.Y.Z tag of the registry) when it was installed or last updated. Only the installer and `openmods update` replace it, and update says from which version to which." },
   { flag: "~/.openmods/registry", description: "The registry: the mods list, their patches, the build recipes. `list`, `info`, `install` and `update` pull it; pulling never changes the program." },
   { flag: "~/.openmods/bin/<binary>", description: "The launcher for a harness: the modded build while on, your stock one while off or before you install a mod. It stays put so a shell that remembers commands (bash, zsh) keeps finding it." },
   { flag: "~/.openmods/launchers.json", description: "When each launcher first appeared, so a terminal opened before that is told to run `hash -r`." },

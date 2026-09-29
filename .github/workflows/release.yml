@@ -1,0 +1,51 @@
+name: release
+
+# Releases the openmods program. Users only ever get a release (a vX.Y.Z tag):
+# the installer and `openmods update` take the newest one, so code merged into
+# main reaches them only when cli/package.json's version is raised. After the
+# tests pass on a push to main, a version that has no release yet gets one,
+# on that commit (or on its tag, if the tag is already there).
+
+on:
+  workflow_run:
+    workflows: [validate]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          version=$(jq -r .version cli/package.json)
+          # The form the installer and `openmods update` take as a release.
+          if ! printf '%s\n' "$version" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "cli/package.json's version must be X.Y.Z, not $version"
+            exit 1
+          fi
+          if gh release view "v$version" >/dev/null 2>&1; then
+            echo "OpenMods $version is already released."
+            exit 0
+          fi
+          # A tag of that name on another commit would be released instead of
+          # the one these tests passed on: a maintainer sorts that out.
+          # The commit it names: the peeled line of an annotated tag, else the tag.
+          tagged=$(git ls-remote origin "refs/tags/v$version*" | awk -v t="refs/tags/v$version" '$2 == t "^{}" { p = $1 } $2 == t { l = $1 } END { print (p != "" ? p : l) }')
+          if [ -n "$tagged" ] && [ "$tagged" != "$SHA" ]; then
+            echo "v$version is already a tag, on $tagged, not on $SHA; not releasing it."
+            exit 1
+          fi
+          gh release create "v$version" --target "$SHA" --title "OpenMods $version" --generate-notes

@@ -3,10 +3,10 @@
 // first, so a mod published a minute ago shows up without updating anything.
 // The program runs from its own copy (~/.openmods/cli, a link to a version
 // folder), so pulling never changes it; only `openmods update`, or the
-// installer run again, does. An install from before that layout moves over
+// installer run again, does, and only to a release (a vX.Y.Z tag). An install from before that layout moves over
 // the first time it runs this code.
 import { beforeAll, describe, expect, test } from "bun:test"
-import { appendFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs"
+import { appendFileSync, chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { addFile, addVersion, createHarness, createMod, git, release, sandbox } from "./harness"
 
@@ -18,6 +18,7 @@ const commit = async (message: string) => {
   await git(sb.reg, "add", "-A")
   await git(sb.reg, "commit", "-qm", message)
 }
+const releaseOpenMods = (version: string) => git(sb.reg, "tag", `v${version}`)
 const env = () => ({
   ...process.env,
   HOME: sb.home,
@@ -47,6 +48,7 @@ beforeAll(async () => {
   for (const f of ["src", "get-bun.sh", "package.json"]) cpSync(path.join(REPO, "cli", f), path.join(sb.reg, "cli", f), { recursive: true })
   await git(sb.reg, "init", "-q")
   await commit("registry")
+  await releaseOpenMods("0.1.0")
   // The Bun the installer would download: the one running these tests.
   mkdirSync(path.join(sb.om, "toolchains", "bun-1.3.14", "bin"), { recursive: true })
   symlinkSync(process.execPath, path.join(sb.om, "toolchains", "bun-1.3.14", "bin", "bun"))
@@ -57,10 +59,10 @@ describe("the installer", () => {
     const r = await installer()
     expect(r.code, r.all).toBe(0)
     expect(lstatSync(copy()).isSymbolicLink()).toBe(true)
-    expect(readFileSync(path.join(copy(), ".version"), "utf8")).toMatch(/^0\.1\.0 \([0-9a-f]+\)$/m)
+    expect(readFileSync(path.join(copy(), ".version"), "utf8")).toBe("0.1.0\n")
     expect(readFileSync(wrapper(), "utf8")).toContain('"$OM/cli/src/index.ts"')
     // status names the version running: the installed copy's.
-    expect((await openmods("status")).out).toMatch(/openmods {3}0\.1\.0 \([0-9a-f]+\), home /)
+    expect((await openmods("status")).out).toMatch(/openmods {3}0\.1\.0, home /)
   })
 })
 
@@ -170,19 +172,36 @@ describe("the program", () => {
     expect(r.all).not.toContain("OpenMods is updated")
     expect(version()).toBe(before)
   })
-  test("pulling never changes it; openmods update switches to the new one and says so", async () => {
+  test("pulling never changes it; code not released yet never runs; openmods update switches to a new release and says so", async () => {
     const before = version()
     appendFileSync(path.join(sb.reg, "cli", "src", "reference.ts"), "\n// a newer openmods\n")
     await commit("a newer openmods")
     expect((await openmods("list")).code).toBe(0)
     expect(readFileSync(path.join(copy(), "src", "reference.ts"), "utf8")).not.toContain("a newer openmods")
+    // Merged, but not released: update leaves the program as it is.
+    expect((await openmods("update")).all).not.toContain("OpenMods is updated")
+    expect(readFileSync(path.join(copy(), "src", "reference.ts"), "utf8")).not.toContain("a newer openmods")
+    await releaseOpenMods("0.1.1")
+    // A tag that is not a plain version is not a release.
+    await git(sb.reg, "tag", "v9.9.9-rc1")
     const r = await openmods("update")
     expect(r.code, r.all).toBe(0)
-    expect(r.all).toContain(`OpenMods is updated: ${before} → `)
+    expect(r.all).toContain(`OpenMods is updated: ${before} → 0.1.1.`)
+    expect(version()).toBe("0.1.1")
     expect(readFileSync(path.join(copy(), "src", "reference.ts"), "utf8")).toContain("a newer openmods")
     // The version before stays, for a command that started on it.
-    expect(readdirSync(path.join(sb.om, "cli-versions")).filter((d) => !d.includes(".")).length).toBe(2)
+    expect(readdirSync(path.join(sb.om, "cli-versions")).filter((d) => !d.startsWith(".")).length).toBe(2)
     expect((await openmods("update")).all).not.toContain("OpenMods is updated")
+  })
+  test("when the releases cannot be reached, update says so and goes on with the mods", async () => {
+    const before = version()
+    const clone = path.join(sb.om, "registry")
+    await git(clone, "remote", "set-url", "origin", path.join(sb.T, "unreachable"))
+    const r = await openmods("update")
+    await git(clone, "remote", "set-url", "origin", `file://${sb.reg}`)
+    expect(r.code, r.all).toBe(0)
+    expect(r.err).toContain("note: could not update OpenMods itself (could not reach ")
+    expect(version()).toBe(before)
   })
   test("an install from before runs it from the registry clone, and moves it out the first time", async () => {
     rmSync(copy())
@@ -211,6 +230,7 @@ describe("the program", () => {
   test("the installer fails, and says so, when it cannot set the program up", async () => {
     appendFileSync(path.join(sb.reg, "cli", "src", "reference.ts"), "\n// another openmods\n")
     await commit("another openmods")
+    await releaseOpenMods("0.1.2")
     // A file where the version folders go: nothing can be set up there, for
     // any user, root included. The current copy is kept elsewhere meanwhile.
     const versions = path.join(sb.om, "cli-versions")
@@ -220,17 +240,87 @@ describe("the program", () => {
     rmSync(copy())
     symlinkSync(path.join(aside, current), copy())
     writeFileSync(versions, "not a folder\n")
+    // The openmods command of an older install, which must keep working.
+    const before = readFileSync(wrapper(), "utf8")
+    writeFileSync(wrapper(), before.replace('"$OM/cli/src/index.ts"', '"$OM/registry/cli/src/index.ts"'), { mode: 0o755 })
     const r = await installer()
+    const after = readFileSync(wrapper(), "utf8")
+    writeFileSync(wrapper(), before, { mode: 0o755 })
     rmSync(versions)
     renameSync(aside, versions)
     rmSync(copy())
     symlinkSync(path.join(versions, current), copy())
     expect(r.code).not.toBe(0)
     expect(r.all).toContain("openmods could not set itself up")
+    expect(after).toContain('"$OM/registry/cli/src/index.ts"')
   })
-  test("running the installer again leaves it working", async () => {
+  test("the installer fails when setup does, even with the program already on that release", async () => {
+    // A harness definition setup cannot read.
+    const bad = path.join(sb.om, "registry", "harnesses", "broken.json")
+    writeFileSync(bad, "{")
+    const r = await installer()
+    rmSync(bad)
+    expect(r.code).not.toBe(0)
+    expect(r.all).toContain("openmods could not set itself up")
+  })
+  test("setup on its own leaves the program alone and needs no network", async () => {
+    const before = version()
+    const clone = path.join(sb.om, "registry")
+    await git(clone, "remote", "set-url", "origin", path.join(sb.T, "unreachable"))
+    const r = await openmods("setup")
+    await git(clone, "remote", "set-url", "origin", `file://${sb.reg}`)
+    expect(r.code, r.all).toBe(0)
+    expect(version()).toBe(before)
+  })
+  test("an update keeps the version the command itself runs from, even when the link was switched away from it", async () => {
+    const versions = path.join(sb.om, "cli-versions")
+    // This command runs 0.1.1 while another has already switched the link
+    // to 0.1.2, and a newer release is out.
+    const mine = path.join(versions, "0.1.1")
+    if (!existsSync(mine)) {
+      cpSync(realpathSync(copy()), mine, { recursive: true })
+      writeFileSync(path.join(mine, ".version"), "0.1.1\n")
+    }
+    appendFileSync(path.join(sb.reg, "cli", "src", "reference.ts"), "\n// yet another openmods\n")
+    await commit("yet another openmods")
+    await releaseOpenMods("0.1.3")
+    const r = await sh("-c", `exec "$0" "$@"`, path.join(sb.om, "toolchains", "bun-1.3.14", "bin", "bun"), path.join(mine, "src", "index.ts"), "update")
+    expect(r.code, r.all).toBe(0)
+    expect(version()).toBe("0.1.3")
+    expect(existsSync(mine)).toBe(true)
+  })
+  test("a release is taken as the remote has it, not as a tag fetched here before", async () => {
+    // Fetched here once, then moved on the remote before it was set up.
+    appendFileSync(path.join(sb.reg, "cli", "src", "reference.ts"), "\n// first try\n")
+    await commit("first try")
+    await releaseOpenMods("0.1.4")
+    await git(path.join(sb.om, "registry"), "fetch", "-q", "origin", "tag", "v0.1.4")
+    appendFileSync(path.join(sb.reg, "cli", "src", "reference.ts"), "\n// the real one\n")
+    await commit("the real one")
+    await git(sb.reg, "tag", "-f", "v0.1.4")
+    const r = await openmods("update")
+    expect(r.code, r.all).toBe(0)
+    expect(version()).toBe("0.1.4")
+    expect(readFileSync(path.join(copy(), "src", "reference.ts"), "utf8")).toContain("the real one")
+  })
+  test("when the openmods command cannot be pointed at the new version, it says so and keeps working", async () => {
+    // An install from before, whose command runs the registry clone, with
+    // its bin folder read-only.
+    const bin = path.join(sb.om, "bin")
+    const before = readFileSync(wrapper(), "utf8")
+    writeFileSync(wrapper(), before.replace('"$OM/cli/src/index.ts"', '"$OM/registry/cli/src/index.ts"'), { mode: 0o755 })
+    rmSync(copy())
+    chmodSync(bin, 0o555)
+    const r = await openmods("status")
+    chmodSync(bin, 0o755)
+    writeFileSync(wrapper(), before, { mode: 0o755 })
+    expect(r.code, r.all).toBe(0)
+    expect(r.err).toContain("the openmods command could not be pointed at it")
+  })
+  test("running the installer again leaves it working, on the newest release", async () => {
     const r = await installer()
     expect(r.code, r.all).toBe(0)
+    expect(version()).toBe("0.1.4")
     expect(readFileSync(wrapper(), "utf8")).toContain('"$OM/cli/src/index.ts"')
     expect((await openmods("status")).code).toBe(0)
   })
