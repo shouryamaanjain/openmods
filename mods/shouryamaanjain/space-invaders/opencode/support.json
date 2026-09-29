@@ -2,6 +2,15 @@
   "$schema": "../../../../schema/support.schema.json",
   "versions": [
     {
+      "ref": "v2.0.19",
+      "commit": "1fd016ef32286de9489b7b24f1029f52c49a27b3",
+      "patches": [
+        "v2.0.19/0001-feat-tui-add-invaders-Space-Invaders-in-the-right-ha.patch"
+      ],
+      "update": 3,
+      "note": "OpenCode 2: the game takes the right pane"
+    },
+    {
       "ref": "v2.0.18",
       "commit": "cd9a14a6b688d4021bee381dfd39d2cef9c0f862",
       "patches": [

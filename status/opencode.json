@@ -1,5 +1,6 @@
 {
-  "tested": "v2.0.18",
-  "recipe": "verified",
-  "checked": "2026-09-27T01:16:09.581Z"
+  "tested": "v2.0.19",
+  "from": "v2.0.18",
+  "recipe": "unchanged",
+  "checked": "2026-09-29T05:27:27.732Z"
 }
