@@ -38,6 +38,46 @@
   "env": {
     "OPENCODE_DISABLE_AUTOUPDATE": "1"
   },
+  "valueOptions": [
+    "--server",
+    "--session",
+    "-s",
+    "--prompt"
+  ],
+  "sameRelease": {
+    "stockVersion": "user-agent=opencode/[^/ ]*/([0-9][0-9.]*)/cli",
+    "stockWhen": [
+      "service",
+      "pair",
+      "mcp",
+      "plugin",
+      "debug",
+      "--service"
+    ],
+    "env": {
+      "OPENCODE_DISABLE_CHANNEL_DB": "1"
+    },
+    "envUnlessModsChange": [
+      "packages/core/src/database/**",
+      "packages/core/src/**/sql.ts",
+      "packages/core/src/**/*.sql.ts"
+    ],
+    "argsLast": {
+      "args": [
+        "--standalone"
+      ],
+      "unless": [
+        "upgrade",
+        "update",
+        "uninstall",
+        "acp",
+        "serve",
+        "--server",
+        "--server=*",
+        "--standalone"
+      ]
+    }
+  },
   "recipe": [
     {
       "file": "packages/cli/script/build.ts"

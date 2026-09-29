@@ -57,7 +57,17 @@ type Harness = {
   valueOptions?: string[]
   // Where it keeps a server its stock and modded builds could share; see the schema.
   sharedServer?: { home: string; homeEnv?: string; binary: string; versionFile?: string; reset: string }
+  // What changes when the stock harness is the modded build's own release;
+  // see the schema.
+  sameRelease?: SameRelease
   releaseTagPattern?: string
+}
+type SameRelease = {
+  stockVersion: string
+  env?: Record<string, string>
+  envUnlessModsChange?: string[]
+  stockWhen?: string[]
+  argsLast?: { args: string[]; unless?: string[] }
 }
 
 // A mod is `owner/name`, with one folder per harness it supports, and in it
@@ -109,7 +119,7 @@ type Mod = {
 
 // mods: every installed mod, in apply order. off: the subset built out for now.
 // updates: which update of each mod the build holds.
-type State = Record<string, { ref: string; commit: string; mods: string[]; off: string[]; hashes: Record<string, string>; updates: Record<string, number>; artifact: string; enabled: boolean; plain?: boolean }>
+type State = Record<string, { ref: string; commit: string; mods: string[]; off: string[]; hashes: Record<string, string>; updates: Record<string, number>; artifact: string; enabled: boolean; plain?: boolean; changed?: string[] }>
 
 const HOME = process.env.OPENMODS_HOME ?? path.join(homedir(), ".openmods")
 // A release as people see it: "1.18.31" for the tag v1.18.31, "0.155.1" for
@@ -902,6 +912,7 @@ const loadState = (): State => {
         artifact: e.artifact ?? "",
         enabled: e.enabled ?? existsSync(path.join(HOME, "bin", id)),
         ...(e.plain ? { plain: true } : {}),
+        ...(Array.isArray(e.changed) ? { changed: e.changed } : {}),
       },
     ]),
   )
@@ -1280,7 +1291,8 @@ function argsOf(h: Harness) {
   return (h.args ?? []).map((a) => `${q(a)} `).join("")
 }
 
-function launcherOf(h: Harness, artifact: string) {
+function launcherOf(h: Harness, e: Pick<State[string], "artifact" | "ref" | "changed">) {
+  const artifact = e.artifact
   const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
   // The openmods of this home (which the installer writes once setup is
   // done), else the CLI writing this.
@@ -1320,9 +1332,66 @@ if { [ -t 0 ] && [ -t 1 ]; } || [ -n "$OPENMODS_ASSUME_TTY" ]; then
   fi
 fi
 
-${stockWhenOf(h)}${envOf(h)}${argsUnlessOf(h)}exec ${q(artifact)} ${argsOf(h)}"$@"
+${stockWhenOf(h)}${sameReleaseOf(h, e)}${envOf(h)}${argsUnlessOf(h)}exec ${q(artifact)} ${argsOf(h)}"$@"
 `
 }
+
+// Whether the build's mods change any of \`patterns\` (globs of the harness's
+// files). A build from before its changed files were kept counts as changing
+// them.
+function modsChange(e: Pick<State[string], "changed">, patterns: string[]) {
+  if (!e.changed) return true
+  const globs = patterns.map((p) => new Bun.Glob(p))
+  return e.changed.some((f) => globs.some((g) => g.match(f)))
+}
+
+// Shell lines for sameRelease: when the stock harness found is the release
+// this build is made from, the uses sameRelease names go to the stock
+// harness, its env is set (unless the mods change the files it names), and
+// its argsLast go after the user's arguments. The stock harness's version is
+// read from its program, never by running it, and kept beside the launcher
+// until that program changes.
+function sameReleaseOf(h: Harness, e: Pick<State[string], "ref" | "changed">) {
+  const same = h.sameRelease
+  if (!same) return ""
+  const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
+  const seen = path.join(HOME, "stock", h.id)
+  const env = same.envUnlessModsChange?.length && modsChange(e, same.envUnlessModsChange) ? {} : (same.env ?? {})
+  const exports = Object.entries(env)
+    .filter(([k]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k) && k !== "PATH")
+    .map(([k, v]) => `  export ${k}=${q(v)}\n`)
+    .join("")
+  const last = same.argsLast
+  return `# Your stock ${h.name}, when it is this build's release, ${rel(e.ref)}.
+${stockFindOf(h)}OPENMODS_SAME=
+if [ -n "$STOCK_BIN" ]; then
+  OPENMODS_ID=$(ls -Lli "$STOCK_BIN" 2>/dev/null)
+  OPENMODS_SEEN=${q(seen)}
+  # Kept while the program is the same file, unchanged since it was read.
+  if [ -f "$OPENMODS_SEEN" ] && ! [ "$STOCK_BIN" -nt "$OPENMODS_SEEN" ] && [ "$(sed -n 1p "$OPENMODS_SEEN")" = "$OPENMODS_ID" ]; then
+    OPENMODS_V=$(sed -n 2p "$OPENMODS_SEEN")
+  else
+    OPENMODS_V=$(LC_ALL=C grep -aoE ${q(same.stockVersion)} "$STOCK_BIN" 2>/dev/null | head -n 1 | LC_ALL=C sed -E ${q(`s#${same.stockVersion}#\\1#`)})
+    mkdir -p ${q(path.dirname(seen))} 2>/dev/null && printf '%s\n%s\n' "$OPENMODS_ID" "$OPENMODS_V" > "$OPENMODS_SEEN.$$" 2>/dev/null && mv -f "$OPENMODS_SEEN.$$" "$OPENMODS_SEEN" 2>/dev/null
+  fi
+  [ "$OPENMODS_V" = ${q(rel(e.ref))} ] && OPENMODS_SAME=1
+fi
+if [ -n "$OPENMODS_SAME" ]; then
+${same.stockWhen?.length ? `${indent(matchArgsOf(h, same.stockWhen, "OPENMODS_STOCK"))}  [ -n "$OPENMODS_STOCK" ] && exec "$STOCK_BIN" "$@"
+` : ""}${exports}${last?.args.length ? `${indent(matchArgsOf(h, last.unless ?? [], "OPENMODS_GIVEN"))}  if [ -z "$OPENMODS_GIVEN" ]; then
+    # After the user's arguments, and before a -- if there is one.
+    OPENMODS_N=$# OPENMODS_PUT=
+    for a in "$@"; do
+      [ -z "$OPENMODS_PUT" ] && [ "$a" = -- ] && set -- "$@" ${last.args.map(q).join(" ")} && OPENMODS_PUT=1
+      set -- "$@" "$a"
+    done
+    [ -n "$OPENMODS_PUT" ] || set -- "$@" ${last.args.map(q).join(" ")}
+    shift "$OPENMODS_N"
+  fi
+` : ""}fi
+`
+}
+const indent = (lines: string) => lines.replace(/^(?=.)/gm, "  ")
 
 // `openmods dev`: the harness command runs a clone of the harness straight
 // from source, so each edit shows up the next time it starts; no packing,
@@ -1362,7 +1431,7 @@ function refreshLauncher(reg: string, h: Harness, e: State[string] | undefined) 
     return
   }
   if (!e?.enabled || !e.artifact || revokedIn(reg, h.id, e).length) return
-  if (readFileSync(launcher, "utf8") !== launcherOf(h, e.artifact)) switchOn(h, e.artifact)
+  if (readFileSync(launcher, "utf8") !== launcherOf(h, e)) switchOn(h, e)
 }
 
 // Anything else that writes or removes the launcher ends dev mode, and says so.
@@ -1399,9 +1468,9 @@ ${stock ? `exec ${JSON.stringify(stock)} "$@"` : "exit 1"}
 // found a command, so a launcher that came and went would leave `opencode`
 // pointing at a missing file after `openmods off`, or at the stock one after
 // `openmods on`.
-function switchOn(h: Harness, artifact: string) {
+function switchOn(h: Harness, e: Pick<State[string], "artifact" | "ref" | "changed">) {
   endDev(h)
-  writeLauncher(h, launcherOf(h, artifact))
+  writeLauncher(h, launcherOf(h, e))
 }
 
 function switchOff(h: Harness) {
@@ -1453,16 +1522,23 @@ async function shellStarted(): Promise<number | null> {
 // that is the launcher itself, however PATH reaches it, is skipped), else
 // where its official installer puts it. When it is not found, they go on.
 function stockSearchOf(h: Harness) {
+  return `${stockFindOf(h)}[ -n "$STOCK_BIN" ] && exec "$STOCK_BIN" "$@"
+`
+}
+// Shell lines that set STOCK_BIN to the stock harness, found the same way,
+// or leave it empty.
+function stockFindOf(h: Harness) {
   const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
   const installed = (h.installer?.paths ?? []).map((p) => q(p.replace(/^~(?=\/|$)/, homedir())))
-  return `OLD_IFS=$IFS; IFS=:
+  return `STOCK_BIN=
+OLD_IFS=$IFS; IFS=:
 for d in $PATH; do
   IFS=$OLD_IFS
-  [ -n "$d" ] && [ -f "$d/${h.binary}" ] && [ -x "$d/${h.binary}" ] && ! [ "$d/${h.binary}" -ef ${q(path.join(BIN, h.binary))} ] && exec "$d/${h.binary}" "$@"
+  [ -z "$STOCK_BIN" ] && [ -n "$d" ] && [ -f "$d/${h.binary}" ] && [ -x "$d/${h.binary}" ] && ! [ "$d/${h.binary}" -ef ${q(path.join(BIN, h.binary))} ] && STOCK_BIN=$d/${h.binary}
 done
 IFS=$OLD_IFS
 ${installed.length ? `for d in ${installed.join(" ")}; do
-  [ -f "$d/${h.binary}" ] && [ -x "$d/${h.binary}" ] && exec "$d/${h.binary}" "$@"
+  [ -z "$STOCK_BIN" ] && [ -f "$d/${h.binary}" ] && [ -x "$d/${h.binary}" ] && STOCK_BIN=$d/${h.binary}
 done
 ` : ""}`
 }
@@ -1859,7 +1935,10 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
   const artifact = keepBuild(h, harnessId, root, `${rel(base.ref)}+${stampOf(mods)}`)
   progress = undefined
   failNote = undefined
-  switchOn(h, artifact)
+  // The files the mods change, for what the launcher does beside the stock
+  // harness (sameRelease).
+  // Separated by NUL, so git does not quote unusual names.
+  const changed = (await $`git -C ${root} diff --name-only -z ${base.commit} HEAD`.quiet()).text().split("\0").filter(Boolean)
   state[harnessId] = {
     ref: base.ref,
     commit: base.commit,
@@ -1870,7 +1949,9 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
     artifact,
     enabled: true,
     plain: true,
+    changed,
   }
+  switchOn(h, state[harnessId]!)
   saveState(state)
   // The launcher's note described the build this replaces; cleared again now,
   // in case a look that began before the build wrote one meanwhile.
@@ -2255,7 +2336,7 @@ async function cmdOn() {
     if (!existsSync(e.artifact)) fail(`the modded ${h.name} build is missing; run: openmods update ${id}`)
     const bad = revokedIn(reg, id, e)
     if (bad.length) fail(`this ${h.name} build has ${bad.map((b) => `${b.id}, which was removed from OpenMods: ${b.reason}`).join("; ")} \`openmods uninstall ${bad.map((b) => b.id).join(" ")}\` removes it.`)
-    switchOn(h, e.artifact)
+    switchOn(h, e)
     e.enabled = true
     saveState(state)
     await explainSwitch(h, e)
@@ -2351,7 +2432,7 @@ async function cmdDev() {
         writeScript(path.join(BIN, h.binary), revokedLauncherOf(h, bad, stockBinary(h)))
         log(`${bad.map((b) => `${b.id} was removed from OpenMods: ${b.reason}`).join(" ")} \`${h.binary}\` runs your stock ${h.name}; \`openmods uninstall ${bad.map((b) => b.id).join(" ")}\` removes it.`)
       } else if (e?.enabled && e.artifact && existsSync(e.artifact)) {
-        switchOn(h, e.artifact)
+        switchOn(h, e)
         log(`\`${h.binary}\` runs your modded ${h.name} again: ${rel(e.ref)} + ${e.mods.filter((m) => !e.off.includes(m)).join(" + ")}.`)
       } else {
         switchOff(h)

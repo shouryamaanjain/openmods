@@ -95,6 +95,28 @@ describe("the files a mod may contain", () => {
   })
 })
 
+describe("a harness definition", () => {
+  test("a sameRelease whose stockVersion grep or sed would not take, or with no group for the release, fails the registry check", async () => {
+    const file = path.join(sb.reg, "harnesses", "fake.json")
+    const before = readFileSync(file, "utf8")
+    try {
+      for (const stockVersion of ["(", "version=([0-9]", "version=[0-9.]+", "a#(b)"]) {
+        writeFileSync(file, JSON.stringify({ ...JSON.parse(before), sameRelease: { stockVersion } }))
+        const r = await $`bun ${VALIDATE} --registry ${sb.reg}`.nothrow().quiet()
+        expect(r.exitCode, stockVersion).toBe(1)
+        expect(r.stderr.toString()).toContain("sameRelease needs")
+      }
+      writeFileSync(file, JSON.stringify({ ...JSON.parse(before), sameRelease: { stockVersion: "version=([0-9.]+)", argsLast: { args: [] } } }))
+      expect((await $`bun ${VALIDATE} --registry ${sb.reg}`.nothrow().quiet()).exitCode).toBe(1)
+      writeFileSync(file, JSON.stringify({ ...JSON.parse(before), sameRelease: { stockVersion: "version=([0-9.]+)" } }))
+      const ok = await $`bun ${VALIDATE} --registry ${sb.reg}`.nothrow().quiet()
+      expect(ok.exitCode, ok.stderr.toString()).toBe(0)
+    } finally {
+      writeFileSync(file, before)
+    }
+  })
+})
+
 describe("revocation", () => {
   const revoke = (entry: object) => writeFileSync(path.join(sb.reg, "revoked.json"), JSON.stringify({ revoked: [entry] }))
   test("a revoked mod cannot be installed", async () => {

@@ -141,7 +141,7 @@ The definition needs:
 - `recipe`: the files, or lines of files, those commands depend on, such as the build script and toolchain pin. The release watch compares them on every release and holds the harness's mods when they change.
 - `releaseTagPattern`: which tags are releases.
 
-The **standards** check makes sure each of these is there, except `installer.paths`, which is optional. Greptile and a maintainer then read every command in it, because they run on users' machines and in CI. A maintainer runs the **harness build** workflow to prove it builds before any mod ships. If a modded build and the stock one would clash side by side, the fix is the harness's own switches in `args` or `argsUnless`, never a patch: OpenMods does not change a harness's code. A harness that is already supported is changed only by maintainers; open an issue to suggest a change.
+The **standards** check makes sure each of these is there, except `installer.paths`, which is optional. Greptile and a maintainer then read every command in it, because they run on users' machines and in CI. A maintainer runs the **harness build** workflow to prove it builds before any mod ships. If a modded build and the stock one would clash side by side, the fix is the harness's own switches in `args`, `argsUnless`, `stockWhen` or `sameRelease`, never a patch: OpenMods does not change a harness's code. A harness that is already supported is changed only by maintainers; open an issue to suggest a change.
 
 ## Releasing OpenMods
 
