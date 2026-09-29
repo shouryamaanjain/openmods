@@ -40,4 +40,12 @@ jobs:
             echo "OpenMods $version is already released."
             exit 0
           fi
+          # A tag of that name on another commit would be released instead of
+          # the one these tests passed on: a maintainer sorts that out.
+          # The commit it names: the peeled line of an annotated tag, else the tag.
+          tagged=$(git ls-remote origin "refs/tags/v$version*" | awk -v t="refs/tags/v$version" '$2 == t "^{}" { p = $1 } $2 == t { l = $1 } END { print (p != "" ? p : l) }')
+          if [ -n "$tagged" ] && [ "$tagged" != "$SHA" ]; then
+            echo "v$version is already a tag, on $tagged, not on $SHA; not releasing it."
+            exit 1
+          fi
           gh release create "v$version" --target "$SHA" --title "OpenMods $version" --generate-notes

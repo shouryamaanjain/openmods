@@ -6,7 +6,7 @@
 // installer run again, does, and only to a release (a vX.Y.Z tag). An install from before that layout moves over
 // the first time it runs this code.
 import { beforeAll, describe, expect, test } from "bun:test"
-import { appendFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs"
+import { appendFileSync, chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { addFile, addVersion, createHarness, createMod, git, release, sandbox } from "./harness"
 
@@ -289,10 +289,38 @@ describe("the program", () => {
     expect(version()).toBe("0.1.3")
     expect(existsSync(mine)).toBe(true)
   })
+  test("a release is taken as the remote has it, not as a tag fetched here before", async () => {
+    // Fetched here once, then moved on the remote before it was set up.
+    appendFileSync(path.join(sb.reg, "cli", "src", "reference.ts"), "\n// first try\n")
+    await commit("first try")
+    await releaseOpenMods("0.1.4")
+    await git(path.join(sb.om, "registry"), "fetch", "-q", "origin", "tag", "v0.1.4")
+    appendFileSync(path.join(sb.reg, "cli", "src", "reference.ts"), "\n// the real one\n")
+    await commit("the real one")
+    await git(sb.reg, "tag", "-f", "v0.1.4")
+    const r = await openmods("update")
+    expect(r.code, r.all).toBe(0)
+    expect(version()).toBe("0.1.4")
+    expect(readFileSync(path.join(copy(), "src", "reference.ts"), "utf8")).toContain("the real one")
+  })
+  test("when the openmods command cannot be pointed at the new version, it says so and keeps working", async () => {
+    // An install from before, whose command runs the registry clone, with
+    // its bin folder read-only.
+    const bin = path.join(sb.om, "bin")
+    const before = readFileSync(wrapper(), "utf8")
+    writeFileSync(wrapper(), before.replace('"$OM/cli/src/index.ts"', '"$OM/registry/cli/src/index.ts"'), { mode: 0o755 })
+    rmSync(copy())
+    chmodSync(bin, 0o555)
+    const r = await openmods("status")
+    chmodSync(bin, 0o755)
+    writeFileSync(wrapper(), before, { mode: 0o755 })
+    expect(r.code, r.all).toBe(0)
+    expect(r.err).toContain("the openmods command could not be pointed at it")
+  })
   test("running the installer again leaves it working, on the newest release", async () => {
     const r = await installer()
     expect(r.code, r.all).toBe(0)
-    expect(version()).toBe("0.1.3")
+    expect(version()).toBe("0.1.4")
     expect(readFileSync(wrapper(), "utf8")).toContain('"$OM/cli/src/index.ts"')
     expect((await openmods("status")).code).toBe(0)
   })

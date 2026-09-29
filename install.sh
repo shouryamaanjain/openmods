@@ -35,7 +35,7 @@ export GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=15 GIT_TERMINAL_PRO
 TAG=$(git -C "$OM/registry" ls-remote --tags --refs origin 'v*' | sed -n 's#.*refs/tags/\(v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$#\1#p' |
   awk -F. '{ sub(/^v/, "", $1); printf "%09d%09d%09d v%s.%s.%s\n", $1, $2, $3, $1, $2, $3 }' | sort | tail -n 1 | cut -d' ' -f2)
 [ -n "$TAG" ] || { echo "openmods: found no release of OpenMods at $REG; is it reachable?"; exit 1; }
-git -C "$OM/registry" fetch -q --depth 1 origin tag "$TAG"
+git -C "$OM/registry" fetch -q --depth 1 origin "+refs/tags/$TAG:refs/tags/$TAG"
 NEW="$OM/.install-$$"
 rm -rf "$NEW" && mkdir -p "$NEW"
 trap 'rm -rf "$NEW"' EXIT

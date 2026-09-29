@@ -244,7 +244,7 @@ async function pullRegistry(dir: string): Promise<boolean> {
     env: {
       ...process.env,
       GIT_TERMINAL_PROMPT: "0",
-      GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND ?? "ssh -o BatchMode=yes -o ConnectTimeout=10",
+      ...sshTransport(),
       GIT_HTTP_LOW_SPEED_LIMIT: "1000",
       GIT_HTTP_LOW_SPEED_TIME: "15",
     },
@@ -285,6 +285,10 @@ function pointWrapperAtCopy() {
   const moved = text.replaceAll("/registry/cli/src/index.ts", "/cli/src/index.ts")
   if (moved !== text) writeScript(wrapper, moved)
 }
+// ssh that never waits on a prompt, unless the user set up a transport of
+// their own (GIT_SSH_COMMAND or GIT_SSH), which is kept as it is.
+const sshTransport = (): Record<string, string> =>
+  process.env.GIT_SSH_COMMAND || process.env.GIT_SSH ? {} : { GIT_SSH_COMMAND: "ssh -o BatchMode=yes -o ConnectTimeout=10" }
 // git talking to the registry's remote, given at most 20 seconds, like the
 // pull; fails with git's last line of error.
 async function remoteGit(reg: string, ...a: string[]): Promise<string> {
@@ -292,7 +296,7 @@ async function remoteGit(reg: string, ...a: string[]): Promise<string> {
     env: {
       ...process.env,
       GIT_TERMINAL_PROMPT: "0",
-      GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND ?? "ssh -o BatchMode=yes -o ConnectTimeout=10",
+      ...sshTransport(),
       GIT_HTTP_LOW_SPEED_LIMIT: "1000",
       GIT_HTTP_LOW_SPEED_TIME: "15",
     },
@@ -343,9 +347,10 @@ async function installCli(reg: string, release?: string): Promise<{ from: string
   const dest = path.join(CLI_VERSIONS, to)
   if (readVersion(dest) !== to) {
     const tag = `v${to}`
-    // Fetched unless the installer already has.
-    if ((await $`git -C ${reg} rev-parse -q --verify ${`refs/tags/${tag}`}`.nothrow().quiet()).exitCode !== 0)
-      await remoteGit(reg, "fetch", "-q", "--depth", "1", "origin", "tag", tag).catch((e: Error) => {
+    // As the remote has it now, even if a tag of that name was fetched
+    // before; the installer has just done this itself.
+    if (!release)
+      await remoteGit(reg, "fetch", "-q", "--depth", "1", "origin", `+refs/tags/${tag}:refs/tags/${tag}`).catch((e: Error) => {
         throw new Error(`could not fetch OpenMods ${to} (${e.message})`)
       })
     const next = path.join(CLI_VERSIONS, `.new-${to}-${process.pid}`)
@@ -382,10 +387,15 @@ async function installCli(reg: string, release?: string): Promise<{ from: string
   rmSync(link, { force: true })
   symlinkSync(dest, link)
   renameSync(link, CLI_DIR)
-  // Switched: from here on, a failure is only a note, since the next command
-  // runs the new version whatever happens.
+  // The openmods command of an install from before runs the registry clone
+  // until it points at the copy.
   try {
     pointWrapperAtCopy()
+  } catch (e) {
+    throw new Error(`OpenMods ${to} is set up in ${pretty(CLI_DIR)}, but the openmods command could not be pointed at it: ${e instanceof Error ? e.message : String(e)}`)
+  }
+  // Tidying up after the switch: a failure is only a note.
+  try {
     // Only this version and the ones running stay. Folders being set up by
     // another command (.new-*) are left alone.
     const keep = new Set([to, ...running])
