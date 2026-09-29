@@ -4,7 +4,7 @@
 // existed gets them with the daily check, without a rebuild.
 import { beforeAll, describe, expect, test } from "bun:test"
 import { $ } from "bun"
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { cli, createHarness, createMod, git, sandbox } from "./harness"
 
@@ -173,3 +173,96 @@ describe("a harness's shared server", () => {
   })
 })
 
+
+describe("a harness's sameRelease", () => {
+  const stock = () => path.join(sb.home, ".greet", "bin", "greet")
+  const ran = () => path.join(sb.T, "stock-ran")
+  // A stock program that says its release inside it, and says so when it runs.
+  // Written in place, as an update might; its time a little ahead, so it is
+  // newer than the release the launcher read before, within the same second.
+  let ahead = 0
+  const placeStock = (version: string) => {
+    writeFileSync(stock(), `#!/bin/sh\n# user-agent=fake/latest/${version}/cli\ntouch ${ran()}\necho stock greet\n`, { mode: 0o755 })
+    const t = Date.now() / 1000 + 10 * ++ahead
+    utimesSync(stock(), t, t)
+  }
+  const set = (same: object | undefined) => {
+    const { sameRelease: _s, valueOptions: _v, ...rest } = JSON.parse(readFileSync(definition, "utf8"))
+    writeFileSync(definition, JSON.stringify(same ? { ...rest, valueOptions: ["--server"], sameRelease: same } : rest))
+  }
+  const same = (extra: object = {}) => ({
+    stockVersion: "user-agent=fake/[^/ ]*/([0-9][0-9.]*)/cli",
+    stockWhen: ["service", "--service"],
+    env: { SHARED_DB: "1" },
+    envUnlessModsChange: ["db/**"],
+    argsLast: { args: ["--standalone"], unless: ["serve", "--server", "--server=*"] },
+    ...extra,
+  })
+  // The modded build shows its env as well as its arguments.
+  const showEnv = () => {
+    const artifact = JSON.parse(readFileSync(path.join(sb.om, "state.json"), "utf8")).fake.artifact
+    writeFileSync(artifact, "#!/bin/sh\nprintf 'args:'; printf '[%s]' \"$@\"; echo \" db:${SHARED_DB:-own}\"\n", { mode: 0o755 })
+  }
+  const run = async (...a: string[]) => (await $`sh ${path.join(sb.om, "bin", "greet")} ${a}`.nothrow().quiet()).stdout.toString().trim()
+  const original = () => readFileSync(stock(), "utf8")
+  let before = ""
+
+  test("the same release as the stock one: its uses go to stock, env set, args after the user's", async () => {
+    before = original()
+    placeStock("1.0.0")
+    set(same())
+    await cli(sb, "status")
+    // status shows the stock version by running it; the launcher never does.
+    rmSync(ran(), { force: true })
+    showEnv()
+    expect(await run()).toBe("args:[--standalone] db:1")
+    expect(await run("session", "list")).toBe("args:[session][list][--standalone] db:1")
+    expect(await run("run", "--", "hi")).toBe("args:[run][--standalone][--][hi] db:1")
+    expect(await run("serve")).toBe("args:[serve] db:1")
+    expect(await run("--server", "http://h", "list")).toBe("args:[--server][http://h][list] db:1")
+    // The stock program was read for its release, never run.
+    expect(existsSync(ran())).toBe(false)
+    expect(await run("service", "stop")).toBe("stock greet")
+    expect(await run("serve", "--service")).toBe("stock greet")
+    // A value of --server is not the command.
+    expect(await run("--server", "service")).toBe("args:[--server][service] db:1")
+  })
+  test("another release: nothing changes, and a stock program that changes is read again", async () => {
+    rmSync(ran(), { force: true })
+    placeStock("1.0.1")
+    expect(await run()).toBe("args:[] db:own")
+    expect(await run("service", "stop")).toBe("args:[service][stop] db:own")
+    placeStock("1.0.0")
+    expect(await run()).toBe("args:[--standalone] db:1")
+    expect(existsSync(ran())).toBe(false)
+  })
+  test("mods that change the files envUnlessModsChange names keep their own data; the rest still applies", async () => {
+    set(same({ envUnlessModsChange: ["*.sh"] }))
+    await cli(sb, "status")
+    showEnv()
+    expect(await run()).toBe("args:[--standalone] db:own")
+    expect(await run("service")).toBe("stock greet")
+  })
+  test("a build from before its changed files were kept counts as changing them", async () => {
+    set(same())
+    const file = path.join(sb.om, "state.json")
+    const state = JSON.parse(readFileSync(file, "utf8"))
+    delete state.fake.changed
+    writeFileSync(file, JSON.stringify(state))
+    await cli(sb, "status")
+    showEnv()
+    expect(await run()).toBe("args:[--standalone] db:own")
+  })
+  test("with no stock harness, nothing changes", async () => {
+    renameSync(path.join(sb.home, ".greet"), path.join(sb.home, ".greet.away"))
+    try {
+      expect(await run()).toBe("args:[] db:own")
+      expect(await run("service")).toBe("args:[service] db:own")
+    } finally {
+      renameSync(path.join(sb.home, ".greet.away"), path.join(sb.home, ".greet"))
+      writeFileSync(stock(), before, { mode: 0o755 })
+      set(undefined)
+      await cli(sb, "status")
+    }
+  })
+})

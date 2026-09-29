@@ -61,6 +61,31 @@ for (const id of harnesses) {
     errors.push(`harnesses/${id}.json: sharedServer needs "home", "binary" and "reset"`)
   const unless = h.argsUnless
   const words = (v: unknown) => Array.isArray(v) && v.length > 0 && v.every((a) => typeof a === "string" && a)
+  const same = h.sameRelease
+  if (same !== undefined) {
+    const obj = (v: unknown): v is Record<string, any> => typeof v === "object" && v !== null && !Array.isArray(v)
+    const pattern = typeof same?.stockVersion === "string" ? same.stockVersion : ""
+    if (
+      !obj(same) ||
+      Object.keys(same).some((k) => !["stockVersion", "stockWhen", "env", "envUnlessModsChange", "argsLast"].includes(k)) ||
+      !pattern ||
+      // One group, the release; and no #, which the launcher's sed uses to
+      // mark out the pattern.
+      (pattern.match(/\((?!\?)/g) ?? []).length !== 1 ||
+      pattern.includes("#") ||
+      (same.stockWhen !== undefined && !words(same.stockWhen)) ||
+      (same.envUnlessModsChange !== undefined && !(Array.isArray(same.envUnlessModsChange) && same.envUnlessModsChange.every((a: unknown) => typeof a === "string" && a))) ||
+      (same.env !== undefined && (!obj(same.env) || Object.entries(same.env).some(([k, v]) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) || k === "PATH" || typeof v !== "string"))) ||
+      (same.argsLast !== undefined &&
+        (!obj(same.argsLast) ||
+          Object.keys(same.argsLast).some((k) => !["args", "unless"].includes(k)) ||
+          !words(same.argsLast.args) ||
+          (same.argsLast.unless !== undefined && !words(same.argsLast.unless))))
+    )
+      errors.push(
+        `harnesses/${id}.json: sameRelease needs "stockVersion", a pattern with one group for the release and no #; "stockWhen", "envUnlessModsChange" and "argsLast" ("args", "unless") are lists of non-empty strings, and "env" sets variable names other than PATH to strings`,
+      )
+  }
   if (
     unless !== undefined &&
     (unless === null ||
