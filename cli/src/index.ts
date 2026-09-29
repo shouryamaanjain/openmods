@@ -285,12 +285,33 @@ function pointWrapperAtCopy() {
   const moved = text.replaceAll("/registry/cli/src/index.ts", "/cli/src/index.ts")
   if (moved !== text) writeScript(wrapper, moved)
 }
+// git talking to the registry's remote, given at most 20 seconds, like the
+// pull; fails with git's last line of error.
+async function remoteGit(reg: string, ...a: string[]): Promise<string> {
+  const p = Bun.spawn(["git", "-C", reg, ...a], {
+    env: {
+      ...process.env,
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND ?? "ssh -o BatchMode=yes -o ConnectTimeout=10",
+      GIT_HTTP_LOW_SPEED_LIMIT: "1000",
+      GIT_HTTP_LOW_SPEED_TIME: "15",
+    },
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 20_000,
+  })
+  const [code, out, err] = await Promise.all([p.exited, new Response(p.stdout).text(), new Response(p.stderr).text()])
+  if (code !== 0) throw new Error(p.signalCode ? "it took too long" : err.trim().split("\n").at(-1)?.replace(/^(fatal|error): /, "") || `git exited with ${code}`)
+  return out
+}
+const RELEASE = /^\d+\.\d+\.\d+$/
 // The newest release the registry's remote has, as "X.Y.Z".
 async function newestRelease(reg: string): Promise<string> {
-  const r = await $`git -C ${reg} ls-remote --tags --refs origin ${"v*"}`.env({ ...process.env, GIT_TERMINAL_PROMPT: "0" }).nothrow().quiet()
-  if (r.exitCode !== 0) throw new Error(`could not reach ${remoteOf(reg)} (${r.stderr.toString().trim().split("\n").at(-1) || `git exited with ${r.exitCode}`})`)
-  const versions = r.stdout
-    .toString()
+  const out = await remoteGit(reg, "ls-remote", "--tags", "--refs", "origin", "v*").catch((e: Error) => {
+    throw new Error(`could not reach ${remoteOf(reg)} (${e.message})`)
+  })
+  const versions = out
     .split("\n")
     .map((l) => l.match(/refs\/tags\/v(\d+)\.(\d+)\.(\d+)$/))
     .filter((m): m is RegExpMatchArray => !!m)
@@ -303,8 +324,10 @@ async function newestRelease(reg: string): Promise<string> {
 function remoteOf(reg: string) {
   return Bun.spawnSync(["git", "-C", reg, "remote", "get-url", "origin"]).stdout.toString().trim() || pretty(reg)
 }
-async function installCli(reg: string): Promise<{ from: string; to: string } | null> {
-  const to = await newestRelease(reg)
+// \`release\` is the one to set up, when the caller already knows it (the
+// installer); otherwise the newest.
+async function installCli(reg: string, release?: string): Promise<{ from: string; to: string } | null> {
+  const to = release ?? (await newestRelease(reg))
   const readVersion = (dir: string) => {
     try {
       return readFileSync(path.join(dir, ".version"), "utf8").trim()
@@ -320,8 +343,11 @@ async function installCli(reg: string): Promise<{ from: string; to: string } | n
   const dest = path.join(CLI_VERSIONS, to)
   if (readVersion(dest) !== to) {
     const tag = `v${to}`
-    const fetched = await $`git -C ${reg} fetch -q --depth 1 origin tag ${tag}`.env({ ...process.env, GIT_TERMINAL_PROMPT: "0" }).nothrow().quiet()
-    if (fetched.exitCode !== 0) throw new Error(`could not fetch OpenMods ${to} (${fetched.stderr.toString().trim().split("\n").at(-1)})`)
+    // Fetched unless the installer already has.
+    if ((await $`git -C ${reg} rev-parse -q --verify ${`refs/tags/${tag}`}`.nothrow().quiet()).exitCode !== 0)
+      await remoteGit(reg, "fetch", "-q", "--depth", "1", "origin", "tag", tag).catch((e: Error) => {
+        throw new Error(`could not fetch OpenMods ${to} (${e.message})`)
+      })
     const next = path.join(CLI_VERSIONS, `.new-${to}-${process.pid}`)
     rmSync(next, { recursive: true, force: true })
     mkdirSync(next, { recursive: true })
@@ -341,23 +367,32 @@ async function installCli(reg: string): Promise<{ from: string; to: string } | n
     }
     if (readVersion(dest) !== to) throw new Error(`could not set up ${pretty(dest)}`)
   }
-  // The folder running now stays, for a command that started on it.
-  let running = ""
-  try {
-    running = path.basename(realpathSync(CLI_DIR))
-  } catch {}
+  // The folders running now stay, for a command that started on them: the
+  // one the link points to, and this command's own, which another command
+  // may have switched away from meanwhile.
+  const running = new Set<string>()
+  for (const dir of [CLI_DIR, path.join(import.meta.dir, "..")])
+    try {
+      const real = realpathSync(dir)
+      if (path.dirname(real) === realpathSync(CLI_VERSIONS)) running.add(path.basename(real))
+    } catch {}
   // A folder left by an earlier layout is moved aside, then the link swapped in.
   if (existsSync(CLI_DIR) && !lstatSync(CLI_DIR).isSymbolicLink()) renameSync(CLI_DIR, path.join(CLI_VERSIONS, `old-${process.pid}`))
   const link = `${CLI_DIR}.${process.pid}`
   rmSync(link, { force: true })
   symlinkSync(dest, link)
   renameSync(link, CLI_DIR)
-  pointWrapperAtCopy()
-  // Only this version and the one before stay: a command started just before
-  // the switch may still be reading the old one. Folders being set up by
-  // another command (.new-*) are left alone.
-  const keep = new Set([to, running])
-  for (const d of readdirSync(CLI_VERSIONS)) if (!keep.has(d) && !d.startsWith(".")) rmSync(path.join(CLI_VERSIONS, d), { recursive: true, force: true })
+  // Switched: from here on, a failure is only a note, since the next command
+  // runs the new version whatever happens.
+  try {
+    pointWrapperAtCopy()
+    // Only this version and the ones running stay. Folders being set up by
+    // another command (.new-*) are left alone.
+    const keep = new Set([to, ...running])
+    for (const d of readdirSync(CLI_VERSIONS)) if (!keep.has(d) && !d.startsWith(".")) rmSync(path.join(CLI_VERSIONS, d), { recursive: true, force: true })
+  } catch (e) {
+    console.error(`note: OpenMods ${to} is set up, but tidying up after it failed: ${e instanceof Error ? e.message : String(e)}`)
+  }
   return { from, to }
 }
 
@@ -1237,9 +1272,10 @@ function argsOf(h: Harness) {
 
 function launcherOf(h: Harness, artifact: string) {
   const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
-  // The openmods of this home, else the CLI writing this.
+  // The openmods of this home (which the installer writes once setup is
+  // done), else the CLI writing this.
   const own = path.join(BIN, "openmods")
-  const cli = (existsSync(own) ? [own] : [process.execPath, path.resolve(import.meta.path)]).map(q).join(" ")
+  const cli = (existsSync(own) || process.env.OPENMODS_RELEASE ? [own] : [process.execPath, path.resolve(import.meta.path)]).map(q).join(" ")
   return `#!/bin/sh
 # openmods launcher for ${h.binary}. \`openmods off\` makes it start the stock ${h.name}, which is untouched.
 HARNESS=${h.id}
@@ -1588,10 +1624,13 @@ async function explainSwitch(h: Harness, entry: State[string]) {
 // changes what `codex` runs at once, even in a terminal that already ran it.
 async function cmdSetup() {
   const reg = await ensureRegistry()
-  // The installer runs this from the release it fetched: the program goes to
-  // its own copy, where it runs from then on.
-  if (reg === path.join(HOME, "registry")) {
-    const cli = await installCli(reg).catch((e: unknown) => e as Error)
+  // The installer runs this from the release it fetched, and names it: the
+  // program goes to its own copy, where it runs from then on. Otherwise setup
+  // only puts the launchers and PATH right.
+  const release = process.env.OPENMODS_RELEASE
+  if (release && reg === path.join(HOME, "registry")) {
+    if (!RELEASE.test(release)) fail(`OPENMODS_RELEASE must be a version like 1.2.3, not "${release}"`)
+    const cli = await installCli(reg, release).catch((e: unknown) => e as Error)
     if (cli instanceof Error) fail(`could not set OpenMods up in ${pretty(CLI_DIR)}: ${cli.message}`)
   }
   const put = allHarnesses(reg).filter((h) => !existsSync(path.join(BIN, h.binary)) && stockBinary(h))

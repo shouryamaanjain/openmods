@@ -4,7 +4,7 @@ name: release
 # the installer and `openmods update` take the newest one, so code merged into
 # main reaches them only when cli/package.json's version is raised. After the
 # tests pass on a push to main, a version that has no release yet gets one,
-# on that commit.
+# on that commit (or on its tag, if the tag is already there).
 
 on:
   workflow_run:
@@ -31,10 +31,12 @@ jobs:
           SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           version=$(jq -r .version cli/package.json)
-          case "$version" in
-            *[!0-9.]*|"") echo "cli/package.json has no X.Y.Z version: $version"; exit 1 ;;
-          esac
-          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
+          # The form the installer and `openmods update` take as a release.
+          if ! printf '%s\n' "$version" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "cli/package.json's version must be X.Y.Z, not $version"
+            exit 1
+          fi
+          if gh release view "v$version" >/dev/null 2>&1; then
             echo "OpenMods $version is already released."
             exit 0
           fi
