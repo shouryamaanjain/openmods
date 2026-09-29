@@ -2,6 +2,14 @@
   "$schema": "../../../../schema/support.schema.json",
   "versions": [
     {
+      "ref": "rust-v0.159.0",
+      "commit": "687a119f0fcaace47e1f1abcc77cec6c813fd6da",
+      "patches": [
+        "rust-v0.159.0/0001-feat-tui-add-invaders-Space-Invaders-in-the-bottom-p.patch"
+      ],
+      "update": 1
+    },
+    {
       "ref": "rust-v0.158.0",
       "commit": "064c6b8c737f5b41d171fdda80bd9ef10ad06eb3",
       "patches": [
