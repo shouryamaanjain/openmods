@@ -4,7 +4,7 @@
 // existed gets them with the daily check, without a rebuild.
 import { beforeAll, describe, expect, test } from "bun:test"
 import { $ } from "bun"
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { cli, createHarness, createMod, git, sandbox } from "./harness"
 
@@ -137,7 +137,7 @@ describe("a harness's shared server", () => {
   const server = () => path.join(sb.home, ".srv", "current", "bin", "greet")
   const setServer = () => {
     const h = JSON.parse(readFileSync(definition, "utf8"))
-    writeFileSync(definition, JSON.stringify({ ...h, sharedServer: { home: "~/.srv", binary: "current/bin/greet", reset: "server reset" } }))
+    writeFileSync(definition, JSON.stringify({ ...h, sharedServer: { home: "~/.srv", binary: "current/bin/greet", versionFile: "current/package.json", reset: "server reset" } }))
   }
   const place = (text: string) => {
     mkdirSync(path.dirname(server()), { recursive: true })
@@ -145,9 +145,20 @@ describe("a harness's shared server", () => {
   }
   test("set up from a modded build is pointed out, with the stock command that resets it", async () => {
     setServer()
-    // An older openmods's build: its version carries the stamp.
-    place("#!/bin/sh\necho 1.0.0+echo-1\n")
+    // An older openmods's build: its package's version carries the stamp. It
+    // is read, never run: running it would print "ran".
+    const ran = path.join(sb.T, "server-ran")
+    place(`#!/bin/sh\ntouch ${ran}\n`)
+    writeFileSync(path.join(sb.home, ".srv", "current", "package.json"), JSON.stringify({ version: "1.0.0+echo-1" }))
     expect((await cli(sb, "status")).out).toContain("was set up from a modded build, and your stock Fake uses it too. To give it back to your stock Fake, run: ~/.greet/bin/greet server reset")
+    expect(existsSync(ran)).toBe(false)
+    expect((await cli(sb, "update", "fake")).out).toContain("was set up from a modded build")
+    // With no stock harness, the advice is to install it first, never the modded command.
+    renameSync(path.join(sb.home, ".greet"), path.join(sb.home, ".greet.away"))
+    const none = (await cli(sb, "status")).out
+    renameSync(path.join(sb.home, ".greet.away"), path.join(sb.home, ".greet"))
+    expect(none).toContain("To give it back to your stock Fake, install your stock Fake")
+    writeFileSync(path.join(sb.home, ".srv", "current", "package.json"), JSON.stringify({ version: "1.0.0" }))
     // A copy of the current modded build.
     const artifact = JSON.parse(readFileSync(path.join(sb.om, "state.json"), "utf8")).fake.artifact
     place(readFileSync(artifact, "utf8"))

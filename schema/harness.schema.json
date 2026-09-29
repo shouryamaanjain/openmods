@@ -205,9 +205,10 @@
         "home": { "type": "string", "minLength": 1 },
         "homeEnv": { "type": "string", "minLength": 1 },
         "binary": { "type": "string", "minLength": 1 },
+        "versionFile": { "type": "string", "minLength": 1 },
         "reset": { "type": "string", "minLength": 1 }
       },
-      "description": "A server the stock harness keeps in the user's home and shares between its runs, such as Codex's background server. `binary` is its program, relative to `home` (or the folder `homeEnv` names); `reset` is the stock harness's own command that puts it back to the stock program. When that server is a copy of a modded build (left by an older openmods), status and update say so and give the command; OpenMods itself never changes it."
+      "description": "A server the stock harness keeps in the user's home and shares between its runs, such as Codex's background server. `binary` is its program, relative to `home` (or the folder `homeEnv` names), and `versionFile` a JSON file beside it with the version it was packaged with, read and never run; `reset` is the stock harness's own command that puts it back to the stock program. When that server is a copy of a modded build (left by an older openmods), status and update say so and give the command; OpenMods itself never changes it."
     },
     "argsUnless": {
       "type": "object",

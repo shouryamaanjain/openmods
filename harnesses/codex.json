@@ -147,12 +147,15 @@
     "--add-dir",
     "--local-provider",
     "--remote",
-    "--remote-auth-token-env"
+    "--remote-auth-token-env",
+    "--enable",
+    "--disable"
   ],
   "sharedServer": {
     "home": "~/.codex",
     "homeEnv": "CODEX_HOME",
     "binary": "packages/app-server-daemon/current/bin/codex",
+    "versionFile": "packages/app-server-daemon/current/codex-package.json",
     "reset": "app-server daemon update --from-cli -y"
   },
   "recipe": [

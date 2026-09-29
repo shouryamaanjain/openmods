@@ -56,7 +56,7 @@ type Harness = {
   // Its options that take a value, to find the command word; see the schema.
   valueOptions?: string[]
   // Where it keeps a server its stock and modded builds could share; see the schema.
-  sharedServer?: { home: string; homeEnv?: string; binary: string; reset: string }
+  sharedServer?: { home: string; homeEnv?: string; binary: string; versionFile?: string; reset: string }
   releaseTagPattern?: string
 }
 
@@ -1585,7 +1585,13 @@ function moddedServer(h: Harness, e: State[string] | undefined): string | null {
   const server = path.join(home, s.binary)
   try {
     if (!statSync(server).isFile()) return null
-    if (Bun.spawnSync([server, "--version"], { stdout: "pipe", stderr: "ignore", timeout: 5000 }).stdout.toString().includes("+")) return server
+    // Read, never run: the version it was packaged with, which an older
+    // openmods stamped with the mods.
+    if (s.versionFile) {
+      try {
+        if (String(readJsonFile(path.join(home, s.versionFile)).version ?? "").includes("+")) return server
+      } catch {}
+    }
     if (e?.artifact && statSync(e.artifact).size === statSync(server).size) {
       const digest = (f: string) => new Bun.CryptoHasher("sha256").update(readFileSync(f)).digest("hex")
       if (digest(e.artifact) === digest(server)) return server
@@ -1597,7 +1603,10 @@ function moddedServerNote(h: Harness, e: State[string] | undefined): string | nu
   const server = moddedServer(h, e)
   if (!server) return null
   const stock = stockBinary(h)
-  return `note: ${h.name}'s background server (${pretty(server)}) was set up from a modded build, and your stock ${h.name} uses it too. To give it back to your stock ${h.name}, run: ${stock ? pretty(stock) : h.binary} ${h.sharedServer!.reset}`
+  const reset = stock
+    ? `run: ${pretty(stock)} ${h.sharedServer!.reset}`
+    : `install your stock ${h.name}${h.installer?.command ? ` (${h.installer.command})` : ""}, then run its ${h.binary} with: ${h.sharedServer!.reset}`
+  return `note: ${h.name}'s background server (${pretty(server)}) was set up from a modded build, and your stock ${h.name} uses it too. To give it back to your stock ${h.name}, ${reset}`
 }
 
 // What the harness command starts now, read from its launcher.
@@ -2223,6 +2232,8 @@ async function cmdUpdate() {
       refreshLauncher(reg, loadHarness(reg, id), e)
       log(`${loadHarness(reg, id).name} ${rel(e.ref)} + ${active.map((m) => m.id).join(" + ")} is already up to date.`)
       if (held) log(held)
+      const server = moddedServerNote(loadHarness(reg, id), e)
+      if (server) log(server)
       continue
     }
     await rebuild(reg, id, mods, e?.off ?? [], [], target)
