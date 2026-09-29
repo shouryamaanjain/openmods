@@ -100,6 +100,7 @@ describe("a harness's stockWhen", () => {
     // exec's prompt, a model named agents, and words after --: the modded build.
     expect((await run("exec", "agents")).out).toBe("args:[exec][agents]")
     expect((await run("-m", "agents", "hi")).out).toBe("args:[-m][agents][hi]")
+    expect((await run("-m", "--remote", "hi")).out).toBe("args:[-m][--remote][hi]")
     expect((await run("--", "agents")).out).toBe("args:[--][agents]")
     expect((await run("resume")).out).toBe("args:[resume]")
   })

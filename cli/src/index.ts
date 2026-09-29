@@ -1181,9 +1181,9 @@ function matchArgsOf(h: Harness, words: string[], variable: string) {
 OPENMODS_CMD= OPENMODS_SKIP=
 for a in "$@"; do
   case "$a" in --) break ;; esac
+  if [ -n "$OPENMODS_SKIP" ]; then OPENMODS_SKIP=; continue; fi
 ${options.length ? `  case "$a" in ${options.map(pattern).join("|")}) ${variable}=1 ;; esac
-` : ""}  if [ -n "$OPENMODS_SKIP" ]; then OPENMODS_SKIP=; continue; fi
-  [ -n "$OPENMODS_CMD" ] && continue
+` : ""}  [ -n "$OPENMODS_CMD" ] && continue
   case "$a" in ${valued ? `${valued}) OPENMODS_SKIP=1 ;; ` : ""}-*) ;; *) OPENMODS_CMD=$a ;; esac
 done
 ${commands.length ? `case "$OPENMODS_CMD" in ${commands.map(pattern).join("|")}) ${variable}=1 ;; esac
