@@ -261,13 +261,13 @@ async function pullRegistry(dir: string): Promise<boolean> {
   return code === 0
 }
 
-// The program runs from ~/.openmods/cli, a copy of the registry's cli/ taken
-// by the installer and by \`openmods update\`, never from the registry clone
-// itself: pulling the mods list must not change what runs. Each version gets
-// its own folder, and ~/.openmods/cli is a link swapped to it in one step, so
-// the openmods command always finds a whole program. A version is named by
-// the package version and the git tree of cli/, so publishing a mod does not
-// make a new one. Returns the versions when it switched.
+// The program runs from ~/.openmods/cli, never from the registry clone:
+// pulling the mods list must not change what runs. It is a released version
+// of OpenMods, a vX.Y.Z tag of the registry, taken by the installer and by
+// \`openmods update\`; code merged since the newest release never runs on a
+// user's machine. Each version gets its own folder, and ~/.openmods/cli is a
+// link swapped to it in one step, so the openmods command always finds a
+// whole program. Returns the versions when it switched.
 const CLI_DIR = path.join(HOME, "cli")
 const CLI_VERSIONS = path.join(HOME, "cli-versions")
 const runsFromRegistry = () => {
@@ -285,11 +285,26 @@ function pointWrapperAtCopy() {
   const moved = text.replaceAll("/registry/cli/src/index.ts", "/cli/src/index.ts")
   if (moved !== text) writeScript(wrapper, moved)
 }
+// The newest release the registry's remote has, as "X.Y.Z".
+async function newestRelease(reg: string): Promise<string> {
+  const r = await $`git -C ${reg} ls-remote --tags --refs origin ${"v*"}`.env({ ...process.env, GIT_TERMINAL_PROMPT: "0" }).nothrow().quiet()
+  if (r.exitCode !== 0) throw new Error(`could not reach ${remoteOf(reg)} (${r.stderr.toString().trim().split("\n").at(-1) || `git exited with ${r.exitCode}`})`)
+  const versions = r.stdout
+    .toString()
+    .split("\n")
+    .map((l) => l.match(/refs\/tags\/v(\d+)\.(\d+)\.(\d+)$/))
+    .filter((m): m is RegExpMatchArray => !!m)
+    .map((m) => [Number(m[1]), Number(m[2]), Number(m[3])])
+    .sort((a, b) => a[0]! - b[0]! || a[1]! - b[1]! || a[2]! - b[2]!)
+  const newest = versions.at(-1)
+  if (!newest) throw new Error(`${remoteOf(reg)} has no release of OpenMods`)
+  return newest.join(".")
+}
+function remoteOf(reg: string) {
+  return Bun.spawnSync(["git", "-C", reg, "remote", "get-url", "origin"]).stdout.toString().trim() || pretty(reg)
+}
 async function installCli(reg: string): Promise<{ from: string; to: string } | null> {
-  const src = path.join(reg, "cli")
-  if (!existsSync(path.join(src, "src", "index.ts"))) return null
-  const tree = (await $`git -C ${reg} rev-parse --short HEAD:cli`.quiet()).text().trim()
-  const to = `${readJsonFile(path.join(src, "package.json")).version} (${tree})`
+  const to = await newestRelease(reg)
   const readVersion = (dir: string) => {
     try {
       return readFileSync(path.join(dir, ".version"), "utf8").trim()
@@ -302,13 +317,20 @@ async function installCli(reg: string): Promise<{ from: string; to: string } | n
     pointWrapperAtCopy()
     return null
   }
-  const dest = path.join(CLI_VERSIONS, tree)
+  const dest = path.join(CLI_VERSIONS, to)
   if (readVersion(dest) !== to) {
-    const next = `${dest}.${process.pid}`
+    const tag = `v${to}`
+    const fetched = await $`git -C ${reg} fetch -q --depth 1 origin tag ${tag}`.env({ ...process.env, GIT_TERMINAL_PROMPT: "0" }).nothrow().quiet()
+    if (fetched.exitCode !== 0) throw new Error(`could not fetch OpenMods ${to} (${fetched.stderr.toString().trim().split("\n").at(-1)})`)
+    const next = path.join(CLI_VERSIONS, `.new-${to}-${process.pid}`)
     rmSync(next, { recursive: true, force: true })
     mkdirSync(next, { recursive: true })
-    cpSync(path.join(src, "src"), path.join(next, "src"), { recursive: true })
-    for (const f of ["get-bun.sh", "package.json"]) if (existsSync(path.join(src, f))) cpSync(path.join(src, f), path.join(next, f))
+    const archive = await $`git -C ${reg} archive --format=tar ${tag} cli/src cli/package.json cli/get-bun.sh`.nothrow().quiet()
+    if (archive.exitCode !== 0) {
+      rmSync(next, { recursive: true, force: true })
+      throw new Error(`OpenMods ${to} has no program in cli/`)
+    }
+    await $`tar -x -C ${next} --strip-components=1 < ${archive.stdout}`.quiet()
     writeFileSync(path.join(next, ".version"), `${to}\n`)
     // A version folder, once there, is whole and never replaced: another
     // command may have put it there first and linked to it already.
@@ -319,6 +341,11 @@ async function installCli(reg: string): Promise<{ from: string; to: string } | n
     }
     if (readVersion(dest) !== to) throw new Error(`could not set up ${pretty(dest)}`)
   }
+  // The folder running now stays, for a command that started on it.
+  let running = ""
+  try {
+    running = path.basename(realpathSync(CLI_DIR))
+  } catch {}
   // A folder left by an earlier layout is moved aside, then the link swapped in.
   if (existsSync(CLI_DIR) && !lstatSync(CLI_DIR).isSymbolicLink()) renameSync(CLI_DIR, path.join(CLI_VERSIONS, `old-${process.pid}`))
   const link = `${CLI_DIR}.${process.pid}`
@@ -327,9 +354,10 @@ async function installCli(reg: string): Promise<{ from: string; to: string } | n
   renameSync(link, CLI_DIR)
   pointWrapperAtCopy()
   // Only this version and the one before stay: a command started just before
-  // the switch may still be reading the old one.
-  const keep = new Set([tree, from.match(/\(([0-9a-f]+)\)$/)?.[1] ?? ""])
-  for (const d of readdirSync(CLI_VERSIONS)) if (!keep.has(d) && !d.includes(".")) rmSync(path.join(CLI_VERSIONS, d), { recursive: true, force: true })
+  // the switch may still be reading the old one. Folders being set up by
+  // another command (.new-*) are left alone.
+  const keep = new Set([to, running])
+  for (const d of readdirSync(CLI_VERSIONS)) if (!keep.has(d) && !d.startsWith(".")) rmSync(path.join(CLI_VERSIONS, d), { recursive: true, force: true })
   return { from, to }
 }
 
@@ -1560,6 +1588,12 @@ async function explainSwitch(h: Harness, entry: State[string]) {
 // changes what `codex` runs at once, even in a terminal that already ran it.
 async function cmdSetup() {
   const reg = await ensureRegistry()
+  // The installer runs this from the release it fetched: the program goes to
+  // its own copy, where it runs from then on.
+  if (reg === path.join(HOME, "registry")) {
+    const cli = await installCli(reg).catch((e: unknown) => e as Error)
+    if (cli instanceof Error) fail(`could not set OpenMods up in ${pretty(CLI_DIR)}: ${cli.message}`)
+  }
   const put = allHarnesses(reg).filter((h) => !existsSync(path.join(BIN, h.binary)) && stockBinary(h))
   for (const h of put) writeLauncher(h, stockLauncherOf(h))
   const names = put.map((h) => `\`${h.binary}\``)
@@ -2196,8 +2230,9 @@ async function cmdOff() {
 
 async function cmdUpdate() {
   const reg = await refreshRegistry()
-  const cli = reg === path.join(HOME, "registry") ? await installCli(reg) : null
-  if (cli) log(cli.from ? `OpenMods is updated: ${cli.from} → ${cli.to}. Your next command runs it.` : `OpenMods ${cli.to} is set up in ${pretty(CLI_DIR)}.`)
+  const cli = reg === path.join(HOME, "registry") ? await installCli(reg).catch((e: unknown) => e as Error) : null
+  if (cli instanceof Error) console.error(`note: could not update OpenMods itself (${cli.message}); it stays as it is.`)
+  else if (cli) log(cli.from ? `OpenMods is updated: ${cli.from} → ${cli.to}. Your next command runs it.` : `OpenMods ${cli.to} is set up in ${pretty(CLI_DIR)}.`)
   const state = loadState()
   const ids = positional[1] ? [positional[1]] : Object.keys(state)
   for (const id of ids) {

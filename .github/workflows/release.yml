@@ -1,0 +1,41 @@
+name: release
+
+# Releases the openmods program. Users only ever get a release (a vX.Y.Z tag):
+# the installer and `openmods update` take the newest one, so code merged into
+# main reaches them only when cli/package.json's version is raised. After the
+# tests pass on a push to main, a version that has no release yet gets one,
+# on that commit.
+
+on:
+  workflow_run:
+    workflows: [validate]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          version=$(jq -r .version cli/package.json)
+          case "$version" in
+            *[!0-9.]*|"") echo "cli/package.json has no X.Y.Z version: $version"; exit 1 ;;
+          esac
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
+            echo "OpenMods $version is already released."
+            exit 0
+          fi
+          gh release create "v$version" --target "$SHA" --title "OpenMods $version" --generate-notes

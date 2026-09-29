@@ -10,7 +10,7 @@ Supported: [OpenCode](https://github.com/anomalyco/opencode) and [Codex CLI](htt
 curl -fsSL https://openmods.dev/install.sh | sh
 ```
 
-This needs `git`, `curl` and `tar`. OpenMods keeps its files in `~/.openmods`: the program, the mods list (a clone of this repository, pulled by `list`, `info`, `install` and `update`, which never changes the program), and the Bun the CLI runs on. Only `openmods update`, or running the installer again, updates OpenMods itself; update says from which version to which. Outside that folder, it adds a PATH line, marked `# openmods`, to your shell's startup file so `~/.openmods/bin` comes first; for bash on Linux, also to the file a login shell reads. In `~/.openmods/bin` it puts a small launcher for each harness you have, which runs your stock one until you install a mod.
+This needs `git`, `curl` and `tar`. OpenMods keeps its files in `~/.openmods`: the program, the mods list (a clone of this repository, pulled by `list`, `info`, `install` and `update`, which never changes the program), and the Bun the CLI runs on. Only `openmods update`, or running the installer again, updates OpenMods itself, and only to a release (a `vX.Y.Z` tag), never to code merged since; update says from which version to which. Outside that folder, it adds a PATH line, marked `# openmods`, to your shell's startup file so `~/.openmods/bin` comes first; for bash on Linux, also to the file a login shell reads. In `~/.openmods/bin` it puts a small launcher for each harness you have, which runs your stock one until you install a mod.
 
 ## Use
 
