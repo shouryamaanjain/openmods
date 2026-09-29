@@ -70,9 +70,12 @@ for (const id of harnesses) {
       Object.keys(same).some((k) => !["stockVersion", "stockWhen", "env", "envUnlessModsChange", "argsLast"].includes(k)) ||
       !pattern ||
       // One group, the release; and no #, which the launcher's sed uses to
-      // mark out the pattern.
+      // mark out the pattern. grep and sed themselves must take it, as the
+      // launcher runs them.
       (pattern.match(/\((?!\?)/g) ?? []).length !== 1 ||
       pattern.includes("#") ||
+      Bun.spawnSync(["grep", "-E", pattern, "/dev/null"]).exitCode === 2 ||
+      Bun.spawnSync(["sed", "-E", `s#${pattern}#\\1#`], { stdin: new TextEncoder().encode("x\n") }).exitCode !== 0 ||
       (same.stockWhen !== undefined && !words(same.stockWhen)) ||
       (same.envUnlessModsChange !== undefined && !(Array.isArray(same.envUnlessModsChange) && same.envUnlessModsChange.every((a: unknown) => typeof a === "string" && a))) ||
       (same.env !== undefined && (!obj(same.env) || Object.entries(same.env).some(([k, v]) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) || k === "PATH" || typeof v !== "string"))) ||

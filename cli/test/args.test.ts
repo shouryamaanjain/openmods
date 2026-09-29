@@ -253,6 +253,36 @@ describe("a harness's sameRelease", () => {
     showEnv()
     expect(await run()).toBe("args:[--standalone] db:own")
   })
+  test("OpenCode's own rules", async () => {
+    const opencode = JSON.parse(readFileSync(path.resolve(import.meta.dir, "../../harnesses/opencode.json"), "utf8"))
+    const { sameRelease: _s, valueOptions: _v, ...rest } = JSON.parse(readFileSync(definition, "utf8"))
+    writeFileSync(definition, JSON.stringify({ ...rest, valueOptions: opencode.valueOptions, sameRelease: opencode.sameRelease }))
+    // Its release as OpenCode's program carries it.
+    writeFileSync(stock(), `#!/bin/sh\n# --user-agent=opencode/latest/1.0.0/cli\necho stock greet\n`, { mode: 0o755 })
+    const t = Date.now() / 1000 + 10 * ++ahead
+    utimesSync(stock(), t, t)
+    const file = path.join(sb.om, "state.json")
+    const setChanged = async (changed: string[]) => {
+      const state = JSON.parse(readFileSync(file, "utf8"))
+      writeFileSync(file, JSON.stringify({ ...state, fake: { ...state.fake, changed } }))
+      await cli(sb, "status")
+      showEnv()
+    }
+    await setChanged(["packages/tui/src/app.tsx"])
+    const on = "OPENCODE_DISABLE_CHANNEL_DB"
+    expect(await run()).toBe("args:[--standalone] db:own")
+    expect(readFileSync(path.join(sb.om, "bin", "greet"), "utf8")).toContain(`export ${on}='1'`)
+    for (const uses of [["service", "stop"], ["pair"], ["mcp", "list"], ["plugin", "list"], ["debug", "paths"], ["serve", "--service"]]) expect(await run(...uses)).toBe("stock greet")
+    for (const own of [["serve"], ["upgrade"], ["update"], ["uninstall"], ["acp"], ["--server", "http://h"], ["--standalone"]]) expect(await run(...own)).toBe(`args:${own.map((a) => `[${a}]`).join("")} db:own`)
+    expect(await run("session", "list")).toBe("args:[session][list][--standalone] db:own")
+    expect(await run("-s", "service", "run", "--", "x")).toBe("args:[-s][service][run][--standalone][--][x] db:own")
+    // Mods that change OpenCode's tables or migrations keep their own database.
+    for (const changed of ["packages/core/src/database/migration/20260101_x.ts", "packages/core/src/session/sql.ts", "packages/core/src/database/schema.sql.ts"]) {
+      await setChanged([changed])
+      expect(readFileSync(path.join(sb.om, "bin", "greet"), "utf8")).not.toContain(on)
+    }
+    set(same())
+  })
   test("with no stock harness, nothing changes", async () => {
     renameSync(path.join(sb.home, ".greet"), path.join(sb.home, ".greet.away"))
     try {

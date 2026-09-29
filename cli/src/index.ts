@@ -1937,7 +1937,8 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
   failNote = undefined
   // The files the mods change, for what the launcher does beside the stock
   // harness (sameRelease).
-  const changed = (await $`git -C ${root} diff --name-only ${base.commit} HEAD`.quiet()).text().split("\n").filter(Boolean)
+  // Separated by NUL, so git does not quote unusual names.
+  const changed = (await $`git -C ${root} diff --name-only -z ${base.commit} HEAD`.quiet()).text().split("\0").filter(Boolean)
   state[harnessId] = {
     ref: base.ref,
     commit: base.commit,
