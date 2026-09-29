@@ -124,6 +124,40 @@
       "--remote=*"
     ]
   },
+  "stockWhen": [
+    "agents",
+    "--remote",
+    "--remote=*"
+  ],
+  "valueOptions": [
+    "-c",
+    "--config",
+    "-m",
+    "--model",
+    "-p",
+    "--profile",
+    "-s",
+    "--sandbox",
+    "-a",
+    "--ask-for-approval",
+    "-i",
+    "--image",
+    "-C",
+    "--cd",
+    "--add-dir",
+    "--local-provider",
+    "--remote",
+    "--remote-auth-token-env",
+    "--enable",
+    "--disable"
+  ],
+  "sharedServer": {
+    "home": "~/.codex",
+    "homeEnv": "CODEX_HOME",
+    "binary": "packages/app-server-daemon/current/bin/codex",
+    "versionFile": "packages/app-server-daemon/current/codex-package.json",
+    "reset": "app-server daemon update --from-cli -y"
+  },
   "recipe": [
     {
       "file": "codex-rs/rust-toolchain.toml"

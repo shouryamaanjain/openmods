@@ -186,6 +186,30 @@
       },
       "description": "Arguments the modded build, and a clone under `openmods dev`, always start with, before the user's. For a setting a modded build needs next to the stock one that has no environment variable, such as turning off Codex's update check, since OpenMods offers the updates. They are the harness's own switches: OpenMods never changes a harness's code."
     },
+    "stockWhen": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1,
+      "description": "Arguments that start the user's stock harness instead of the modded build: a word without a leading - as the command (see valueOptions), an option anywhere; a trailing * matches its start; after -- nothing counts. For uses that share state with the stock harness, such as Codex's agents overview and --remote, which set up Codex's shared background server: from the modded build, stock Codex would then run modded code. With no stock harness to be found, the run stops and says so."
+    },
+    "valueOptions": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^-" },
+      "description": "The harness's options that take a value as the next argument, such as -m for a model. With them the launcher finds the command word (the first argument that is neither an option nor such a value), which stockWhen and argsUnless words without a leading - are matched against, so a prompt that happens to be one of those words is not taken for the command."
+    },
+    "sharedServer": {
+      "type": "object",
+      "required": ["home", "binary", "reset"],
+      "additionalProperties": false,
+      "properties": {
+        "home": { "type": "string", "minLength": 1 },
+        "homeEnv": { "type": "string", "minLength": 1 },
+        "binary": { "type": "string", "minLength": 1 },
+        "versionFile": { "type": "string", "minLength": 1 },
+        "reset": { "type": "string", "minLength": 1 }
+      },
+      "description": "A server the stock harness keeps in the user's home and shares between its runs, such as Codex's background server. `binary` is its program, relative to `home` (or the folder `homeEnv` names), and `versionFile` a JSON file beside it with the version it was packaged with, read and never run; `reset` is the stock harness's own command that puts it back to the stock program. When that server is a copy of a modded build (left by an older openmods), status and update say so and give the command; OpenMods itself never changes it."
+    },
     "argsUnless": {
       "type": "object",
       "required": ["args", "given"],

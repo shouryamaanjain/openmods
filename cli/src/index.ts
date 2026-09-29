@@ -51,6 +51,12 @@ type Harness = {
   args?: string[]
   // More args, unless the user's include one of \`given\`; see the schema.
   argsUnless?: { args: string[]; given: string[] }
+  // The user's arguments that start the stock harness instead; see the schema.
+  stockWhen?: string[]
+  // Its options that take a value, to find the command word; see the schema.
+  valueOptions?: string[]
+  // Where it keeps a server its stock and modded builds could share; see the schema.
+  sharedServer?: { home: string; homeEnv?: string; binary: string; versionFile?: string; reset: string }
   releaseTagPattern?: string
 }
 
@@ -1160,6 +1166,30 @@ function envOf(h: Harness) {
     .join("")
 }
 
+// Shell lines that set \`var\` when the user's arguments hold one of \`words\`,
+// as the harness reads them: a word without a leading - counts only as the
+// command (the first argument that is neither an option nor the value of
+// one of the harness's valueOptions); an option counts anywhere. Nothing
+// after -- counts. A trailing * matches the start of an argument.
+function matchArgsOf(h: Harness, words: string[], variable: string) {
+  const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
+  const pattern = (w: string) => (w.endsWith("*") ? `${q(w.slice(0, -1))}*` : q(w))
+  const options = words.filter((w) => w.startsWith("-"))
+  const commands = words.filter((w) => !w.startsWith("-"))
+  const valued = (h.valueOptions ?? []).map(q).join("|")
+  return `${variable}=
+OPENMODS_CMD= OPENMODS_SKIP=
+for a in "$@"; do
+  case "$a" in --) break ;; esac
+  if [ -n "$OPENMODS_SKIP" ]; then OPENMODS_SKIP=; continue; fi
+${options.length ? `  case "$a" in ${options.map(pattern).join("|")}) ${variable}=1 ;; esac
+` : ""}  [ -n "$OPENMODS_CMD" ] && continue
+  case "$a" in ${valued ? `${valued}) OPENMODS_SKIP=1 ;; ` : ""}-*) ;; *) OPENMODS_CMD=$a ;; esac
+done
+${commands.length ? `case "$OPENMODS_CMD" in ${commands.map(pattern).join("|")}) ${variable}=1 ;; esac
+` : ""}`
+}
+
 // Shell lines that put argsUnless's arguments before the user's, unless the
 // user's include one of its words. Prepended with \`set --\`, so each stays one
 // argument whatever it holds.
@@ -1167,11 +1197,7 @@ function argsUnlessOf(h: Harness) {
   const u = h.argsUnless
   if (!u) return ""
   const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
-  // A trailing * matches the start of an argument; nothing else is a pattern.
-  const pattern = (w: string) => (w.endsWith("*") ? `${q(w.slice(0, -1))}*` : q(w))
-  return `OPENMODS_ADD=1
-for a in "$@"; do case "$a" in --) break ;; ${u.given.map(pattern).join("|")}) OPENMODS_ADD= ;; esac; done
-[ -n "$OPENMODS_ADD" ] && set -- ${u.args.map(q).join(" ")} "$@"
+  return `${matchArgsOf(h, u.given, "OPENMODS_GIVEN")}[ -z "$OPENMODS_GIVEN" ] && set -- ${u.args.map(q).join(" ")} "$@"
 `
 }
 
@@ -1220,7 +1246,7 @@ if { [ -t 0 ] && [ -t 1 ]; } || [ -n "$OPENMODS_ASSUME_TTY" ]; then
   fi
 fi
 
-${envOf(h)}${argsUnlessOf(h)}exec ${q(artifact)} ${argsOf(h)}"$@"
+${stockWhenOf(h)}${envOf(h)}${argsUnlessOf(h)}exec ${q(artifact)} ${argsOf(h)}"$@"
 `
 }
 
@@ -1244,7 +1270,7 @@ function devLauncherOf(h: Harness, clone: string, version: string, toolchain: st
   return `#!/bin/sh
 # openmods dev: \`${h.binary}\` runs your clone at ${clone} from source.
 # \`openmods dev --stop\` switches back.
-${toolchain ? `PATH=${q(toolchain)}:"$PATH"; export PATH\n` : ""}${envOf(h)}${argsUnlessOf(h)}${run} ${argsOf(h)}"$@"
+${toolchain ? `PATH=${q(toolchain)}:"$PATH"; export PATH\n` : ""}${stockWhenOf(h)}${envOf(h)}${argsUnlessOf(h)}${run} ${argsOf(h)}"$@"
 `
 }
 
@@ -1349,25 +1375,47 @@ async function shellStarted(): Promise<number | null> {
 
 // The launcher while the mods are off: it finds the stock harness on PATH,
 // or where its official installer puts it, each time it starts.
-function stockLauncherOf(h: Harness) {
+// Shell lines that start the stock harness when it is found: on PATH (anything
+// that is the launcher itself, however PATH reaches it, is skipped), else
+// where its official installer puts it. When it is not found, they go on.
+function stockSearchOf(h: Harness) {
   const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
   const installed = (h.installer?.paths ?? []).map((p) => q(p.replace(/^~(?=\/|$)/, homedir())))
-  return `#!/bin/sh
-# openmods launcher for ${h.binary}, switched off: it starts your stock ${h.name}.
-# \`openmods on\` brings the mods back.
-# Anything that is this file (-ef), however PATH reaches it, is skipped.
-SELF=${q(path.join(BIN, h.binary))}
-OLD_IFS=$IFS; IFS=:
+  return `OLD_IFS=$IFS; IFS=:
 for d in $PATH; do
   IFS=$OLD_IFS
-  [ -n "$d" ] && [ -f "$d/${h.binary}" ] && [ -x "$d/${h.binary}" ] && ! [ "$d/${h.binary}" -ef "$SELF" ] && exec "$d/${h.binary}" "$@"
+  [ -n "$d" ] && [ -f "$d/${h.binary}" ] && [ -x "$d/${h.binary}" ] && ! [ "$d/${h.binary}" -ef ${q(path.join(BIN, h.binary))} ] && exec "$d/${h.binary}" "$@"
 done
 IFS=$OLD_IFS
 ${installed.length ? `for d in ${installed.join(" ")}; do
   [ -f "$d/${h.binary}" ] && [ -x "$d/${h.binary}" ] && exec "$d/${h.binary}" "$@"
 done
-` : ""}printf '%s\n' ${q(`${h.binary}: your stock ${h.name} was not found. Install it, or run \`openmods on\` for the modded build.`)} >&2
+` : ""}`
+}
+
+function stockLauncherOf(h: Harness) {
+  const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
+  return `#!/bin/sh
+# openmods launcher for ${h.binary}, switched off: it starts your stock ${h.name}.
+# \`openmods on\` brings the mods back.
+${stockSearchOf(h)}printf '%s\n' ${q(`${h.binary}: your stock ${h.name} was not found. Install it, or run \`openmods on\` for the modded build.`)} >&2
 exit 127
+`
+}
+
+// Shell lines that hand the run to the stock harness when the user's
+// arguments include one of stockWhen's words (for uses that share state with
+// the stock harness, such as Codex's shared background server). With no stock
+// harness to be found, the run stops and says so: the modded build never
+// takes those uses.
+function stockWhenOf(h: Harness) {
+  if (!h.stockWhen?.length) return ""
+  const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
+  const install = h.installer?.command ? ` Install it (${h.installer.command}), then run this again.` : " Install it, then run this again."
+  return `${matchArgsOf(h, h.stockWhen, "OPENMODS_STOCK")}if [ -n "$OPENMODS_STOCK" ]; then
+${stockSearchOf(h)}  printf '%s\n' ${q(`${h.binary}: this runs your stock ${h.name}, which was not found: it uses a background server your stock ${h.name} shares, so the modded build does not run it.${install}`)} >&2
+  exit 127
+fi
 `
 }
 
@@ -1526,6 +1574,41 @@ async function cmdSetup() {
 // The release is `target` when given (update), else the one the user is on
 // if every mod has a version for it, else the newest release they all have.
 // Nothing else moves the user to another release.
+// A shared server the stock harness uses that was set up from one of our
+// modded builds: by an older openmods (its version carries our stamp) or a
+// copy of the current build. OpenMods never touches it; it says how to give
+// it back to the stock harness with the harness's own command.
+function moddedServer(h: Harness, e: State[string] | undefined): string | null {
+  const s = h.sharedServer
+  if (!s) return null
+  const home = (s.homeEnv && process.env[s.homeEnv]) || s.home.replace(/^~(?=\/|$)/, homedir())
+  const server = path.join(home, s.binary)
+  try {
+    if (!statSync(server).isFile()) return null
+    // Read, never run: the version it was packaged with, which an older
+    // openmods stamped with the mods.
+    if (s.versionFile) {
+      try {
+        if (String(readJsonFile(path.join(home, s.versionFile)).version ?? "").includes("+")) return server
+      } catch {}
+    }
+    if (e?.artifact && statSync(e.artifact).size === statSync(server).size) {
+      const digest = (f: string) => new Bun.CryptoHasher("sha256").update(readFileSync(f)).digest("hex")
+      if (digest(e.artifact) === digest(server)) return server
+    }
+  } catch {}
+  return null
+}
+function moddedServerNote(h: Harness, e: State[string] | undefined): string | null {
+  const server = moddedServer(h, e)
+  if (!server) return null
+  const stock = stockBinary(h)
+  const reset = stock
+    ? `run: ${pretty(stock)} ${h.sharedServer!.reset}`
+    : `install your stock ${h.name}${h.installer?.command ? ` (${h.installer.command})` : ""}, then run its ${h.binary} with: ${h.sharedServer!.reset}`
+  return `note: ${h.name}'s background server (${pretty(server)}) was set up from a modded build, and your stock ${h.name} uses it too. To give it back to your stock ${h.name}, ${reset}`
+}
+
 // What the harness command starts now, read from its launcher.
 function whatRuns(h: Harness, e: State[string] | undefined) {
   const launcher = path.join(BIN, h.binary)
@@ -2042,6 +2125,8 @@ async function cmdStatus() {
     for (const m of e.off) log(`          ${m} is built out (openmods install ${m} --${id} builds it back in)`)
     log(`  stock   ${stock ? `${(await versionOf(stock)) ?? "?"}  ${pretty(stock)}` : "not found on PATH"}`)
     for (const b of revokedIn(reg, id, e)) log(`  removed ${b.id} was removed from OpenMods: ${b.reason} \`openmods uninstall ${b.id}\``)
+    const server = moddedServerNote(h, e)
+    if (server) log(`  ${server}`)
     const note = e.enabled ? readNote(id) : null
     if (note?.MESSAGE) log(`  news    ${note.MESSAGE}${note.ASK === "1" ? ` \`openmods update ${id}\` does it.` : ""}`)
     if (e.enabled && !onPath) log(`  note    ${pretty(BIN)} is not on PATH in this shell; open a new terminal or run: export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"`)
@@ -2147,9 +2232,13 @@ async function cmdUpdate() {
       refreshLauncher(reg, loadHarness(reg, id), e)
       log(`${loadHarness(reg, id).name} ${rel(e.ref)} + ${active.map((m) => m.id).join(" + ")} is already up to date.`)
       if (held) log(held)
+      const server = moddedServerNote(loadHarness(reg, id), e)
+      if (server) log(server)
       continue
     }
     await rebuild(reg, id, mods, e?.off ?? [], [], target)
+    const server = moddedServerNote(loadHarness(reg, id), loadState()[id])
+    if (server) log(server)
     const now = loadState()[id]
     const still = now && heldBack(loadHarness(reg, id), now, active)
     if (still) log(still)
