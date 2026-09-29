@@ -51,6 +51,8 @@ type Harness = {
   args?: string[]
   // More args, unless the user's include one of \`given\`; see the schema.
   argsUnless?: { args: string[]; given: string[] }
+  // The user's arguments that start the stock harness instead; see the schema.
+  stockWhen?: string[]
   releaseTagPattern?: string
 }
 
@@ -1220,7 +1222,7 @@ if { [ -t 0 ] && [ -t 1 ]; } || [ -n "$OPENMODS_ASSUME_TTY" ]; then
   fi
 fi
 
-${envOf(h)}${argsUnlessOf(h)}exec ${q(artifact)} ${argsOf(h)}"$@"
+${stockWhenOf(h)}${envOf(h)}${argsUnlessOf(h)}exec ${q(artifact)} ${argsOf(h)}"$@"
 `
 }
 
@@ -1244,7 +1246,7 @@ function devLauncherOf(h: Harness, clone: string, version: string, toolchain: st
   return `#!/bin/sh
 # openmods dev: \`${h.binary}\` runs your clone at ${clone} from source.
 # \`openmods dev --stop\` switches back.
-${toolchain ? `PATH=${q(toolchain)}:"$PATH"; export PATH\n` : ""}${envOf(h)}${argsUnlessOf(h)}${run} ${argsOf(h)}"$@"
+${toolchain ? `PATH=${q(toolchain)}:"$PATH"; export PATH\n` : ""}${stockWhenOf(h)}${envOf(h)}${argsUnlessOf(h)}${run} ${argsOf(h)}"$@"
 `
 }
 
@@ -1349,25 +1351,46 @@ async function shellStarted(): Promise<number | null> {
 
 // The launcher while the mods are off: it finds the stock harness on PATH,
 // or where its official installer puts it, each time it starts.
-function stockLauncherOf(h: Harness) {
+// Shell lines that start the stock harness when it is found: on PATH (anything
+// that is the launcher itself, however PATH reaches it, is skipped), else
+// where its official installer puts it. When it is not found, they go on.
+function stockSearchOf(h: Harness) {
   const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
   const installed = (h.installer?.paths ?? []).map((p) => q(p.replace(/^~(?=\/|$)/, homedir())))
-  return `#!/bin/sh
-# openmods launcher for ${h.binary}, switched off: it starts your stock ${h.name}.
-# \`openmods on\` brings the mods back.
-# Anything that is this file (-ef), however PATH reaches it, is skipped.
-SELF=${q(path.join(BIN, h.binary))}
-OLD_IFS=$IFS; IFS=:
+  return `OLD_IFS=$IFS; IFS=:
 for d in $PATH; do
   IFS=$OLD_IFS
-  [ -n "$d" ] && [ -f "$d/${h.binary}" ] && [ -x "$d/${h.binary}" ] && ! [ "$d/${h.binary}" -ef "$SELF" ] && exec "$d/${h.binary}" "$@"
+  [ -n "$d" ] && [ -f "$d/${h.binary}" ] && [ -x "$d/${h.binary}" ] && ! [ "$d/${h.binary}" -ef ${q(path.join(BIN, h.binary))} ] && exec "$d/${h.binary}" "$@"
 done
 IFS=$OLD_IFS
 ${installed.length ? `for d in ${installed.join(" ")}; do
   [ -f "$d/${h.binary}" ] && [ -x "$d/${h.binary}" ] && exec "$d/${h.binary}" "$@"
 done
-` : ""}printf '%s\n' ${q(`${h.binary}: your stock ${h.name} was not found. Install it, or run \`openmods on\` for the modded build.`)} >&2
+` : ""}`
+}
+
+function stockLauncherOf(h: Harness) {
+  const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
+  return `#!/bin/sh
+# openmods launcher for ${h.binary}, switched off: it starts your stock ${h.name}.
+# \`openmods on\` brings the mods back.
+${stockSearchOf(h)}printf '%s\n' ${q(`${h.binary}: your stock ${h.name} was not found. Install it, or run \`openmods on\` for the modded build.`)} >&2
 exit 127
+`
+}
+
+// Shell lines that hand the run to the stock harness when the user's
+// arguments include one of stockWhen's words (for uses that share state with
+// the stock harness, such as Codex's shared background server). With no stock
+// harness to be found, the modded build runs.
+function stockWhenOf(h: Harness) {
+  if (!h.stockWhen?.length) return ""
+  const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
+  const pattern = (w: string) => (w.endsWith("*") ? `${q(w.slice(0, -1))}*` : q(w))
+  return `OPENMODS_STOCK=
+for a in "$@"; do case "$a" in --) break ;; ${h.stockWhen.map(pattern).join("|")}) OPENMODS_STOCK=1 ;; esac; done
+if [ -n "$OPENMODS_STOCK" ]; then
+${stockSearchOf(h)}fi
 `
 }
 

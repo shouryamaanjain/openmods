@@ -124,6 +124,11 @@
       "--remote=*"
     ]
   },
+  "stockWhen": [
+    "agents",
+    "--remote",
+    "--remote=*"
+  ],
   "recipe": [
     {
       "file": "codex-rs/rust-toolchain.toml"

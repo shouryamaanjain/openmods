@@ -52,6 +52,8 @@ for (const id of harnesses) {
   }
   if (h.args !== undefined && (!Array.isArray(h.args) || h.args.some((a: unknown) => typeof a !== "string" || !a)))
     errors.push(`harnesses/${id}.json: args must be a list of arguments, none of them empty`)
+  if (h.stockWhen !== undefined && (!Array.isArray(h.stockWhen) || !h.stockWhen.length || h.stockWhen.some((a: unknown) => typeof a !== "string" || !a)))
+    errors.push(`harnesses/${id}.json: stockWhen must be a list of arguments, none of them empty`)
   const unless = h.argsUnless
   const words = (v: unknown) => Array.isArray(v) && v.length > 0 && v.every((a) => typeof a === "string" && a)
   if (

@@ -186,6 +186,12 @@
       },
       "description": "Arguments the modded build, and a clone under `openmods dev`, always start with, before the user's. For a setting a modded build needs next to the stock one that has no environment variable, such as turning off Codex's update check, since OpenMods offers the updates. They are the harness's own switches: OpenMods never changes a harness's code."
     },
+    "stockWhen": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1,
+      "description": "Arguments that start the user's stock harness instead of the modded build (a word as typed; a trailing * matches its start; after -- nothing counts). For uses that share state with the stock harness, such as Codex's agents overview and --remote, which set up Codex's shared background server: from the modded build, stock Codex would then run modded code. With no stock harness to be found, the modded build runs."
+    },
     "argsUnless": {
       "type": "object",
       "required": ["args", "given"],

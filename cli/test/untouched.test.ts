@@ -35,6 +35,9 @@ describe("a modded build", () => {
   test("Codex gets its own switches from the launcher, not a patch", () => {
     expect(codex.args).toEqual(["-c", "check_for_update_on_startup=false", "-c", "feedback.enabled=false"])
     expect(codex.argsUnless).toEqual({ args: ["--no-daemon"], given: ["agents", "--remote", "--remote=*"] })
+    // Those uses set up Codex's shared background server, which stock Codex
+    // uses too: they run stock Codex, so the server is always stock's.
+    expect(codex.stockWhen).toEqual(["agents", "--remote", "--remote=*"])
   })
 })
 

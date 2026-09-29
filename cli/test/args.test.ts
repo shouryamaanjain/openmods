@@ -4,7 +4,7 @@
 // existed gets them with the daily check, without a rebuild.
 import { beforeAll, describe, expect, test } from "bun:test"
 import { $ } from "bun"
-import { readFileSync, writeFileSync } from "node:fs"
+import { readFileSync, renameSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { cli, createHarness, createMod, git, sandbox } from "./harness"
 
@@ -80,3 +80,31 @@ describe("a harness's argsUnless", () => {
     await cli(sb, "dev", "--stop")
   })
 })
+
+describe("a harness's stockWhen", () => {
+  const setStockWhen = (w: string[] | undefined) => {
+    const { stockWhen: _, ...rest } = JSON.parse(readFileSync(definition, "utf8"))
+    writeFileSync(definition, JSON.stringify(w ? { ...rest, stockWhen: w } : rest))
+  }
+  test("hands those runs to the stock harness; every other run is modded", async () => {
+    setStockWhen(["agents", "--remote", "--remote=*"])
+    await cli(sb, "status")
+    expect(await greet("agents")).toBe("stock greet")
+    expect(await greet("--remote=ws://h")).toBe("stock greet")
+    expect(await greet("resume")).toBe("args:[resume]")
+    // After --, words are the user's text.
+    expect(await greet("--", "agents")).toBe("args:[--][agents]")
+  })
+  test("with no stock harness to be found, the modded build runs", async () => {
+    const stock = path.join(sb.home, ".greet")
+    renameSync(stock, `${stock}.away`)
+    try {
+      expect(await greet("agents")).toBe("args:[agents]")
+    } finally {
+      renameSync(`${stock}.away`, stock)
+      setStockWhen(undefined)
+      await cli(sb, "status")
+    }
+  })
+})
+
