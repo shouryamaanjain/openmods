@@ -5,6 +5,10 @@ name: release
 # main reaches them only when cli/package.json's version is raised. After the
 # tests pass on a push to main, a version that has no release yet gets one,
 # on that commit (or on its tag, if the tag is already there).
+#
+# v* tags are protected (a ruleset): only maintainers and the release bot's
+# deploy key may create them, never a workflow's token. So the tag is pushed
+# with that key, and the GitHub release made for it after.
 
 on:
   workflow_run:
@@ -26,6 +30,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
+          ssh-key: ${{ secrets.RELEASE_BOT_KEY }}
       - env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ github.event.workflow_run.head_sha }}
@@ -48,4 +53,8 @@ jobs:
             echo "v$version is already a tag, on $tagged, not on $SHA; not releasing it."
             exit 1
           fi
-          gh release create "v$version" --target "$SHA" --title "OpenMods $version" --generate-notes
+          if [ -z "$tagged" ]; then
+            git tag "v$version" "$SHA"
+            git push origin "refs/tags/v$version"
+          fi
+          gh release create "v$version" --verify-tag --title "OpenMods $version" --generate-notes

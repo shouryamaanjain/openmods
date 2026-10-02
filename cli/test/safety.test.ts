@@ -95,6 +95,41 @@ describe("the files a mod may contain", () => {
   })
 })
 
+describe("a mod's pinned commit", () => {
+  test("must be its release tag's: install builds nothing, check judges it, and the registry check refuses it", async () => {
+    // A commit the host would serve by its id that no release names, as a
+    // fork's would be.
+    const sup = JSON.parse(readFileSync(path.join(friendlyDir(), "support.json"), "utf8"))
+    const ref: string = sup.versions[0].ref
+    await $`git -C ${sb.harness} checkout -q -b fork ${ref}`.quiet()
+    writeFileSync(path.join(sb.harness, "FORK.md"), "not a release\n")
+    await $`git -C ${sb.harness} add -A && git -C ${sb.harness} -c user.name=t -c user.email=t@t commit -qm fork`.quiet()
+    const fork = (await $`git -C ${sb.harness} rev-parse HEAD`.text()).trim()
+    await $`git -C ${sb.harness} checkout -q -`.quiet()
+    const file = path.join(friendlyDir(), "support.json")
+    const before = readFileSync(file, "utf8")
+    sup.versions[0].commit = fork
+    writeFileSync(file, JSON.stringify(sup, null, 2))
+    try {
+      const r = await cli(sb, "install", "t/friendly")
+      expect(r.code).not.toBe(0)
+      expect(r.all).toContain("OpenMods builds only a release's own commit, so nothing was built")
+      expect(existsSync(path.join(sb.harness, "FORK.md"))).toBe(false)
+      const c = await cli(sb, "check", friendlyDir(), "--at", ref, "--json", "--workspace", path.join(sb.T, "ws-fork"))
+      expect(c.code).not.toBe(0)
+      const j = JSON.parse(c.out)
+      expect(j.applies).toBe(false)
+      expect(j.unchecked).toBeUndefined()
+      expect(j.error).toContain("a version must pin its release's own commit")
+      const v = await $`bun ${VALIDATE} --registry ${sb.reg}`.nothrow().quiet()
+      expect(v.exitCode).toBe(1)
+      expect(v.stderr.toString()).toContain(`is not ${ref}'s`)
+    } finally {
+      writeFileSync(file, before)
+    }
+  })
+})
+
 describe("a harness definition", () => {
   test("a sameRelease whose stockVersion grep or sed would not take, or with no group for the release, fails the registry check", async () => {
     const file = path.join(sb.reg, "harnesses", "fake.json")

@@ -179,6 +179,16 @@ describe("apply", () => {
     expect((await watchWithIssues("plan", "--ref", "v1.1.0")).some((c) => c.startsWith("issue close"))).toBe(false)
     writeFileSync(status, before)
   })
+  test("a result that names another commit than the release tag's is not trusted: nothing is recorded but a count", async () => {
+    rmSync(results(), { recursive: true, force: true })
+    mkdirSync(results(), { recursive: true })
+    const other = (await git(sb.harness, "rev-parse", "v1.0.0^{commit}")).stdout.toString().trim()
+    writeFileSync(path.join(results(), "mods_t_garbled_fake.json"), JSON.stringify({ mod: "t/garbled", harness: "fake", ref: "v1.1.0", commit: other, applies: true, typechecks: true }))
+    const r = await apply(["garbled"])
+    expect(r.code, r.err).toBe(0)
+    expect(versions(dirOf("garbled")).map((v) => v.ref)).not.toContain("v1.1.0")
+    expect(statusOf("garbled").unchecked.error).toContain("but its tag is")
+  })
   test("a verdict closes the mod's could-not-check issues, for any release", async () => {
     writeFileSync(ghIssues(), JSON.stringify([
       { number: 9, title: "The release watch could not check t/counted on Fake 1.1.0" },
