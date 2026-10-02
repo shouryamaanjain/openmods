@@ -7,7 +7,7 @@
 // The stock install of the harness is never touched.
 
 import { $ } from "bun"
-import { accessSync, constants, cpSync, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
+import { accessSync, constants, cpSync, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
 import { cpus, homedir, tmpdir, totalmem } from "node:os"
 import path from "node:path"
 import { footprint, incompatibility as whyNot, type Footprint } from "./overlap"
@@ -1213,9 +1213,20 @@ async function build(h: Harness, root: string) {
 // stays until the new one exists, then the rest are cleared out. What is
 // copied is the harness's `keep` folder, the binary with what it needs beside
 // it (Codex's package: its helpers and resources), or else the binary alone.
-function keepBuild(h: Harness, harnessId: string, root: string, stamp: string) {
+// The build that ran until now (`previous`, its artifact) stays too: a session
+// started from it keeps running across the update, and Codex starts its
+// apply_patch and sandbox helpers from its own executable's path.
+function keepBuild(h: Harness, harnessId: string, root: string, stamp: string, previous?: string) {
   const builds = path.join(HOME, "harnesses", harnessId, "builds")
-  const name = stamp.replace(/[^A-Za-z0-9._+-]/g, "_")
+  const base = stamp.replace(/[^A-Za-z0-9._+-]/g, "_")
+  const inBuilds = previous ? path.relative(path.resolve(builds), path.resolve(previous)) : ""
+  const kept = inBuilds && !inBuilds.startsWith("..") && !path.isAbsolute(inBuilds) ? inBuilds.split(path.sep)[0] : undefined
+  const inUse = buildsInUse(builds)
+  // A rebuild of the same release and mods (update --force) goes in a folder
+  // of its own when that build may still run: it is never replaced under a
+  // running session.
+  let name = base
+  for (let n = 2; existsSync(path.join(builds, name)) && (name === kept || inUse.has(name)); n++) name = `${base}-r${n}`
   const dest = path.join(builds, name)
   const artifact = artifactPath(h, root)
   const inside = h.keep ? path.relative(artifactPath(h, root, h.keep), artifact) : path.basename(artifact)
@@ -1241,12 +1252,34 @@ function keepBuild(h: Harness, harnessId: string, root: string, stamp: string) {
   }
   rmSync(dest, { recursive: true, force: true })
   renameSync(staging, dest)
-  // Older builds go; another build's staging folder stays while its process runs.
+  // Older builds go, except the one that ran until now and any a running
+  // program was started from; another build's staging folder stays while its
+  // process runs.
   for (const d of readdirSync(builds)) {
     const pid = /^\..+\.(\d+)$/.exec(d)?.[1]
-    if (d !== name && !(pid && isRunning(Number(pid)))) rmSync(path.join(builds, d), { recursive: true, force: true })
+    if (d !== name && d !== kept && !inUse.has(d) && !(pid && isRunning(Number(pid)))) rmSync(path.join(builds, d), { recursive: true, force: true })
   }
   return path.join(dest, inside)
+}
+
+// The build folders that running programs were started from: the launcher
+// execs a build by its full path, so it is in the program's command line.
+// When ps cannot say, none: the build that ran until now is kept anyway.
+function buildsInUse(builds: string): Set<string> {
+  const used = new Set<string>()
+  let r: ReturnType<typeof Bun.spawnSync>
+  try {
+    r = Bun.spawnSync(["ps", "-A", "-ww", "-o", "command="])
+  } catch {
+    return used // no ps on this machine
+  }
+  if (r.exitCode !== 0) return used
+  const prefix = path.resolve(builds) + path.sep
+  for (const line of String(r.stdout ?? "").split("\n")) {
+    const at = line.indexOf(prefix)
+    if (at >= 0) used.add(line.slice(at + prefix.length).split(path.sep)[0]!.split(/\s/)[0]!)
+  }
+  return used
 }
 
 function isRunning(pid: number) {
@@ -1600,7 +1633,7 @@ function stockWhenOf(h: Harness) {
   const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
   const install = h.installer?.command ? ` Install it (${h.installer.command}), then run this again.` : " Install it, then run this again."
   return `${matchArgsOf(h, h.stockWhen, "OPENMODS_STOCK")}if [ -n "$OPENMODS_STOCK" ]; then
-${stockSearchOf(h)}  printf '%s\n' ${q(`${h.binary}: this is for your stock ${h.name}, which was not found; the modded build leaves it to the stock one.${install}`)} >&2
+${stockSearchOf(h)}  printf '%s\n' ${q(`${h.binary}: this runs your stock ${h.name}, which was not found. OpenMods always sends this use to your stock ${h.name}: it manages what stock shares with the modded build (such as a background server or saved sessions), or stock's own install.${install}`)} >&2
   exit 127
 fi
 `
@@ -1668,7 +1701,7 @@ const setsPath = (l: string) => !l.trim().startsWith("#") && /PATH|(^|[\s;&|])pa
 // does with ~/.local/bin, where Codex installs. Returns each file it edited
 // and whether it added or moved the line. With no such file, it is ~/.profile:
 // bash's login shell reads none, and ~/.bashrc only from one of them.
-function setupPath(): { rc: string; moved: boolean }[] {
+function setupPath(): PathEdit[] {
   if (has("no-path") || process.platform === "win32") return []
   const shell = path.basename(process.env.SHELL ?? "")
   const home = homedir()
@@ -1686,7 +1719,37 @@ function setupPath(): { rc: string; moved: boolean }[] {
       : `export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"  # openmods`
   const block = `# openmods: modded builds go first; \`openmods off\` steps aside\n${line}\n`
   const read = (f: string) => (existsSync(f) ? readFileSync(f, "utf8") : "")
-  const edits: { rc: string; moved: boolean }[] = []
+  const edits: PathEdit[] = []
+  // A startup file that cannot be written (read-only, or managed by a tool
+  // such as home-manager) is left alone, and the line is shown to add by hand.
+  // The new text is written whole beside the file and moved over it, so a
+  // write that fails (a full disk, say) never leaves the file cut short; a
+  // link to the file (dotfiles kept elsewhere) stays a link.
+  const write = (rc: string, text: string, moved: boolean) => {
+    try {
+      mkdirSync(path.dirname(rc), { recursive: true })
+      // A link whose target does not exist yet is written through too.
+      const link = (() => {
+        try {
+          return lstatSync(rc).isSymbolicLink()
+        } catch {
+          return false
+        }
+      })()
+      const target = existsSync(rc) ? realpathSync(rc) : link ? path.resolve(path.dirname(rc), readlinkSync(rc)) : rc
+      const mode = existsSync(target) ? (accessSync(target, constants.W_OK), statSync(target).mode & 0o7777) : 0o644
+      const tmp = `${target}.openmods-${process.pid}`
+      try {
+        writeFileSync(tmp, text, { mode })
+        renameSync(tmp, target)
+      } finally {
+        rmSync(tmp, { force: true })
+      }
+      edits.push({ rc, moved })
+    } catch (e) {
+      edits.push({ rc, moved, failed: (e as NodeJS.ErrnoException).code ?? "it could not be written", line })
+    }
+  }
   for (const rc of files) {
     const current = read(rc)
     const lines = current.split("\n")
@@ -1694,26 +1757,28 @@ function setupPath(): { rc: string; moved: boolean }[] {
     if (last >= 0) {
       if (!lines.slice(last + 1).some(setsPath)) continue
       const kept = lines.filter((l) => !l.includes("# openmods")).join("\n").replace(/\n{3,}/g, "\n\n").replace(/\n*$/, "\n")
-      writeFileSync(rc, `${kept}\n${block}`)
-      edits.push({ rc, moved: true })
+      write(rc, `${kept}\n${block}`, true)
       continue
     }
     // Not when PATH already has it some other way; the login file only
     // alongside ~/.bashrc's line.
-    if (rc === files[0] ? pathHasBin() : !read(files[0]!).includes("# openmods")) continue
-    mkdirSync(path.dirname(rc), { recursive: true })
-    writeFileSync(rc, `${current}${current.endsWith("\n") || current === "" ? "" : "\n"}\n${block}`)
-    edits.push({ rc, moved: false })
+    // (Also when ~/.bashrc could not be written: a login shell must still
+    // put ~/.openmods/bin first.)
+    if (rc === files[0] ? pathHasBin() : !read(files[0]!).includes("# openmods") && !edits.some((e) => e.rc === files[0] && e.failed)) continue
+    write(rc, `${current}${current.endsWith("\n") || current === "" ? "" : "\n"}\n${block}`, false)
   }
   return edits
 }
 
 // What was edited, and how to have it in the current terminal.
-function explainPath(edits: { rc: string; moved: boolean }[]) {
-  const added = edits.filter((e) => !e.moved).map((e) => pretty(e.rc))
-  const moved = edits.filter((e) => e.moved).map((e) => pretty(e.rc))
+type PathEdit = { rc: string; moved: boolean; failed?: string; line?: string }
+function explainPath(edits: PathEdit[]) {
+  const added = edits.filter((e) => !e.moved && !e.failed).map((e) => pretty(e.rc))
+  const moved = edits.filter((e) => e.moved && !e.failed).map((e) => pretty(e.rc))
   if (added.length) log(`Added ${pretty(BIN)} to the front of PATH in ${added.join(" and ")}.`)
   if (moved.length) log(`Moved the openmods line to the end of ${moved.join(" and ")}, so ${pretty(BIN)} stays first on PATH after a line added later.`)
+  for (const e of edits.filter((x) => x.failed))
+    log(`Could not edit ${pretty(e.rc)} (${e.failed}). Add this line at the end of your shell's startup file yourself, so ${pretty(BIN)} comes first on PATH:\n  ${e.line}`)
   log(`Open a new terminal, or run this in the current one:`)
   log(`  export PATH="${pretty(BIN).replace("~", "$HOME")}:$PATH"`)
 }
@@ -1979,7 +2044,7 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
   }
   await build(h, root).catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)))
   const was = state[harnessId]?.ref
-  const artifact = keepBuild(h, harnessId, root, `${rel(base.ref)}+${stampOf(mods)}`)
+  const artifact = keepBuild(h, harnessId, root, `${rel(base.ref)}+${stampOf(mods)}`, state[harnessId]?.artifact)
   progress = undefined
   failNote = undefined
   // The files the mods change, for what the launcher does beside the stock
@@ -2078,9 +2143,12 @@ function lockOwnerRuns(pid: number, written: number) {
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "EPERM") return false
   }
-  const r = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)])
-  const started = Date.parse(r.stdout.toString().trim())
-  if (r.exitCode !== 0 || Number.isNaN(started)) return Date.now() - written < 12 * 3_600_000
+  let r: ReturnType<typeof Bun.spawnSync> | undefined
+  try {
+    r = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)])
+  } catch {} // no ps on this machine
+  const started = r ? Date.parse(String(r.stdout ?? "").trim()) : Number.NaN
+  if (!r || r.exitCode !== 0 || Number.isNaN(started)) return Date.now() - written < 12 * 3_600_000
   // ps gives the second, and on Linux can be a second early.
   return started <= written + 2000
 }
@@ -2357,17 +2425,20 @@ function whereFrom(reg: string) {
 // \`on\`/\`off\` switch a harness's command between its modded build and the
 // stock one, instantly, keeping the build. Adding or removing a mod is
 // \`install\` and \`uninstall\`.
-function harnessTarget(state: State, arg: string | undefined, verb: "on" | "off"): string[] {
+// The harness is named as on every other command: `openmods off codex`,
+// `--codex` or `--harness codex`; with none named, every harness with mods.
+function harnessTarget(reg: string, state: State, arg: string | undefined, verb: "on" | "off"): string[] {
   if (arg?.includes("/"))
     fail(`\`openmods ${verb}\` switches a whole harness between its modded build and your stock one. To ${verb === "on" ? "add" : "remove"} ${arg}: openmods ${verb === "on" ? "install" : "uninstall"} ${arg}`)
-  if (arg && !state[arg]) fail(`no mods installed for "${arg}"; \`openmods status\` lists what is`)
-  return arg ? [arg] : Object.keys(state)
+  const named = [...new Set([...(arg ? [arg] : []), ...harnessFlags(reg)])]
+  for (const id of named) if (!state[id]) fail(`no mods installed for "${id}"; \`openmods status\` lists what is`)
+  return named.length ? named : Object.keys(state)
 }
 
 async function cmdOn() {
   const reg = await ensureRegistry()
   const state = loadState()
-  const ids = harnessTarget(state, positional[1], "on")
+  const ids = harnessTarget(reg, state, positional[1], "on")
   if (ids.length === 0) fail("nothing to switch on; install a mod first")
   for (const id of ids) {
     const e = state[id] ?? fail(`no mods installed for ${id}`)
@@ -2388,7 +2459,7 @@ async function cmdOn() {
 async function cmdOff() {
   const reg = await ensureRegistry()
   const state = loadState()
-  const ids = harnessTarget(state, positional[1], "off")
+  const ids = harnessTarget(reg, state, positional[1], "off")
   if (ids.length === 0) fail("nothing to switch off")
   for (const id of ids) {
     const e = state[id] ?? fail(`no mods installed for ${id}`)
@@ -2406,7 +2477,8 @@ async function cmdUpdate() {
   if (cli instanceof Error) console.error(`note: could not update OpenMods itself (${cli.message}); it stays as it is.`)
   else if (cli) log(cli.from ? `OpenMods is updated: ${cli.from} → ${cli.to}. Your next command runs it.` : `OpenMods ${cli.to} is set up in ${pretty(CLI_DIR)}.`)
   const state = loadState()
-  const ids = positional[1] ? [positional[1]] : Object.keys(state)
+  const picked = [...new Set([...(positional[1] ? [positional[1]] : []), ...harnessFlags(reg)])]
+  const ids = picked.length ? picked : Object.keys(state)
   for (const id of ids) {
     const e = state[id]
     if (!e) {

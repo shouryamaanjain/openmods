@@ -106,7 +106,7 @@ const harnesses: Harness[] = readdirSync(path.join(root, "harnesses"))
   .map((f) => readJson(path.join(root, "harnesses", f)))
 
 function modsIn(base: string, local: boolean): Mod[] {
-  const dirs = (p: string) => (existsSync(p) ? readdirSync(p, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name) : [])
+  const dirs = (p: string) => (existsSync(p) ? readdirSync(p, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [])
   return dirs(base).flatMap((owner) =>
     dirs(path.join(base, owner))
       .filter((name) => existsSync(path.join(base, owner, name, "mod.json")))

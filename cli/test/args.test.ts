@@ -113,7 +113,7 @@ describe("a harness's stockWhen", () => {
       const r = await run("agents")
       expect(r.code).toBe(127)
       expect(r.out).toBe("")
-      expect(r.err).toContain("this is for your stock Fake, which was not found")
+      expect(r.err).toContain("this runs your stock Fake, which was not found")
       expect((await run("hi")).out).toBe("args:[hi]")
     } finally {
       renameSync(`${stock}.away`, stock)
