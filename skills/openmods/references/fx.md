@@ -8,8 +8,7 @@ Ignore the older pre-launch tags `v0.3.73` and `v0.4.x`: they sort above the rea
 - Setup and checks
 - Where things live
 - Adding things
-- What not to touch (shared with stock fx)
-- Why fx mods conflict easily
+- Shared with stock fx
 
 ## Setup and checks
 
@@ -83,21 +82,11 @@ A `TopLevelKind` value (`command_specs.zig`), a `TopLevelSpec` in `src/builtins/
 - Themes need no mod: `~/.fx/themes/<name>.json`, picked with `FX_THEME` or the `theme` setting. To build one in: a `Theme` const in `src/core/shared/theme.zig`.
 - A setting: a field on `Settings` (`src/core/config/config_runtime.zig`), parsed in `parseSettingsJson`, merged, and (if writable) in `settings_store.zig`. Stock fx ignores unknown keys, but prefix mod keys (`mod_…`) so a future upstream key of another type can't clash.
 
-## What not to touch (shared with stock fx)
+## Shared with stock fx
 
 Users keep stock fx next to the modded one, and fx has no switch to separate them:
 
 - **Everything in `~/.fx`** (settings, logins, sessions, history, skills, themes) is shared.
-- **Session files are strict.** Stock fx rejects a session manifest with any extra key and an event it doesn't know (`src/core/session/`). Never add fields or event types to session files; keep a mod's state in its own file.
-- **The background terminal host** (`src/core/terminal/`, socket under `~/.fx/terminal-host-v7`) runs the shell tool's sessions, and whichever fx binary starts it serves both stock and modded fx while it lives. A mod that changes host-side code changes stock fx's behavior too, and one that changes the wire protocol breaks the other binary. Leave it alone unless the mod is about it, and then say so plainly in the README.
-- **Auto-upgrade:** OpenMods runs modded fx with `FX_AUTO_UPGRADE=0` and sends `fx upgrade` to stock fx. Don't change the upgrader; a mod that turned it back on would replace itself with stock.
-
-## Why fx mods conflict easily
-
-Almost every fx feature touches the same few files: `command_specs.zig`, `command_router.zig`, `app_commands.zig`, `builtins/commands.zig`, `builtins/tools.zig`, `main.zig`, plus pinned tests (command order and counts, tool order, the tool-schema hash). OpenMods refuses two mods whose patches change the same or adjacent lines, so:
-
-- insert each registration next to an entry it's related to, not at the start or end of a table, where every mod would insert and so overlap (insertions at the same spot count as the same lines);
-- keep the feature itself in new files;
-- don't reformat neighbouring lines.
-
-Two fx mods that each add a slash command still collide on the pinned command counts and order tests, so they can't be installed together on the same release: publishing the first doesn't remove that overlap. Say so in the README; OpenMods finds overlapping lines itself and names them, so don't list the other mod under `conflicts` for that.
+- **Session files are strict.** Stock fx rejects a session manifest with any extra key, and an event it doesn't know (`src/core/session/`), so a session a mod writes with new fields or event types can't be opened in stock fx. A mod's own state can live in a file of its own.
+- **The background terminal host** (`src/core/terminal/`, socket under `~/.fx/terminal-host-v7`) runs the shell tool's sessions, and whichever fx binary starts it serves both stock and modded fx while it lives. So a mod that changes host-side code also changes it for stock fx while its host is the one running, and a change to the wire protocol needs both sides to agree. Say so in the README if the mod changes it.
+- **Auto-upgrade:** OpenMods runs modded fx with `FX_AUTO_UPGRADE=0` and sends `fx upgrade` to stock fx; a mod that turned auto-upgrade back on would replace itself with stock fx.

@@ -1,6 +1,6 @@
 # Contributing a mod
 
-Writing it with a coding agent? Install the [openmods skill](https://github.com/shouryamaanjain/openmods/tree/main/skills/openmods) (`npx skills add shouryamaanjain/openmods --skill openmods -g`): it carries this guide, a map of each harness's source, and the rules that keep a mod installable next to others.
+Writing it with a coding agent? Install the [openmods skill](https://github.com/shouryamaanjain/openmods/tree/main/skills/openmods) (`npx skills add shouryamaanjain/openmods --skill openmods -g`): it carries this guide and a map of each harness's source.
 
 ## 1. Make the change in the harness
 

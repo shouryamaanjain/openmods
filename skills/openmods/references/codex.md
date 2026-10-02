@@ -8,7 +8,7 @@ Codex CLI (github.com/openai/codex, tags `rust-v0.x.y`) is a Rust workspace in `
 - Adding things
 - Conventions the code enforces
 - Built-ins (don't rebuild them)
-- What not to touch
+- Shared with stock Codex
 - Worked example: space-invaders
 
 ## Setup and checks
@@ -38,7 +38,7 @@ Codex CLI (github.com/openai/codex, tags `rust-v0.x.y`) is a Rust workspace in `
 | `features/` | Feature flags (`Feature`, `FEATURES`), which drive `/experimental`. |
 | `ext/*` | Extension crates built on `ext/extension-api` (`ToolContributor`, `ContextContributor`). |
 
-The repo also asks to put new code in new modules and keep `chatwidget.rs`, `bottom_pane/mod.rs`, `chat_composer.rs` and `app.rs` small. That's exactly what keeps a mod's patch small.
+The repo's own convention is to put new code in new modules and keep `chatwidget.rs`, `bottom_pane/mod.rs`, `chat_composer.rs` and `app.rs` small.
 
 ## Adding things
 
@@ -71,7 +71,7 @@ The configurable way (follow `toggle_vim_mode` through these files):
 5. Handle it in `handle_shared_app_keymap_action()` in `tui/src/app/input.rs`.
 6. `just write-config-schema` (updates `core/config.schema.json`; a test fails if it drifts).
 
-That's many files. For a mod, a hard-coded key check in `handle_shared_app_keymap_action` is a far smaller patch.
+A quicker alternative, without a config entry or `/keymap` listing: a hard-coded key check in `handle_shared_app_keymap_action`.
 
 ### A status line item
 `StatusLineItem` in `tui/src/bottom_pane/status_line_setup.rs` (plus its preview in `status_surface_preview.rs` and accent in `status_line_style.rs`), and its value in `status_line_value()` in `tui/src/chatwidget/status_surfaces.rs`. Users then add it to `tui.status_line = [...]`.
@@ -100,11 +100,9 @@ Base instructions come from `config.base_instructions` (`instructions` / `model_
 
 `/vim` and vim mode, `/keymap` (remap keys in the UI), `/statusline`, `/title`, `/theme`, `/pets`, `/side` and `/btw`, `/experimental`, `/hooks`, `/skills`, `/plugins`, `/mcp`, `/memories`, `/goal`, `/plan`, `/agents`, `/review`, `/diff`, `/copy`, `/export`, `/compact`, `/usage`. Prompt control without code: `developer_instructions`, `model_instructions_file`, AGENTS.md.
 
-## What not to touch
+## Shared with stock Codex
 
-- **The shared background server** (`codex app-server`, the daemon under `~/.codex/packages/app-server-daemon`). Stock Codex owns it; modded Codex runs with `--no-daemon`, and OpenMods sends `codex agents`, `--remote`, `app-server`, `remote-control`, `queue`, `update`, `archive`, `unarchive` and `delete` to stock Codex. A mod that needs those commands to run modded code won't get that.
-- **`Cargo.lock` and dependencies**, unless the feature truly needs a crate.
-- **Large shared files** beyond a hook line (`chatwidget.rs`, `bottom_pane/mod.rs`, `app.rs`): every mod touches them, so every extra line there risks overlapping another mod.
+- **The shared background server** (`codex app-server`, the daemon under `~/.codex/packages/app-server-daemon`) belongs to stock Codex. Modded Codex runs with `--no-daemon`, and OpenMods sends `codex agents`, `--remote`, `app-server`, `remote-control`, `queue`, `update`, `archive`, `unarchive` and `delete` to stock Codex, so changes to those commands don't run in the modded build.
 
 ## Worked example: space-invaders
 
@@ -117,4 +115,4 @@ Base instructions come from `config.base_instructions` (`instructions` / `model_
 - `bottom_pane/mod.rs`: the module lines, and a render branch that keeps the "Working" status line above the view; `bottom_pane_view.rs` gains a default `keeps_status_visible()` method for it.
 - The command-popup snapshot gains `/invaders`.
 
-The view animates with `pre_draw_tick` and `next_frame_delay` (only while running), takes ←/→/space/p in `handle_key_event`, and saves the game on Esc/Ctrl-C in `on_ctrl_c` so `/invaders` resumes it. It's the smallest complete recipe for "a slash command that opens a bottom-pane view".
+The view animates with `pre_draw_tick` and `next_frame_delay` (only while running), takes ←/→/space/p in `handle_key_event`, and saves the game on Esc/Ctrl-C in `on_ctrl_c` so `/invaders` resumes it. It's a complete recipe for "a slash command that opens a bottom-pane view".

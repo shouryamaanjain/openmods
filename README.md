@@ -82,7 +82,7 @@ openmods pack . --name my-mod --registry ../openmods    # into your fork of this
 
 Then open a pull request. [CONTRIBUTING.md](CONTRIBUTING.md) walks through it, including Codex and what review checks.
 
-If you write mods with a coding agent, give it the **openmods** skill ([skills/openmods](skills/openmods/SKILL.md)): the workflow, where each harness keeps its commands, panels, keys and tools, how to keep a mod small enough to install next to others and survive new releases, and how to publish and update it. It works in Claude Code, Codex, OpenCode and fx:
+If you write mods with a coding agent, give it the **openmods** skill ([skills/openmods](skills/openmods/SKILL.md)): the workflow, where each harness keeps its commands, panels, keys and tools, how to test a mod, and how to publish and update it. It works in Claude Code, Codex, OpenCode and fx:
 
 ```sh
 npx skills add shouryamaanjain/openmods --skill openmods -g
