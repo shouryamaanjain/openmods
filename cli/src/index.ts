@@ -1167,16 +1167,14 @@ async function ensureZig(root: string): Promise<string | null> {
       .map((m) => ({ m, r: Math.random() }))
       .sort((a, b) => a.r - b.r)
       .slice(0, 3)
-      .map(({ m }) => ({ from: `${m.replace(/\/+$/, "")}/${file}?source=openmods`, wait: 180_000 })),
-    { from: url, wait: 600_000 },
+      .map(({ m }) => `${m.replace(/\/+$/, "")}/${file}?source=openmods`),
+    url,
   ]
-  let data: ArrayBuffer | null = null
+  let data: Uint8Array | null = null
   let last = ""
-  for (const t of tries) {
+  for (const from of tries) {
     try {
-      const r = await fetch(t.from, { signal: AbortSignal.timeout(t.wait) })
-      if (!r.ok) throw new Error(`${t.from} answered ${r.status}`)
-      const got = await r.arrayBuffer()
+      const got = await download(from)
       const sum = new Bun.CryptoHasher("sha256").update(got).digest("hex")
       if (sum !== shasum) throw new Error(`the download's sha256 is ${sum}, not ${shasum} as ziglang.org lists it`)
       data = got
@@ -1190,7 +1188,7 @@ async function ensureZig(root: string): Promise<string | null> {
   rmSync(tmp, { recursive: true, force: true })
   mkdirSync(tmp, { recursive: true })
   try {
-    writeFileSync(path.join(tmp, "zig.tar.xz"), new Uint8Array(data!))
+    writeFileSync(path.join(tmp, "zig.tar.xz"), data!)
     const r = await $`tar -xJf ${path.join(tmp, "zig.tar.xz")} -C ${tmp}`.nothrow().quiet()
     if (r.exitCode !== 0) fail(`could not unpack Zig ${want}: ${r.stderr.toString().trim().split("\n").at(-1)}`)
     const top = readdirSync(tmp).find((d) => d.startsWith("zig-") && existsSync(path.join(tmp, d, "zig")))
@@ -1203,6 +1201,28 @@ async function ensureZig(root: string): Promise<string | null> {
     rmSync(tmp, { recursive: true, force: true })
   }
   return bin
+}
+// A download, for as long as it keeps coming: one that sends nothing for 30
+// seconds is given up. Mirrors differ a lot in speed, so a slow one that
+// works is better than starting again elsewhere.
+async function download(url: string): Promise<Uint8Array> {
+  const stop = new AbortController()
+  let stalled = setTimeout(() => stop.abort(), 30_000)
+  try {
+    const r = await fetch(url, { signal: stop.signal })
+    if (!r.ok || !r.body) throw new Error(`${url.replace(/\?.*/, "")} answered ${r.status}`)
+    const parts: Uint8Array[] = []
+    for await (const part of r.body) {
+      clearTimeout(stalled)
+      stalled = setTimeout(() => stop.abort(), 30_000)
+      parts.push(part)
+    }
+    return Buffer.concat(parts)
+  } catch (e) {
+    throw stop.signal.aborted ? new Error(`${url.replace(/\?.*/, "")} sent nothing for 30 seconds`) : e
+  } finally {
+    clearTimeout(stalled)
+  }
 }
 async function ensureBun(root: string): Promise<string | null> {
   const pkg = path.join(root, "package.json")
