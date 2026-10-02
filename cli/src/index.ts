@@ -56,6 +56,8 @@ type Harness = {
   stockWhen?: string[]
   // Its options that take a value, to find the command word; see the schema.
   valueOptions?: string[]
+  // Its license, as an SPDX id: a packed mod starts with it.
+  license?: string
   // Where it keeps a server its stock and modded builds could share; see the schema.
   sharedServer?: { home: string; homeEnv?: string; binary: string; versionFile?: string; reset: string }
   // What changes when the stock harness is the modded build's own release;
@@ -2683,7 +2685,9 @@ async function cmdPack(opts: { quiet?: boolean } = {}): Promise<{ owner: string;
     description: existing.description ?? "TODO: one line, under 200 characters",
     author: existing.author ?? { name: author, github: owner },
     maintainers: existing.maintainers ?? [owner],
-    license: existing.license ?? "MIT",
+    // The harness's own license until the author says otherwise: a mod is a
+    // change to its code.
+    license: existing.license ?? harness.license ?? "MIT",
     tags: existing.tags ?? [],
   }
   writeFileSync(metaFile, JSON.stringify(meta, null, 2) + "\n")
