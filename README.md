@@ -37,7 +37,7 @@ Mods are built from source on your machine, nothing is prebuilt. The first build
 
 - **OpenCode** needs nothing more: the CLI fetches the exact Bun version each release pins.
 - **Codex CLI** is a large Rust project: around ten minutes on a recent laptop, longer on a smaller machine, and a few GB of build cache. Its Rust crates download to Cargo's usual `~/.cargo`. It needs Rust, a C compiler and Python 3.11+, plus `pkg-config` and the libcap and OpenSSL headers on Linux. If any are missing, the CLI says which, with one command that installs them all when your package manager has them. OpenMods builds Codex with less optimization than its official releases, which roughly halves the build time.
-- **fx** is a Zig program: a couple of minutes, and up to about 3 GB of memory while it compiles. The CLI fetches the exact Zig version each release pins from ziglang.org, checks it against the sha256 Zig publishes, and keeps it in `~/.openmods/toolchains`; on Linux, unpacking it needs `xz`. Zig's build cache goes in `~/.openmods/cache/zig`. On Linux it is built as fx's own releases are, as a static binary.
+- **fx** is a Zig program: a couple of minutes, and up to about 3 GB of memory while it compiles. The CLI fetches the exact Zig version each release pins, from Zig's community mirrors or ziglang.org, checks it against the sha256 in ziglang.org's download index, and keeps it in `~/.openmods/toolchains`; on Linux, unpacking it needs `xz`. Zig's build cache goes in `~/.openmods/cache/zig`. On Linux it is built as fx's own releases are, as a static binary.
 
 ### Updates
 

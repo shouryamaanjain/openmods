@@ -15,6 +15,7 @@ import { lastRebuild, Progress, roughly } from "./progress"
 import { managerHere, missingMessage, type Requirement } from "./requirements"
 import { codeOf, withPrivateEmails } from "./private-email"
 import { sameRepo } from "./same-repo"
+import { getZig, usableZig, zigPin } from "./zig"
 
 type Harness = {
   id: string
@@ -1123,106 +1124,16 @@ function pinnedToolchains(root: string): string[] {
   if (zig) pins.push(`zig-${zig}`)
   return pins
 }
-const zigPin = (root: string) => {
-  try {
-    return readFileSync(path.join(root, "build.zig.zon"), "utf8").match(/\.minimum_zig_version\s*=\s*"(\d+\.\d+\.\d+)"/)?.[1] ?? null
-  } catch {
-    return null
-  }
-}
-// Zig from ziglang.org's download index, checked against the sha256 it gives.
-// The download comes from Zig's community mirrors, tried in a random order
-// as Zig asks of tools, and from ziglang.org itself when none of them gives
-// it; the sha256 from the index makes any of them as good as the next.
+// Zig, from ziglang.org (see zig.ts); the one on PATH when it is the version.
 async function ensureZig(root: string): Promise<string | null> {
   const want = zigPin(root)
   if (!want) return null
   const have = Bun.which("zig") ? (await $`zig version`.nothrow().text()).trim() : ""
   if (have === want) return null
-  // The whole release goes in bin/: zig finds its lib folder beside itself.
   const dir = path.join(HOME, "toolchains", `zig-${want}`)
-  const bin = path.join(dir, "bin")
-  if (existsSync(path.join(bin, "zig"))) return bin
-  const arch = { arm64: "aarch64", x64: "x86_64" }[process.arch as string]
-  const os = { darwin: "macos", linux: "linux" }[process.platform as string]
-  if (!arch || !os) fail(`this release needs Zig ${want} (you have ${have || "none"}), which OpenMods cannot get for ${process.platform} ${process.arch}; install it from https://ziglang.org`)
+  if (await usableZig(path.join(dir, "bin"), want)) return path.join(dir, "bin")
   log(`Getting Zig ${want}, the version this release builds with (once, into ${pretty(dir)})`)
-  const why = (e: unknown) => fail(`could not get Zig ${want}: ${e instanceof Error ? e.message : String(e)}`)
-  const index = await fetch(process.env.OPENMODS_ZIG_INDEX || "https://ziglang.org/download/index.json", { signal: AbortSignal.timeout(30_000) })
-    .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`ziglang.org answered ${r.status}`))))
-    .catch(why)
-  const entry = (index as Record<string, Record<string, { tarball?: string; shasum?: string }>>)[want]?.[`${arch}-${os}`]
-  const url = entry?.tarball
-  const shasum = entry?.shasum
-  if (!url || !shasum) return fail(`could not get Zig ${want}: ziglang.org lists no ${arch}-${os} build of it`)
-  const mirrors = process.env.OPENMODS_ZIG_INDEX
-    ? []
-    : await fetch("https://ziglang.org/download/community-mirrors.txt", { signal: AbortSignal.timeout(15_000) })
-        .then((r) => (r.ok ? r.text() : ""))
-        .catch(() => "")
-        .then((t) => t.split("\n").map((l) => l.trim()).filter((l) => /^https:\/\//.test(l)))
-  const file = url.split("/").at(-1)!
-  const tries = [
-    ...mirrors
-      .map((m) => ({ m, r: Math.random() }))
-      .sort((a, b) => a.r - b.r)
-      .slice(0, 3)
-      .map(({ m }) => `${m.replace(/\/+$/, "")}/${file}?source=openmods`),
-    url,
-  ]
-  let data: Uint8Array | null = null
-  let last = ""
-  for (const from of tries) {
-    try {
-      const got = await download(from)
-      const sum = new Bun.CryptoHasher("sha256").update(got).digest("hex")
-      if (sum !== shasum) throw new Error(`the download's sha256 is ${sum}, not ${shasum} as ziglang.org lists it`)
-      data = got
-      break
-    } catch (e) {
-      last = e instanceof Error ? e.message : String(e)
-    }
-  }
-  if (!data) return fail(`could not get Zig ${want}: ${last}`)
-  const tmp = `${dir}.download.${process.pid}`
-  rmSync(tmp, { recursive: true, force: true })
-  mkdirSync(tmp, { recursive: true })
-  try {
-    writeFileSync(path.join(tmp, "zig.tar.xz"), data!)
-    const r = await $`tar -xJf ${path.join(tmp, "zig.tar.xz")} -C ${tmp}`.nothrow().quiet()
-    if (r.exitCode !== 0) fail(`could not unpack Zig ${want}: ${r.stderr.toString().trim().split("\n").at(-1)}`)
-    const top = readdirSync(tmp).find((d) => d.startsWith("zig-") && existsSync(path.join(tmp, d, "zig")))
-    if (!top) return fail(`could not unpack Zig ${want}: no zig in the download`)
-    if ((await $`${path.join(tmp, top, "zig")} version`.nothrow().text()).trim() !== want) fail(`Zig ${want} (${arch}-${os}) does not run on this machine`)
-    mkdirSync(dir, { recursive: true })
-    rmSync(bin, { recursive: true, force: true })
-    renameSync(path.join(tmp, top), bin)
-  } finally {
-    rmSync(tmp, { recursive: true, force: true })
-  }
-  return bin
-}
-// A download, for as long as it keeps coming: one that sends nothing for 30
-// seconds is given up. Mirrors differ a lot in speed, so a slow one that
-// works is better than starting again elsewhere.
-async function download(url: string): Promise<Uint8Array> {
-  const stop = new AbortController()
-  let stalled = setTimeout(() => stop.abort(), 30_000)
-  try {
-    const r = await fetch(url, { signal: stop.signal })
-    if (!r.ok || !r.body) throw new Error(`${url.replace(/\?.*/, "")} answered ${r.status}`)
-    const parts: Uint8Array[] = []
-    for await (const part of r.body) {
-      clearTimeout(stalled)
-      stalled = setTimeout(() => stop.abort(), 30_000)
-      parts.push(part)
-    }
-    return Buffer.concat(parts)
-  } catch (e) {
-    throw stop.signal.aborted ? new Error(`${url.replace(/\?.*/, "")} sent nothing for 30 seconds`) : e
-  } finally {
-    clearTimeout(stalled)
-  }
+  return getZig(want, dir).catch((e: unknown) => fail(`could not get Zig ${want}: ${e instanceof Error ? e.message : String(e)}`))
 }
 async function ensureBun(root: string): Promise<string | null> {
   const pkg = path.join(root, "package.json")
