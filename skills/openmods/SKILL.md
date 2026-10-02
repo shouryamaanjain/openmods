@@ -67,7 +67,7 @@ The registry points such submissions elsewhere. Mods are for what those cannot r
    ```sh
    openmods check mods/<you>/my-mod/<harness> --build      # from the registry fork
    ```
-   This applies the patches to the release in a temporary clone and builds, as users will. CI only typechecks, so build it yourself before the PR. Then commit only the mod's folder in the fork, on a branch from the registry's `main`. You can run the **standards** check locally before pushing: `bun script/pr-check.ts --base main --head HEAD --author <you>` from the fork. Then open a PR to `shouryamaanjain/openmods`. The **standards** check, CI's apply-and-typecheck, Greptile's code and security review, and a maintainer's approval follow; [references/publishing.md](references/publishing.md) lists what each enforces.
+   This applies the patches to the release in a temporary clone and builds, as users will. CI typechecks the versions a PR changes and builds OpenCode and fx mods, but never builds Codex mods, so build it yourself before the PR. Then commit only the mod's folder in the fork, on a branch from the registry's `main`. You can run the **standards** check locally before pushing, against the registry's current `main`: `git fetch https://github.com/shouryamaanjain/openmods main && bun script/pr-check.ts --base FETCH_HEAD --head HEAD --author <you>` from the fork. Then open a PR to `shouryamaanjain/openmods`. The **standards** check, CI's apply-and-typecheck, Greptile's code and security review, and a maintainer's approval follow; [references/publishing.md](references/publishing.md) lists what each enforces.
 
 The same mod can support several harnesses: make the change in each harness's clone and `pack` from each into the same registry folder. Users pick with `--opencode`, `--codex` or `--fx`.
 
@@ -79,8 +79,8 @@ These matter more than anything else about the code, because the registry is a p
 - **Don't reformat, reorder or "clean up" upstream code.** Every changed line is a line another mod can't touch and a line that may conflict next release.
 - **No dependency or lockfile changes unless the feature truly needs them.** Two mods that both touch a lockfile can never be installed together, and `pack` warns about it. Build files and dependency changes are flagged for reviewers.
 - **Don't change what stock shares with the modded build.** Users keep their stock harness next to the modded one, and some state is shared: OpenCode's session database when both are on the same release (so no database migrations or table changes), all of `~/.fx` and fx's background terminal host (so no changes to fx's session format or terminal host), Codex's shared background server. Keep a mod's own state in its own files. The references say exactly what is shared.
-- **Keep the harness's tests and typecheck green**, and update snapshot tests your change legitimately affects (Codex's insta snapshots, fx's pinned order and hash tests). CI typechecks every mod version on every release.
-- **Say what the mod does.** If it adds network calls, reads or writes files outside what the harness already does, runs commands, or changes what the agent is told, the README's Permissions section must say so. A mod that does something its README doesn't disclose is rejected, and a harmful one is removed from every user's machine.
+- **Keep the harness's tests and typecheck green**, and update snapshot tests your change legitimately affects (Codex's insta snapshots, fx's pinned order, count and hash tests). CI typechecks the versions each PR changes, and the release watch checks each mod's newest version on every new release.
+- **Say what the mod does.** If it adds network calls, reads or writes files outside what the harness already does, runs commands, or changes what the agent is told, the README's Permissions section must say so. A mod that does something its README doesn't disclose is rejected, and a harmful one is revoked: it stops running on every user's machine (they get their stock harness back until they uninstall it).
 - **If the agent should know about a new tool or behavior, describe it where the harness describes its built-in tools**, not in a skill beside the mod.
 
 ## Updating a mod
@@ -92,10 +92,10 @@ These matter more than anything else about the code, because the registry is a p
   git checkout -b my-mod <last-supported-tag>
   git am ../openmods/mods/<you>/my-mod/<harness>/<last-supported-tag>/*.patch
   git rebase --onto <new-tag> <last-supported-tag> my-mod     # resolve, git rebase --continue
-  openmods install .                                          # try it
-  openmods pack . --name my-mod --registry ../openmods --note "works on <harness> <new release>"
+  openmods install . --owner <owner>                          # try it
+  openmods pack . --name my-mod --owner <owner> --registry ../openmods --note "works on <harness> <new release>"
   ```
-  `pack` adds a version for the new release and keeps the older ones (users whose other mods are behind still build those).
+  `--owner` is the mod's owner (the folder under `mods/`), which matters when you're a listed maintainer rather than the owner: without it, pack writes a new mod under your own handle. `pack` adds a version for the new release and keeps the older ones (users whose other mods are behind still build those).
 - **Shipping a change:** edit the commits and pack again, with `--force` if that release already has a version, and `--note "what changed"` (required for a new update; users see it when they're offered the update). `pack` numbers updates itself: same changed lines, same update; different lines, the next one.
 
 ## When something goes wrong

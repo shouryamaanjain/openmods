@@ -98,7 +98,7 @@ Also install it with your other mods (`openmods install .` from the harness clon
 
 **A local mod shadows the registry's.** `openmods install .` packs the mod into `~/.openmods/local/<owner>/<mod>`, and while that exists, `openmods info` and `install` use it instead of the copy in your fork (it shows as "local, unpublished", with pack's TODO description). Your edits to the fork's copy aren't lost. Delete the local folder once the mod is published.
 
-Run the registry's own checks from the fork too: `bun script/validate.ts` (the registry lint, including that each version pins its release's commit) and `bun script/pr-check.ts --base main --head HEAD --author <you>` (the standards).
+Run the registry's own checks from the fork too: `bun script/validate.ts` (the registry lint, including that each version pins its release's commit) and the standards check below.
 
 ## The pull request: standards and reviews
 
@@ -115,7 +115,7 @@ The **standards** check enforces:
 
 Changes to the harness's dependencies or build files are allowed but listed for reviewers and labelled `build files`.
 
-Run it yourself before pushing, from the fork with the mod committed: `bun script/pr-check.ts --base main --head HEAD --author <you>` prints what it would say.
+Run it yourself before pushing, from the fork with the mod committed, against the registry's current `main` (a stale one hides an existing mod's earlier updates): `git fetch https://github.com/shouryamaanjain/openmods main && bun script/pr-check.ts --base FETCH_HEAD --head HEAD --author <you>`.
 
 Then:
 1. **Apply and typecheck:** CI applies each changed version to its release and typechecks (and builds OpenCode and fx mods). A failure blocks the merge.
@@ -135,12 +135,12 @@ Labels say what kind of change it is: `mod: new`, `mod: update`, `build files`.
   git checkout -b <mod> <last-supported-tag>
   git am ../openmods/mods/<owner>/<mod>/<harness>/<last-supported-tag>/*.patch
   git rebase --onto <new-tag> <last-supported-tag> <mod>
-  openmods install .
-  openmods pack . --name <mod> --registry ../openmods --note "works on <Harness> <new release>"
+  openmods install . --owner <owner>
+  openmods pack . --name <mod> --owner <owner> --registry ../openmods --note "works on <Harness> <new release>"
   ```
   If only the rebase changed, pack keeps the same update number; if the code changed, it's the next update.
-- **Shipping a fix or feature:** change the commits, `openmods pack . --name <mod> --registry ../openmods --force --note "what changed"` (`--force` replaces the version for that release). Users are offered the update once, with the note.
-- **Removed mods:** a mod found to do harm is listed in the registry's `revoked.json`; every user's build that contains it stops running it and falls back to stock.
+- **Shipping a fix or feature:** change the commits, `openmods pack . --name <mod> --owner <owner> --registry ../openmods --force --note "what changed"` (`--force` replaces the version for that release). Users are offered the update once, with the note.
+- **Removed mods:** a mod found to do harm is listed in the registry's `revoked.json`; every user's build that contains it stops running (the launcher starts the stock harness instead) until they uninstall it.
 
 ## Commands for authors
 
