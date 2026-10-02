@@ -16,9 +16,14 @@ through codex-rollout's listing and loading code and never write to them.
   calls, result previews and apply_patch files up to the next user message.
   Compaction summaries and compacted checkpoints are skipped, rolled-back
   turns are dropped, and the turn still running is not searched.
-- Search is lexical (whole words in user/assistant text, substrings in
-  execution evidence), newest first, bounded to 100 sessions, 10,000 turns,
-  2 MiB of text and 20 hits, with `truncated` when a bound applied.
+- Search is lexical over Unicode letters and digits: whole words in
+  user/assistant text count strongly, substrings of execution evidence count
+  weakly. Excerpts (at most 320 bytes, markers included) come only from the
+  user message or final reply; execution evidence is shown only by
+  session_history_read with include_execution.
+- Bounds: newest first, at most 100 sessions, 10,000 turns, 2 MiB of text and
+  20 hits; rollouts over 32 MiB are not loaded, and loading stops once a
+  budget is spent. `truncated` reports when a bound applied.
 - References are cxhr1:<session>:<turn>:<sha256>, binding the project, the
   session, the turn index and its content; reads re-check all of it.
 - Output is JSON labelled untrusted_historical_context.
@@ -295,10 +300,10 @@ index 0000000000000000000000000000000000000000..2860dd463228fed939e750d7ba164fd2
 +impl CoreToolRuntime for SessionHistoryReadHandler {}
 diff --git a/codex-rs/core/src/tools/handlers/session_history/query.rs b/codex-rs/core/src/tools/handlers/session_history/query.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e143945859c000429fc98fae9654c39276d5c962
+index 0000000000000000000000000000000000000000..babd2ffe0f41b9c3ddf73ca6ba0a034a476a26cc
 --- /dev/null
 +++ b/codex-rs/core/src/tools/handlers/session_history/query.rs
-@@ -0,0 +1,430 @@
+@@ -0,0 +1,439 @@
 +//! Bounded search and exact reads over the saved rollouts of the current project.
 +//!
 +//! The project is the current session's working directory, the same scope `codex resume`
@@ -332,6 +337,7 @@ index 0000000000000000000000000000000000000000..e143945859c000429fc98fae9654c392
 +const MAX_SESSIONS_SCANNED: usize = 100;
 +const MAX_TURNS_SCANNED: usize = 10_000;
 +const MAX_SEARCHABLE_BYTES: usize = 2 * 1024 * 1024;
++const MAX_ROLLOUT_BYTES_SEARCHED: u64 = 32 * 1024 * 1024;
 +const MAX_EXCERPT_BYTES: usize = 320;
 +const MAX_EVIDENCE_ENTRIES: usize = 50;
 +const MAX_EVIDENCE_TEXT_BYTES: usize = 2_000;
@@ -441,9 +447,17 @@ index 0000000000000000000000000000000000000000..e143945859c000429fc98fae9654c392
 +    let mut turns_scanned = 0usize;
 +    let mut searchable_bytes = 0usize;
 +    'sessions: for path in paths {
-+        if turns_scanned >= MAX_TURNS_SCANNED {
++        if turns_scanned >= MAX_TURNS_SCANNED || searchable_bytes >= MAX_SEARCHABLE_BYTES {
 +            truncated = true;
 +            break;
++        }
++        // Never load an oversized rollout just to search it.
++        let too_large = tokio::fs::metadata(&path)
++            .await
++            .is_ok_and(|metadata| metadata.len() > MAX_ROLLOUT_BYTES_SEARCHED);
++        if too_large {
++            truncated = true;
++            continue;
 +        }
 +        let Some(session) = load_scoped_session(scope, &path).await else {
 +            truncated = true;
@@ -731,10 +745,10 @@ index 0000000000000000000000000000000000000000..e143945859c000429fc98fae9654c392
 +mod tests;
 diff --git a/codex-rs/core/src/tools/handlers/session_history/query_tests.rs b/codex-rs/core/src/tools/handlers/session_history/query_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b59e3dd3b8b8f12cebd7fab406faa0d3dd0f67be
+index 0000000000000000000000000000000000000000..1a0230f08826b157ed4c02ef4e0c4ffbf77f6102
 --- /dev/null
 +++ b/codex-rs/core/src/tools/handlers/session_history/query_tests.rs
-@@ -0,0 +1,455 @@
+@@ -0,0 +1,549 @@
 +use std::path::Path;
 +use std::path::PathBuf;
 +
@@ -1190,18 +1204,114 @@ index 0000000000000000000000000000000000000000..b59e3dd3b8b8f12cebd7fab406faa0d3
 +        ]
 +    );
 +}
++
++#[tokio::test]
++async fn a_cjk_query_finds_the_exact_saved_text() {
++    let fixture = fixture();
++    let mut lines = conversation(
++        fixture.current,
++        &fixture.project_a,
++        cli(),
++        &[("请记住：部署使用钴蓝。", "好的，部署使用钴蓝。")],
++    );
++    lines.push(user("unrelated"));
++    write_rollout(
++        &fixture.codex_home,
++        fixture.current,
++        /*age_secs*/ 10,
++        &lines,
++    );
++
++    let output = parse_json(
++        &search(&fixture.scope(), "部署使用钴蓝", MAX_LIMIT)
++            .await
++            .expect("search"),
++    );
++
++    assert_eq!(output["hits"].as_array().map(Vec::len), Some(1));
++    assert_eq!(output["hits"][0]["excerpt"], "请记住：部署使用钴蓝。");
++    assert_eq!(output["hits"][0]["session_relation"], "current");
++}
++
++#[tokio::test]
++async fn oversized_rollouts_are_skipped_without_loading() {
++    let fixture = fixture();
++    let path = codex_rollout::find_thread_path_by_id_str(
++        &fixture.codex_home,
++        &fixture.older.to_string(),
++        /*state_db_ctx*/ None,
++    )
++    .await
++    .expect("find rollout")
++    .expect("rollout exists");
++    let file = std::fs::OpenOptions::new()
++        .write(true)
++        .open(&path)
++        .expect("open rollout");
++    file.set_len(MAX_ROLLOUT_BYTES_SEARCHED + 1)
++        .expect("grow rollout");
++    file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(100))
++        .expect("keep rollout older");
++
++    let output = parse_json(
++        &search(&fixture.scope(), "cobalt", MAX_LIMIT)
++            .await
++            .expect("search"),
++    );
++
++    assert_eq!(
++        hit_identities(&output),
++        vec![(fixture.current.to_string(), "current".to_string())]
++    );
++    assert_eq!(output["truncated"], true);
++}
++
++#[tokio::test]
++async fn no_more_rollouts_load_once_the_text_budget_is_spent() {
++    let fixture = fixture();
++    let answer = "ok";
++    let question = format!(
++        "cobalt {}",
++        "x".repeat(MAX_SEARCHABLE_BYTES - answer.len() - 7)
++    );
++    write_rollout(
++        &fixture.codex_home,
++        fixture.current,
++        /*age_secs*/ 10,
++        &conversation(
++            fixture.current,
++            &fixture.project_a,
++            cli(),
++            &[(&question, answer)],
++        ),
++    );
++
++    let output = parse_json(
++        &search(&fixture.scope(), "cobalt", MAX_LIMIT)
++            .await
++            .expect("search"),
++    );
++
++    assert_eq!(
++        hit_identities(&output),
++        vec![(fixture.current.to_string(), "current".to_string())]
++    );
++    assert_eq!(output["truncated"], true);
++}
 diff --git a/codex-rs/core/src/tools/handlers/session_history/score.rs b/codex-rs/core/src/tools/handlers/session_history/score.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ebe94bbce21aa0ce64f69984f40dcf87a2f5dcee
+index 0000000000000000000000000000000000000000..89ee789d77770445a79ad1ab58c15eaea8c0ed89
 --- /dev/null
 +++ b/codex-rs/core/src/tools/handlers/session_history/score.rs
-@@ -0,0 +1,211 @@
+@@ -0,0 +1,239 @@
 +//! Lexical relevance of saved turns: whole-word matches in user and assistant text count
 +//! strongly, substring matches in execution evidence count weakly.
 +
 +use super::turns::HistoryTurn;
 +
-+/// Distinct ASCII-alphanumeric query terms, lowercased.
++const ELLIPSIS: &str = "...";
++
++/// Distinct query terms (runs of Unicode letters and digits), lowercased.
 +pub(super) struct PreparedQuery {
 +    raw: String,
 +    tokens: Vec<String>,
@@ -1211,10 +1321,10 @@ index 0000000000000000000000000000000000000000..ebe94bbce21aa0ce64f69984f40dcf87
 +    pub(super) fn new(raw: &str) -> Self {
 +        let mut tokens: Vec<String> = Vec::new();
 +        for token in raw
-+            .split(|ch: char| !ch.is_ascii_alphanumeric())
++            .split(|ch: char| !ch.is_alphanumeric())
 +            .filter(|token| !token.is_empty())
 +        {
-+            let token = token.to_ascii_lowercase();
++            let token = token.to_lowercase();
 +            if !tokens.contains(&token) {
 +                tokens.push(token);
 +            }
@@ -1259,7 +1369,7 @@ index 0000000000000000000000000000000000000000..ebe94bbce21aa0ce64f69984f40dcf87
 +
 +    /// User and assistant text: a term counts when it appears as a whole word.
 +    fn add_strong(&mut self, field: &str) -> bool {
-+        let field = field.to_ascii_lowercase();
++        let field = field.to_lowercase();
 +        let mut matched = false;
 +        for (index, token) in self.query.tokens.iter().enumerate() {
 +            if contains_complete_token(&field, token) {
@@ -1273,7 +1383,7 @@ index 0000000000000000000000000000000000000000..ebe94bbce21aa0ce64f69984f40dcf87
 +
 +    /// Tool names, arguments, result previews and file paths: any substring counts.
 +    fn add_weak(&mut self, field: &str) -> bool {
-+        let field = field.to_ascii_lowercase();
++        let field = field.to_lowercase();
 +        let mut matched = false;
 +        for (index, token) in self.query.tokens.iter().enumerate() {
 +            if field.contains(token.as_str()) {
@@ -1301,7 +1411,8 @@ index 0000000000000000000000000000000000000000..ebe94bbce21aa0ce64f69984f40dcf87
 +}
 +
 +/// Scores a turn, returning `None` when nothing matched. The excerpt comes from the first
-+/// field that matched, else the user message.
++/// of the user message and final assistant reply that matched, else the user message.
++/// Execution evidence counts toward the score but is only shown by `session_history_read`.
 +pub(super) fn score_turn<'a>(
 +    query: &PreparedQuery,
 +    session_id: &str,
@@ -1310,13 +1421,15 @@ index 0000000000000000000000000000000000000000..ebe94bbce21aa0ce64f69984f40dcf87
 +    let mut accumulator = ScoreAccumulator::new(query, session_id);
 +    let mut excerpt_source: Option<&'a str> = None;
 +    let execution = &turn.execution;
-+    let strong_fields = std::iter::once(turn.user.as_str())
-+        .chain(turn.assistant.as_deref())
-+        .chain(execution.commentary.iter().map(String::as_str));
-+    for field in strong_fields {
++    let conversation = std::iter::once(turn.user.as_str()).chain(turn.assistant.as_deref());
++    for field in conversation {
 +        if accumulator.add_strong(field) && excerpt_source.is_none() {
 +            excerpt_source = Some(field);
 +        }
++    }
++    // Assistant progress messages are assistant text, but read shows them as execution.
++    for field in &execution.commentary {
++        accumulator.add_strong(field);
 +    }
 +    let weak_fields =
 +        execution
@@ -1333,9 +1446,7 @@ index 0000000000000000000000000000000000000000..ebe94bbce21aa0ce64f69984f40dcf87
 +                std::iter::once(file.path.as_str()).chain(file.new_path.as_deref())
 +            }));
 +    for field in weak_fields {
-+        if accumulator.add_weak(field) && excerpt_source.is_none() {
-+            excerpt_source = Some(field);
-+        }
++        accumulator.add_weak(field);
 +    }
 +    let score = accumulator.finish()?;
 +    Some(ScoredTurn {
@@ -1345,12 +1456,10 @@ index 0000000000000000000000000000000000000000..ebe94bbce21aa0ce64f69984f40dcf87
 +}
 +
 +fn contains_complete_token(field: &str, token: &str) -> bool {
-+    let bytes = field.as_bytes();
 +    field.match_indices(token).any(|(start, matched)| {
-+        let end = start + matched.len();
-+        let before_ok = start == 0 || !bytes[start - 1].is_ascii_alphanumeric();
-+        let after_ok = end == bytes.len() || !bytes[end].is_ascii_alphanumeric();
-+        before_ok && after_ok
++        let before = field[..start].chars().next_back();
++        let after = field[start + matched.len()..].chars().next();
++        !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
 +    })
 +}
 +
@@ -1358,48 +1467,75 @@ index 0000000000000000000000000000000000000000..ebe94bbce21aa0ce64f69984f40dcf87
 +    if identity.is_empty() {
 +        return false;
 +    }
-+    let raw = raw.to_ascii_lowercase();
-+    let identity = identity.to_ascii_lowercase();
-+    let bytes = raw.as_bytes();
-+    let is_identity_byte = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-';
++    let raw = raw.to_lowercase();
++    let identity = identity.to_lowercase();
++    let is_identity_char = |ch: char| ch.is_alphanumeric() || ch == '_' || ch == '-';
 +    raw.match_indices(identity.as_str())
 +        .any(|(start, matched)| {
-+            let end = start + matched.len();
-+            (start == 0 || !is_identity_byte(bytes[start - 1]))
-+                && (end == bytes.len() || !is_identity_byte(bytes[end]))
++            let before = raw[..start].chars().next_back();
++            let after = raw[start + matched.len()..].chars().next();
++            !before.is_some_and(is_identity_char) && !after.is_some_and(is_identity_char)
 +        })
 +}
 +
-+/// At most `max_bytes` of `text` centred on the first match of the query (or of any query
-+/// term), cut on character boundaries, with "..." where text was cut.
++/// Byte offset in `text` of the first case-insensitive match of `needle_lower`, which must
++/// already be lowercase. Lowercasing can change byte lengths, so offsets are mapped back.
++fn find_case_insensitive(text: &str, needle_lower: &str) -> Option<usize> {
++    if needle_lower.is_empty() {
++        return None;
++    }
++    let mut lowered = String::with_capacity(text.len());
++    let mut origins: Vec<usize> = Vec::with_capacity(text.len());
++    for (offset, ch) in text.char_indices() {
++        for lower in ch.to_lowercase() {
++            lowered.push(lower);
++            origins.resize(lowered.len(), offset);
++        }
++    }
++    lowered
++        .find(needle_lower)
++        .and_then(|index| origins.get(index).copied())
++}
++
++/// At most `max_bytes` of `text`, the "..." markers included, centred on the first match of
++/// the query (or of any query term) and cut on character boundaries.
 +pub(super) fn excerpt(text: &str, query: &PreparedQuery, max_bytes: usize) -> String {
 +    if text.len() <= max_bytes {
 +        return text.to_string();
 +    }
-+    let lowered = text.to_ascii_lowercase();
-+    let match_start = lowered
-+        .find(&query.raw.to_ascii_lowercase())
++    let marker = ELLIPSIS.len();
++    let match_start = find_case_insensitive(text, &query.raw.to_lowercase())
 +        .or_else(|| {
 +            query
 +                .tokens
 +                .iter()
-+                .filter_map(|token| lowered.find(token.as_str()))
++                .filter_map(|token| find_case_insensitive(text, token))
 +                .min()
 +        })
 +        .unwrap_or(0);
-+    let mut start = match_start.saturating_sub(max_bytes / 2);
-+    if start + max_bytes > text.len() {
-+        start = text.len() - max_bytes;
-+    }
-+    let start = text.ceil_char_boundary(start);
-+    let end = text.floor_char_boundary((start + max_bytes).min(text.len()));
-+    let mut out = String::with_capacity(end - start + 6);
++    let inner = max_bytes.saturating_sub(2 * marker);
++    let start = match_start.saturating_sub(inner / 2);
++    let (start, end) = if start == 0 {
++        // Only the end is cut.
++        (
++            0,
++            text.floor_char_boundary(max_bytes.saturating_sub(marker)),
++        )
++    } else if start + max_bytes.saturating_sub(marker) >= text.len() {
++        // Only the start is cut.
++        let kept = max_bytes.saturating_sub(marker);
++        (text.ceil_char_boundary(text.len() - kept), text.len())
++    } else {
++        let start = text.ceil_char_boundary(start);
++        (start, text.floor_char_boundary(start + inner))
++    };
++    let mut out = String::with_capacity(end - start + 2 * marker);
 +    if start > 0 {
-+        out.push_str("...");
++        out.push_str(ELLIPSIS);
 +    }
 +    out.push_str(&text[start..end]);
 +    if end < text.len() {
-+        out.push_str("...");
++        out.push_str(ELLIPSIS);
 +    }
 +    out
 +}
@@ -1409,10 +1545,10 @@ index 0000000000000000000000000000000000000000..ebe94bbce21aa0ce64f69984f40dcf87
 +mod tests;
 diff --git a/codex-rs/core/src/tools/handlers/session_history/score_tests.rs b/codex-rs/core/src/tools/handlers/session_history/score_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6600177f487fe49c9280b1cbafeee17cdfdaf07f
+index 0000000000000000000000000000000000000000..d8c2572ac6b690d448b8190300eebc649d4a4b06
 --- /dev/null
 +++ b/codex-rs/core/src/tools/handlers/session_history/score_tests.rs
-@@ -0,0 +1,78 @@
+@@ -0,0 +1,128 @@
 +use super::super::turns::HistoryTurn;
 +use super::super::turns::ToolCallEvidence;
 +use super::super::turns::TurnExecution;
@@ -1487,9 +1623,59 @@ index 0000000000000000000000000000000000000000..6600177f487fe49c9280b1cbafeee17c
 +
 +    assert!(cut.starts_with("..."));
 +    assert!(cut.ends_with("..."));
-+    assert!(cut.len() <= 326);
++    assert!(cut.len() <= 320);
 +    assert!(cut.contains("cobalt decision"));
 +    assert_eq!(excerpt("short", &query, 320), "short");
++
++    let head = excerpt(&format!("cobalt {}", "é".repeat(400)), &query, 320);
++    assert!(!head.starts_with("...") && head.ends_with("..."));
++    assert!(head.len() <= 320);
++    let tail = excerpt(&format!("{} cobalt", "é".repeat(400)), &query, 320);
++    assert!(tail.starts_with("...") && !tail.ends_with("..."));
++    assert!(tail.len() <= 320);
++    assert!(tail.ends_with("cobalt"));
++}
++
++#[test]
++fn execution_matches_score_but_excerpt_the_user_text() {
++    let query = PreparedQuery::new("deploy.toml");
++    let mut hit = turn("check the config", Some("Done."));
++    hit.execution
++        .commentary
++        .push("Reading deploy.toml now.".to_string());
++    hit.execution.tool_calls.push(ToolCallEvidence {
++        name: "exec_command".to_string(),
++        namespace: None,
++        arguments: r#"{"cmd":"cat deploy.toml"}"#.to_string(),
++    });
++
++    let scored = score_turn(&query, "id", &hit).expect("execution matches");
++
++    assert_eq!(scored.excerpt_source, "check the config");
++}
++
++#[test]
++fn unicode_terms_match_case_insensitively_as_whole_words() {
++    let cjk = PreparedQuery::new("部署使用钴蓝");
++    let saved = turn("请记住：部署使用钴蓝。", /*assistant*/ None);
++    let scored = score_turn(&cjk, "id", &saved).expect("CJK term matches");
++    assert_eq!(scored.excerpt_source, "请记住：部署使用钴蓝。");
++
++    let accented = PreparedQuery::new("CAFÉ");
++    assert!(
++        score_turn(
++            &accented,
++            "id",
++            &turn("Le café est prêt", /*assistant*/ None)
++        )
++        .is_some()
++    );
++    assert!(score_turn(&accented, "id", &turn("cafés", /*assistant*/ None)).is_none());
++
++    let long = format!("{}部署使用钴蓝{}", "字".repeat(200), "字".repeat(200));
++    let cut = excerpt(&long, &cjk, 320);
++    assert!(cut.contains("部署使用钴蓝"));
++    assert!(cut.len() <= 320);
 +}
 diff --git a/codex-rs/core/src/tools/handlers/session_history/test_fixtures.rs b/codex-rs/core/src/tools/handlers/session_history/test_fixtures.rs
 new file mode 100644
@@ -2522,6 +2708,24 @@ index 0000000000000000000000000000000000000000..8581cbeaec304ac2679f550727181fe8
 +
 +    Ok(())
 +}
+diff --git a/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__app_tool_exposure_CodeModeOnly.snap b/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__app_tool_exposure_CodeModeOnly.snap
+index 544533d9b45229b63e72de8ac3d7d38b8e9399ce..54377632f870beeaf1495925488e75bd576464e2 100644
+--- a/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__app_tool_exposure_CodeModeOnly.snap
++++ b/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__app_tool_exposure_CodeModeOnly.snap
+@@ -16,10 +16,12 @@ Settings:
+   stream: true
+   text: {"verbosity":"low"}
+   tool_choice: "auto"
+-  tools (4; hash=8f44dd235bfe4473):
++  tools (6; hash=82158857cab1879b):
+     - custom/exec: Run JavaScript code to orchestrate/compose tool calls - Evaluates the provided JavaScript code in...; hash=0fc6c2a32798a2ec
+     - function/wait: Waits on a yielded `exec` cell and returns new output or completion. - Use `wait` only after `exe...; args=[cell_id, max_tokens, terminate, yield_time_ms]; hash=6692d8f6c55be489
+     - function/request_user_input: Request user input for one to three short questions and wait for the response. This tool is only ...; args=[questions]; hash=64a729b25c424fc6
++    - function/session_history_search: Search saved user/assistant turns from this project across sessions. Use only to recover a specif...; args=[limit, query]; hash=11667ea9eb6436b9
++    - function/session_history_read: Read one saved user/assistant turn from this project by an exact session_history_search reference...; args=[include_execution, reference]; hash=1535fead5ca6ced9
+     - web_search; hash=e214d4db1bc49e89
+ -- request 1 (turn) --
+ 00:message/developer[2]:
 diff --git a/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__astra_active_environment_selection.snap b/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__astra_active_environment_selection.snap
 index edf6968eaa7f243c8bb413959b4b654c38653d96..8094cc47c7d632152de5980fddb613a505d70bee 100644
 --- a/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__astra_active_environment_selection.snap
@@ -2624,6 +2828,27 @@ index 19d62b468a349df341a851ebddaee5e03cda5189..3857fc8f3b5841953f212e0c7a2527ef
 -        - namespace/functions; hash=e7db0a45c4ec3157
 +00:additional_tools/developer (3; hash=a691b64bd656a4bb):
 +        - namespace/functions; hash=2d90639744820a43
+           - custom/exec
+           - function/wait
+           - function/request_user_input
+           - function/request_user_input_async
++          - function/session_history_search
++          - function/session_history_read
+         - namespace/clock: Tools for reading and waiting on time.; hash=f402e8c5e9b5e317
+           - function/sleep
+         - namespace/collaboration: Tools for spawning and managing sub-agents.; hash=b263e3c84ad07c37
+diff --git a/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__astra_input_yields_code_mode_cell.snap b/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__astra_input_yields_code_mode_cell.snap
+index 8e905c2f50ba5569248ff1a6e0779745638cbbbb..3ffc94e8ae28db7cbe93d36d6cab4b1c151c13d4 100644
+--- a/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__astra_input_yields_code_mode_cell.snap
++++ b/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__astra_input_yields_code_mode_cell.snap
+@@ -6,12 +6,14 @@ Scenario: Astra continues after new user input yields a running code cell, then
+ 
+ ## Window 1
+ -- request 1 (turn) --
+-00:additional_tools/developer (3; hash=b035de0e31ab087e):
+-        - namespace/functions; hash=a0b6a7ae1ecf9f28
++00:additional_tools/developer (3; hash=e6cdb1847edac0ea):
++        - namespace/functions; hash=eddfaea6d28ac7b4
            - custom/exec
            - function/wait
            - function/request_user_input
@@ -2749,6 +2974,24 @@ index b3a706ecb8fb5be76b0011b700ec91bd2b9498e0..4438c79bd4c00df63f2cbad1fb620bde
      - namespace/clock: Tools for reading and waiting on time.; hash=f402e8c5e9b5e317
        - function/sleep
      - namespace/collaboration: Tools for spawning and managing sub-agents.; hash=b263e3c84ad07c37
+diff --git a/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__code_mode_mcp_schema_limits.snap b/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__code_mode_mcp_schema_limits.snap
+index c34c97ef03e887e9194594892d65b504fed748f3..c82929f3b185a49a06bd3a7ce081c2e69f870a56 100644
+--- a/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__code_mode_mcp_schema_limits.snap
++++ b/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__code_mode_mcp_schema_limits.snap
+@@ -16,10 +16,12 @@ Settings:
+   stream: true
+   text: {"verbosity":"low"}
+   tool_choice: "auto"
+-  tools (4; hash=ee397215c4055252):
++  tools (6; hash=bebc3de0fb634382):
+     - custom/exec: Run JavaScript code to orchestrate/compose tool calls - Evaluates the provided JavaScript code in...; hash=485f26f17d4a2899
+     - function/wait: Waits on a yielded `exec` cell and returns new output or completion. - Use `wait` only after `exe...; args=[cell_id, max_tokens, terminate, yield_time_ms]; hash=6692d8f6c55be489
+     - function/request_user_input: Request user input for one to three short questions and wait for the response. This tool is only ...; args=[questions]; hash=64a729b25c424fc6
++    - function/session_history_search: Search saved user/assistant turns from this project across sessions. Use only to recover a specif...; args=[limit, query]; hash=11667ea9eb6436b9
++    - function/session_history_read: Read one saved user/assistant turn from this project by an exact session_history_search reference...; args=[include_execution, reference]; hash=1535fead5ca6ced9
+     - web_search; hash=e214d4db1bc49e89
+ -- request 1 (turn) --
+ 00:message/developer:
 diff --git a/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__guardian_checkpoint_migration.snap b/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__guardian_checkpoint_migration.snap
 index a7f777fb03a3a1c93c005ff2472fca2012680350..10738cf0a3c4133d31697090dcd71a9d32bead16 100644
 --- a/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__guardian_checkpoint_migration.snap
@@ -2849,6 +3092,52 @@ index 98fdd407b51c749539eea808554fda1e9c805d96..93ee3883e3fea8e7679a4d6da469c385
      - custom/apply_patch: The `apply_patch` tool can be used to edit files. This is a FREEFORM tool, so do not wrap the pat...; hash=dea9f12b0111a4ba
      - function/view_image: View a local image file from the filesystem when visual inspection is needed. Use this for images...; args=[detail, path]; hash=3b766d5bdec5d50e
      - tool_search: # Tool discovery  Searches over deferred tool metadata with BM25 and exposes matching tools for t...; args=[limit, query]; hash=400cd6ac61d524a9
+diff --git a/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__indirect_namespace_prefixes__catalog_indirect_namespace_prefixes.snap b/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__indirect_namespace_prefixes__catalog_indirect_namespace_prefixes.snap
+index 47b71fd5f97759a490e928316808b14beee9ae39..01ecd84dafc4c425d4a5bcf5a3a6c98ca934155e 100644
+--- a/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__indirect_namespace_prefixes__catalog_indirect_namespace_prefixes.snap
++++ b/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__indirect_namespace_prefixes__catalog_indirect_namespace_prefixes.snap
+@@ -16,10 +16,12 @@ Settings:
+   stream: true
+   text: {"verbosity":"low"}
+   tool_choice: "auto"
+-  tools (4; hash=045ecf3b2d3b6af5):
++  tools (6; hash=40ee84de4bcc74a9):
+     - custom/exec: Run JavaScript code to orchestrate/compose tool calls - Evaluates the provided JavaScript code in...; hash=e9cdd499ac568220
+     - function/wait: Waits on a yielded `exec` cell and returns new output or completion. - Use `wait` only after `exe...; args=[cell_id, max_tokens, terminate, yield_time_ms]; hash=6692d8f6c55be489
+     - function/request_user_input: Request user input for one to three short questions and wait for the response. This tool is only ...; args=[questions]; hash=64a729b25c424fc6
++    - function/session_history_search: Search saved user/assistant turns from this project across sessions. Use only to recover a specif...; args=[limit, query]; hash=11667ea9eb6436b9
++    - function/session_history_read: Read one saved user/assistant turn from this project by an exact session_history_search reference...; args=[include_execution, reference]; hash=1535fead5ca6ced9
+     - web_search; hash=e214d4db1bc49e89
+ -- request 1 (turn) --
+ 00:message/developer:
+@@ -48,7 +50,7 @@ Settings:
+ ## Window 2 (after request 2)
+ Settings: relative to window 1
+   model: "prefixes-cleared"
+-  tools (4; hash=dec6fdcb7bf3fec7):
++  tools (6; hash=ed7b835e3c71322f):
+     ~ custom/exec: Run JavaScript code to orchestrate/compose tool calls - Evaluates the provided JavaScript code in...; hash=39e1eedcbc703718
+ -- request 3 (turn) --
+ 00:message/developer:
+diff --git a/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__mcp_resource_messages__mcp_resource_messages.snap b/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__mcp_resource_messages__mcp_resource_messages.snap
+index 3a7c7f38e10e9bf74c269bb5ac5c07e8548d2263..2e978fcc49c8f356028647fd4cd52fb378096032 100644
+--- a/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__mcp_resource_messages__mcp_resource_messages.snap
++++ b/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__mcp_resource_messages__mcp_resource_messages.snap
+@@ -32,11 +32,13 @@ Settings:
+   stream: true
+   text: {"verbosity":"low"}
+   tool_choice: "auto"
+-  tools (7; hash=4a2648ce3a65d327):
++  tools (9; hash=79561a8a199c6cfb):
+     - custom/exec: Run JavaScript code to orchestrate/compose tool calls - Evaluates the provided JavaScript code in...; hash=50ea9b7f60e145b5
+     - function/wait: Waits on a yielded `exec` cell and returns new output or completion. - Use `wait` only after `exe...; args=[cell_id, max_tokens, terminate, yield_time_ms]; hash=6692d8f6c55be489
+     - function/request_user_input: Request user input for one to three short questions and wait for the response. This tool is only ...; args=[questions]; hash=64a729b25c424fc6
+     - function/request_user_input_async: Ask the user one or more questions during ongoing work. Use this tool only to request missing inf...; args=[questions]; hash=d6d74f33db330162
++    - function/session_history_search: Search saved user/assistant turns from this project across sessions. Use only to recover a specif...; args=[limit, query]; hash=11667ea9eb6436b9
++    - function/session_history_read: Read one saved user/assistant turn from this project by an exact session_history_search reference...; args=[include_execution, reference]; hash=1535fead5ca6ced9
+     - namespace/clock: Tools for reading and waiting on time.; hash=f402e8c5e9b5e317
+       - function/sleep
+     - namespace/collaboration: Tools for spawning and managing sub-agents.; hash=b263e3c84ad07c37
 diff --git a/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__multi_agent_catalog_parameters.snap b/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__multi_agent_catalog_parameters.snap
 index d676a390d50ddb030f6a2ad8cd71faf125c2b866..cdec5193ef617e2dbb4f2489414c62c97a366d5f 100644
 --- a/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__multi_agent_catalog_parameters.snap

@@ -10,11 +10,15 @@ example after compaction dropped it from context.
 
 Search scans up to 100 sessions, 10,000 turns and 2 MiB of text, newest
 first, and returns opaque ochr1 references bound by a SHA-256 digest to
-the project, session, turn index and turn content. Read re-checks the
-digest and returns the turn, with tool calls, results and changed files
-only when include_execution is set. Results say whether a hit comes
-from the current session or another one, and label recovered history as
-untrusted. Compaction summaries are not turns and are never returned.
+the project, session, turn index and turn content. Excerpts come only
+from the turn's user or assistant text and are at most 320 bytes,
+markers included. Read re-checks the digest and returns the turn, with
+tool calls, results and changed files only when include_execution is
+set, capped at 50 steps, 50 calls and results per step and 50 files,
+and flagged with execution_truncated when anything was cut. Results say
+whether a hit comes from the current session or another one, and label
+recovered history as untrusted. Compaction summaries are not turns and
+are never returned.
 
 diff --git a/packages/core/src/plugin/internal.ts b/packages/core/src/plugin/internal.ts
 index 4e72100119e72bfb96485f8bbb129340565816cf..2654e4e595f1faebc150fe5dc3325a25b5f8a1e3 100644
@@ -38,10 +42,10 @@ index 4e72100119e72bfb96485f8bbb129340565816cf..2654e4e595f1faebc150fe5dc3325a25
    SubagentTool.Plugin,
 diff --git a/packages/core/src/tool/plugin/session-history.ts b/packages/core/src/tool/plugin/session-history.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..e2002a3253ead4733a8b16c32488123fcc152ede
+index 0000000000000000000000000000000000000000..602f1609e176f65aabf5dbeaf01cf020b02eece5
 --- /dev/null
 +++ b/packages/core/src/tool/plugin/session-history.ts
-@@ -0,0 +1,415 @@
+@@ -0,0 +1,448 @@
 +export * as SessionHistoryTools from "./session-history.js"
 +
 +import { ToolFailure } from "@opencode/ai"
@@ -65,12 +69,14 @@ index 0000000000000000000000000000000000000000..e2002a3253ead4733a8b16c32488123f
 +export const MAX_TURNS = 10_000
 +export const MAX_SEARCHABLE_BYTES = 2 * 1024 * 1024
 +export const MAX_EXCERPT_BYTES = 320
++const MARKER = "..."
 +export const MAX_RESULTS = 20
 +const DEFAULT_RESULTS = 8
 +const MAX_QUERY_BYTES = 512
 +const MAX_REFERENCE_BYTES = 512
 +const MAX_ARGUMENTS_BYTES = 2048
 +const MAX_PREVIEW_BYTES = 512
++export const MAX_EXECUTION_ITEMS = 50
 +const REFERENCE_PREFIX = "ochr1"
 +const REFERENCE_CONTEXT = "opencode.session-history-reference.v1"
 +const REFERENCE_PATTERN = /^ochr1:(ses[^:\s]*):(0|[1-9][0-9]{0,8}):([0-9a-fA-F]{64})$/
@@ -233,7 +239,7 @@ index 0000000000000000000000000000000000000000..e2002a3253ead4733a8b16c32488123f
 +        session_relation: target.id === current.id ? "current" : "other",
 +        turn_kind: turn.kind,
 +        conversation: { user: turn.user, assistant: turn.assistant },
-+        ...(input.include_execution ? { execution: turn.execution } : {}),
++        ...(input.include_execution ? boundedExecution(turn.execution) : {}),
 +      }
 +    })
 +
@@ -344,6 +350,25 @@ index 0000000000000000000000000000000000000000..e2002a3253ead4733a8b16c32488123f
 +  })
 +}
 +
++/** Caps steps, calls, results and files at MAX_EXECUTION_ITEMS each, flagging the record when any were cut. */
++const boundedExecution = (execution: Turn["execution"]) => {
++  const steps = execution.tool_steps.slice(0, MAX_EXECUTION_ITEMS).map((step) => ({
++    assistant: step.assistant,
++    tool_calls: step.tool_calls.slice(0, MAX_EXECUTION_ITEMS),
++    tool_results: step.tool_results.slice(0, MAX_EXECUTION_ITEMS),
++  }))
++  const truncated =
++    execution.tool_steps.length > MAX_EXECUTION_ITEMS ||
++    execution.files.length > MAX_EXECUTION_ITEMS ||
++    execution.tool_steps
++      .slice(0, MAX_EXECUTION_ITEMS)
++      .some((step) => step.tool_calls.length > MAX_EXECUTION_ITEMS || step.tool_results.length > MAX_EXECUTION_ITEMS)
++  return {
++    execution: { tool_steps: steps, files: execution.files.slice(0, MAX_EXECUTION_ITEMS) },
++    ...(truncated ? { execution_truncated: true } : {}),
++  }
++}
++
 +const assistantText = (message: SessionMessage.Assistant) =>
 +  message.content.flatMap((part) => (part.type === "text" && part.text.trim() !== "" ? [part.text] : [])).join("\n\n")
 +
@@ -387,6 +412,8 @@ index 0000000000000000000000000000000000000000..e2002a3253ead4733a8b16c32488123f
 +/**
 + * Counts each query token once: strong when it appears as a whole word in user or assistant text,
 + * weak when it appears anywhere in execution evidence. A query naming the Session's ID ranks first.
++ * The excerpt always comes from the user or final assistant text: execution evidence is only shown by
++ * session_history_read with include_execution.
 + */
 +const score = (
 +  query: string,
@@ -402,10 +429,11 @@ index 0000000000000000000000000000000000000000..e2002a3253ead4733a8b16c32488123f
 +  )
 +  const identity = containsIdentity(query.toLowerCase(), sessionID.toLowerCase())
 +  if (!identity && strongTokens.length === 0 && weakTokens.length === 0) return undefined
++  const conversation = fields.strong.slice(0, 2)
 +  const source =
-+    fields.strong.find((_, index) => tokens.some((token) => containsWord(strong[index], token))) ??
-+    fields.weak.find((_, index) => tokens.some((token) => weak[index].includes(token))) ??
-+    fields.strong[0]
++    conversation.find((_, index) => tokens.some((token) => containsWord(strong[index], token))) ??
++    conversation.find((_, index) => tokens.some((token) => strong[index].includes(token))) ??
++    conversation[0]
 +  return { score: { identity, strong: strongTokens.length, weak: weakTokens.length }, source }
 +}
 +
@@ -431,16 +459,25 @@ index 0000000000000000000000000000000000000000..e2002a3253ead4733a8b16c32488123f
 +  return found
 +}
 +
-+/** At most MAX_EXCERPT_BYTES of UTF-8 around the first match, cut on character boundaries. */
++/**
++ * At most MAX_EXCERPT_BYTES of UTF-8 around the first match, counting the "..." markers, cut on
++ * character boundaries.
++ */
 +const excerpt = (text: string, query: string, tokens: ReadonlyArray<string>) => {
 +  const bytes = Buffer.from(text)
 +  if (bytes.length <= MAX_EXCERPT_BYTES) return text
 +  const lower = text.toLowerCase()
 +  const match = [query.toLowerCase(), ...tokens].map((needle) => lower.indexOf(needle)).find((index) => index >= 0) ?? 0
-+  const centred = Buffer.byteLength(text.slice(0, match)) - MAX_EXCERPT_BYTES / 2
-+  const start = forwardBoundary(bytes, Math.max(0, Math.min(centred, bytes.length - MAX_EXCERPT_BYTES)))
-+  const end = backwardBoundary(bytes, Math.min(bytes.length, start + MAX_EXCERPT_BYTES))
-+  return `${start > 0 ? "..." : ""}${bytes.subarray(start, end).toString()}${end < bytes.length ? "..." : ""}`
++  // Room for the text when both markers are needed; a side without a marker gets its bytes back.
++  const window = MAX_EXCERPT_BYTES - 2 * MARKER.length
++  const centred = Buffer.byteLength(text.slice(0, match)) - window / 2
++  const start = forwardBoundary(bytes, Math.max(0, Math.min(centred, bytes.length - window)))
++  const leading = start > 0 ? MARKER : ""
++  const end =
++    bytes.length - start <= MAX_EXCERPT_BYTES - leading.length
++      ? bytes.length
++      : backwardBoundary(bytes, start + MAX_EXCERPT_BYTES - leading.length - MARKER.length)
++  return `${leading}${bytes.subarray(start, end).toString()}${end < bytes.length ? MARKER : ""}`
 +}
 +
 +/** At most `max` bytes of UTF-8 from the start, cut on a character boundary. */
@@ -481,10 +518,10 @@ index 718385c2ac3348f5c1c4db29a3a6eb2692784c22..faa905b731068b158f88aeb2833f270c
              "subagent",
 diff --git a/packages/core/test/tool-session-history.test.ts b/packages/core/test/tool-session-history.test.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..7b3b0b1e7f556aa2bbd00c87fa204debac75b1a9
+index 0000000000000000000000000000000000000000..6a60604190090223d78e0f48dfea7641e8e29f1c
 --- /dev/null
 +++ b/packages/core/test/tool-session-history.test.ts
-@@ -0,0 +1,524 @@
+@@ -0,0 +1,612 @@
 +import { describe, expect } from "bun:test"
 +import { eq } from "drizzle-orm"
 +import { Effect, Layer, Schema } from "effect"
@@ -823,7 +860,7 @@ index 0000000000000000000000000000000000000000..7b3b0b1e7f556aa2bbd00c87fa204deb
 +      expect(excerpt.endsWith("...")).toBe(true)
 +      expect(excerpt).toContain("vermilion decision")
 +      expect(excerpt).not.toContain("�")
-+      expect(Buffer.byteLength(excerpt.slice(3, -3))).toBeLessThanOrEqual(SessionHistoryTools.MAX_EXCERPT_BYTES)
++      expect(Buffer.byteLength(excerpt)).toBeLessThanOrEqual(SessionHistoryTools.MAX_EXCERPT_BYTES)
 +
 +      expect(yield* search("ses_bounds", { query: "   " })).toEqual({
 +        error: 'session_history_search field "query" must not be empty',
@@ -965,6 +1002,94 @@ index 0000000000000000000000000000000000000000..7b3b0b1e7f556aa2bbd00c87fa204deb
 +          files: [{ path: "src/crimson.ts" }],
 +        },
 +      })
++      expect(record.value.execution_truncated).toBeUndefined()
++    }),
++  )
++
++  it.effect("caps execution evidence and flags the record when anything was cut", () =>
++    Effect.gen(function* () {
++      const cap = SessionHistoryTools.MAX_EXECUTION_ITEMS
++      const files = Array.from({ length: cap + 5 }, (_, index) => `src/file-${index}.ts`)
++      yield* seed({
++        id: "ses_many_steps",
++        updated: 100,
++        messages: [
++          user("the amber refactor"),
++          assistant(
++            Array.from({ length: cap + 5 }, (_, index) => tool(`call_wide_${index}`, "read", { index }, "ok")),
++            { snapshot: { files } },
++          ),
++          ...Array.from({ length: cap + 5 }, (_, index) =>
++            assistant([tool(`call_step_${index}`, "grep", { index }, "ok")]),
++          ),
++          reply("Refactored."),
++          ...running,
++        ],
++      })
++      const hit = (yield* search("ses_many_steps", { query: "amber" })).value.hits[0]
++      const record = yield* read("ses_many_steps", { reference: hit.reference, include_execution: true })
++      expect(record.value.execution_truncated).toBe(true)
++      expect(record.value.execution.tool_steps).toHaveLength(cap)
++      expect(record.value.execution.tool_steps[0].tool_calls).toHaveLength(cap)
++      expect(record.value.execution.tool_steps[0].tool_results).toHaveLength(cap)
++      expect(record.value.execution.files).toHaveLength(cap)
++      expect(record.value.execution.files[0]).toEqual({ path: "src/file-0.ts" })
++      expect((yield* read("ses_many_steps", { reference: hit.reference })).value.execution_truncated).toBeUndefined()
++    }),
++  )
++
++  it.effect("excerpts only user or assistant text, never execution evidence", () =>
++    Effect.gen(function* () {
++      yield* seed({
++        id: "ses_private_args",
++        updated: 100,
++        messages: [
++          user("please run the search"),
++          assistant([
++            { type: "text", text: "Searching now." },
++            tool("call_grep", "grep", { pattern: "chartreuse-secret-token" }, "chartreuse found"),
++          ]),
++          reply("All done."),
++          ...running,
++        ],
++      })
++      const hits = (yield* search("ses_private_args", { query: "chartreuse" })).value.hits
++      expect(hits).toEqual([expect.objectContaining({ excerpt: "please run the search" })])
++      // An assistant-text match is excerpted from the assistant reply.
++      const answered = (yield* search("ses_private_args", { query: "done" })).value.hits
++      expect(answered).toEqual([expect.objectContaining({ excerpt: "All done." })])
++    }),
++  )
++
++  it.effect("keeps excerpts within the byte bound including the markers", () =>
++    Effect.gen(function* () {
++      const filler = "é lorem ".repeat(80)
++      yield* seed({
++        id: "ses_excerpts",
++        updated: 100,
++        messages: [
++          user(`cerulean start ${filler}`),
++          reply("a"),
++          user(`${filler} cerulean end`),
++          reply("b"),
++          user(`${filler} cerulean middle ${filler}`),
++          reply("c"),
++          ...running,
++        ],
++      })
++      const excerpts: string[] = (yield* search("ses_excerpts", { query: "cerulean" })).value.hits.map(
++        (hit: { excerpt: string }) => hit.excerpt,
++      )
++      expect(excerpts).toHaveLength(3)
++      for (const excerpt of excerpts) {
++        expect(Buffer.byteLength(excerpt)).toBeLessThanOrEqual(SessionHistoryTools.MAX_EXCERPT_BYTES)
++        expect(excerpt).toContain("cerulean")
++        expect(excerpt).not.toContain("\uFFFD")
++      }
++      const [middle, end, start] = excerpts
++      expect(middle.startsWith("...") && middle.endsWith("...")).toBe(true)
++      expect(end.startsWith("...") && !end.endsWith("...")).toBe(true)
++      expect(start.startsWith("cerulean start") && start.endsWith("...")).toBe(true)
 +    }),
 +  )
 +
