@@ -3,19 +3,12 @@
 OpenCode 2 (github.com/anomalyco/opencode, tags `v2.x.y`) is TypeScript on Bun, with the terminal UI in SolidJS on @opentui. Paths below are from v2.0.22; check them against the release you mod.
 
 ## Contents
-- First: does it need to be a mod?
 - Setup and checks
 - Where things live
-- Adding things (least invasive hook first)
+- Adding things
 - UI basics
-- What not to touch
+- Shared with stock OpenCode
 - Worked example: space-invaders
-
-## First: does it need to be a mod?
-
-OpenCode 2 loads TUI plugins from outside its source: a folder per plugin in `~/.config/opencode/plugins/<name>/` or a project's `.opencode/plugins/<name>/`, and packages listed under `plugins` in `~/.config/opencode/cli.json`. They use the same `Plugin.define` API as the built-in plugins (slots, key layers, slash commands, toasts, dialogs, storage), and core-side plugins can add tools and agents.
-
-So a feature that only *adds* something through that API (a slash command, a panel in a slot, a keybinding, a toast) should be a plugin, not a mod; tell the user, and offer the plugin instead. A mod is for what plugins can't reach: changing existing behavior or layout, the agent loop, built-in tools, the prompt, the CLI. If the user wants a mod anyway (to bundle it, or as a starting point for deeper changes), the built-in-plugin pattern below keeps it to a new file and two lines.
 
 ## Setup and checks
 
@@ -48,7 +41,7 @@ There is no `packages/opencode` in v2. `app`, `desktop`, `web`, `console` and th
 ## Adding things
 
 ### A slash command
-**Smallest patch:** a built-in plugin in a new file, registered in `packages/tui/src/plugin/builtins.ts` with one import and one list entry (placed next to a related plugin, not at either end of the list). Inside a plugin, use the plugin context, not the app's hooks:
+**As a built-in plugin:** a new file, registered in `packages/tui/src/plugin/builtins.ts` with an import and a list entry. Inside a plugin, use the plugin context, not the app's hooks:
 ```tsx
 import { Plugin } from "@opencode/plugin/tui"
 
@@ -75,7 +68,7 @@ export default Plugin.define({
 ```
 Check the import path and context methods against `packages/plugin/src/tui/context.ts` for your release; copy `feature-plugins/prompt/btw.tsx` (arguments, a dialog, keys) or `feature-plugins/system/notifications.ts`. A command id needs an entry in `config/keybind.ts` only if users should be able to rebind it.
 
-**Direct:** add an entry to the `appCommands` memo in `packages/tui/src/app.tsx` (around line 695), next to a command it's related to. Avoid the obvious spots (first, last, just before `app.exit`): mods that insert at the same spot overlap and can't be installed together.
+**Directly in the app:** add an entry to the `appCommands` memo in `packages/tui/src/app.tsx` (around line 695):
 ```ts
 {
   name: "opencode.mything",
@@ -97,7 +90,7 @@ Server-side prompt commands are different (`packages/core/src/plugin/command.ts`
 `const dialog = useDialog()` (`packages/tui/src/ui/dialog.tsx`), then `dialog.replace(() => <MyDialog/>)` and `dialog.clear()`. Copy `ui/dialog-alert.tsx`, `ui/dialog-confirm.tsx`, `ui/dialog-select.tsx` or `ui/dialog-prompt.tsx`. Keys inside a dialog use a layer with `mode: "modal"`.
 
 ### A panel (sidebar, right pane, above the prompt, footer)
-Use the plugin slots; a claim in a built-in plugin is a new file plus one line in `builtins.ts`:
+The plugin slots, claimed from a built-in plugin:
 
 | Slot | Where |
 |---|---|
@@ -113,7 +106,7 @@ export default Plugin.define({ id: "opencode.sidebar.mine", setup(ctx) {
   ctx.ui.slot({ append: "sidebar.content", render: (props) => <Mine sessionID={props.sessionID} /> })
 }})
 ```
-Copy `feature-plugins/sidebar/context.tsx` (about 50 lines). Edit `component/session-frame.tsx` directly only if a slot can't do what you need (exact widths, taking the keyboard); that file is large and changes often, so expect conflicts.
+Copy `feature-plugins/sidebar/context.tsx` (about 50 lines). For full control of the layout (exact widths, taking the keyboard), edit `component/session-frame.tsx` directly, as space-invaders does.
 
 ### A theme
 Usually no mod: users drop `<name>.json` into `~/.config/opencode/themes/`. To build one in, add the JSON to `packages/tui/src/theme/assets/` and to `DEFAULT_THEMES` in `packages/tui/src/theme/v1.ts`. Components pick theme tokens by role (`theme.text.feedback.error.base`, `theme.border.base`), not raw colours.
@@ -140,17 +133,16 @@ Add `Spec.make("name", { description, params })` to `packages/cli/src/commands/c
 - Hooks: `useTheme()`, `useRoute()`, `useToast().show({ message, variant })`, `useDialog()`, `useConfig()`.
 - Small components to copy: `component/spinner.tsx`, `shimmer-text.tsx`, `logo.tsx`, `ui/link.tsx`.
 
-## What not to touch
+## Shared with stock OpenCode
 
-- **Database tables and migrations** (`*.sql.ts`, `core/src/database/migration/`). When stock OpenCode is the same release as the modded build, they share the user's session database, and a migration can't be undone when the mod is uninstalled. OpenMods keeps a mod that changes these files on its own database, so its users lose shared history. Keep state in `useStorage().store(key)` (TUI) or the core `KV` service instead.
-- **Server routes** need `bun run generate` in `packages/client`, which rewrites many generated files: a noisy patch that conflicts on every release. Avoid them if you can.
-- **`bun.lock` and `package.json` dependencies.**
-- **The background service** (`opencode service`, `serve --service`): stock owns it. Modded OpenCode runs on its own private server next to it.
+- **The session database.** When stock OpenCode is the same release as the modded build, they share the user's sessions. A mod that changes database tables or migrations (`*.sql.ts`, `core/src/database/migration/`) gets a database of its own from OpenMods instead, so it doesn't share history with stock. For a mod's own state, `useStorage().store(key)` (TUI) or the core `KV` service need no migration.
+- **The background service** (`opencode service`, `serve --service`) belongs to stock; modded OpenCode runs on its own private server next to it, and those commands start stock OpenCode.
+- **Server routes** need `bun run generate` in `packages/client`, which rewrites the generated client; commit what it generates.
 
 ## Worked example: space-invaders
 
 `mods/shouryamaanjain/space-invaders/opencode/` in the registry: one patch, three files, all TUI.
 
 1. `packages/tui/src/component/invaders.tsx` (new, about 440 lines): the game. State lives in a module-level `createRoot`, so reopening resumes; a 50 ms interval runs only while open and not paused; keys come from a `Keymap.createLayer` with priority 20 that's enabled only while the game is open; the field is sized from `onSizeChange`; colours are theme tokens.
-2. `packages/tui/src/app.tsx` (+15): an `appCommands` entry (just before `app.exit`, the spot a second mod would most likely pick too) with `slash: { name: "invaders", aliases: ["space-invaders"] }` that toggles the game.
-3. `packages/tui/src/component/session-frame.tsx` (+67/−34): gives the right pane, half the width, to the game and moves focus to it. This is the large, fragile part; a `session.panel` slot claim would have been smaller, at the cost of the exact half split and full keyboard capture.
+2. `packages/tui/src/app.tsx` (+15): an `appCommands` entry with `slash: { name: "invaders", aliases: ["space-invaders"] }` that toggles the game.
+3. `packages/tui/src/component/session-frame.tsx` (+67/−34): gives the right pane, half the width, to the game and moves the keyboard focus to it.
