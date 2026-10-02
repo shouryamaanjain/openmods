@@ -9,7 +9,7 @@ compatibility: Needs git and the openmods CLI (curl -fsSL https://openmods.dev/i
 
 A **mod** is a series of git commits on top of a release of a harness, published as patch files in the OpenMods registry (github.com/shouryamaanjain/openmods). Users run `openmods install <owner>/<mod>`, and OpenMods clones the harness at that release, applies the patches, builds it with the release's own build commands, and puts a launcher first on PATH. The user's stock install is never touched, and `openmods off` switches back to it.
 
-A mod can change anything in the harness: UI, commands, tools, prompts, behavior. Build what the developer wants; combining mods and moving them to new releases is OpenMods' job.
+A mod can change anything in the harness: UI, commands, tools, prompts, behavior. Build what the developer wants. Which mods a user can build together is worked out by OpenMods when they install, and moving mods to new releases is done by its release watch; neither is something the mod has to plan for.
 
 ## The loop
 
