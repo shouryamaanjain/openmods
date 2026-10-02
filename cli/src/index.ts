@@ -978,16 +978,22 @@ async function ensureCheckout(h: Harness, root: string, commit: string, ref: str
     log(`Setting up ${h.repo} (blobless, this is a one-time cost)`)
     await initCheckout(h.repo, root)
   }
-  // Checked by the tag, not the commit: asking a blobless checkout about an
-  // object it lacks makes git download it, with all the history behind it.
-  const tagged = await $`git -C ${root} rev-parse -q --verify ${`refs/tags/${ref}^{commit}`}`.nothrow().quiet()
-  if (tagged.exitCode !== 0) {
+  // Only a release's own commit is built: the commit the registry pins must
+  // be the one its tag names. A commit fetched by its id could be any commit
+  // the host serves, a fork's included. Checked by the tag, not the commit:
+  // asking a blobless checkout about an object it lacks makes git download
+  // it, with all the history behind it.
+  const tagCommit = async () => (await $`git -C ${root} rev-parse -q --verify ${`refs/tags/${ref}^{commit}`}`.nothrow().quiet()).stdout.toString().trim()
+  if ((await tagCommit()) !== commit) {
     log(`Fetching ${ref}`)
-    await $`git -C ${root} fetch --no-tags --depth 1 origin tag ${ref}`.quiet()
-  } else if (tagged.stdout.toString().trim() !== commit) {
-    // The registry pins a different commit than the tag we have.
-    log(`Fetching ${commit.slice(0, 12)}`)
-    await $`git -C ${root} fetch --no-tags --depth 1 origin ${commit}`.quiet()
+    const r = await $`git -C ${root} fetch --no-tags --depth 1 origin ${`+refs/tags/${ref}:refs/tags/${ref}`}`
+      .env({ ...process.env, GIT_TERMINAL_PROMPT: "0" })
+      .nothrow()
+      .quiet()
+    if (r.exitCode !== 0) fail(`could not fetch ${h.name} ${rel(ref)} from ${h.repo}: ${r.stderr.toString().trim().split("\n").at(-1) || `git exited with ${r.exitCode}`}`)
+    const now = await tagCommit()
+    if (now !== commit)
+      fail(`the registry has ${h.name} ${rel(ref)} as commit ${commit.slice(0, 12)}, but its tag ${ref} is ${now.slice(0, 12) || "missing"} at ${h.repo}. OpenMods builds only a release's own commit, so nothing was built; tell the registry's maintainers.`)
   }
   await clearApplyState(root)
   await $`git -C ${root} checkout -q --force --detach ${commit}`
@@ -1159,6 +1165,8 @@ async function ensureBun(root: string): Promise<string | null> {
 // dependencies installed. `check` reports these as not checked, so the
 // release watch tries again instead of blaming the mod.
 class Unchecked extends Error {}
+// A mod version that pins a commit other than its release's own.
+class WrongCommit extends Error {}
 
 // A dependency install downloads thousands of packages, and on a slow or
 // flaky connection some fail. A second try usually finishes the job from
@@ -1986,6 +1994,12 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
   const dev = devOf(harnessId)
   if (dev) await ask(`\`${h.binary}\` runs your clone at ${pretty(dev.path)} (openmods dev). This switches it to the modded build. Go ahead?`)
   const mods = set.map((m) => at(m, release)!)
+  // One build, one release: every mod's version for it must pin the same
+  // commit, the release's own (checked against its tag before the build).
+  // A version that pins another, a local mod's say, is not built.
+  const odd = mods.find((m) => m.upstream.commit !== mods[0]!.upstream.commit)
+  if (odd)
+    fail(`${odd.id} pins ${h.name} ${rel(release)} as commit ${odd.upstream.commit.slice(0, 12)}, but ${mods[0]!.id} pins ${mods[0]!.upstream.commit.slice(0, 12)}; a release has one commit, so nothing was changed. Pack ${odd.id} again on the release's tag.`)
   for (const m of mods) {
     const r = revocationOf(reg, m.id, m.update)
     if (r) fail(`${m.id} was removed from OpenMods: ${r.reason} It cannot be built. \`openmods uninstall ${m.id}\` removes it.`)
@@ -2777,6 +2791,10 @@ async function cmdCheck() {
     await clearApplyState(root)
     await $`git -C ${root} checkout -q --force --detach ${ref}`
     result.commit = (await $`git -C ${root} rev-parse HEAD`.text()).trim()
+    // The version is checked as users build it: at the commit it pins, which
+    // must be its release's own.
+    if (spec && ref === mod.upstream.ref && result.commit !== mod.upstream.commit)
+      throw new WrongCommit(`${mod.id} pins ${h.name} ${rel(ref)} as commit ${mod.upstream.commit.slice(0, 12)}, but the tag ${ref} is ${String(result.commit).slice(0, 12)}; a version must pin its release's own commit`)
     const files = mod.patches.map((p) => path.join(mod.dir, p))
     const bases = await fetchBases(root, mod)
     const am = files.length
@@ -2833,7 +2851,10 @@ async function cmdCheck() {
     // them (the release could not be fetched, the disk filled up) says
     // nothing about the mod.
     const message = e instanceof Error ? e.message : String(e)
-    result.unchecked = result.applies === undefined ? `could not get ${ref}: ${message}` : `the check stopped: ${message}`
+    // Except a version that pins another commit than its release's: that
+    // is what the mod is.
+    if (e instanceof WrongCommit) result.applies = false
+    else result.unchecked = result.applies === undefined ? `could not get ${ref}: ${message}` : `the check stopped: ${message}`
     result.error = message
   }
   if (has("json")) console.log(JSON.stringify(result, null, 2))

@@ -30,6 +30,18 @@ import path from "node:path"
 import { $ } from "bun"
 import { latestRelease } from "../cli/src/latest-release"
 
+// The commit a tag of a repository names (an annotated tag's own commit), or
+// "" when it cannot be told.
+async function tagCommit(repo: string, tag: string): Promise<string> {
+  if (!/^[\w.+-]+$/.test(tag)) return ""
+  // At most a minute: a remote that stalls leaves the mod not checked, and
+  // the others go on.
+  const r = Bun.spawnSync(["git", "ls-remote", "--tags", repo, `refs/tags/${tag}`, `refs/tags/${tag}^{}`], { env: { ...process.env, GIT_TERMINAL_PROMPT: "0" }, timeout: 60_000 })
+  if (r.exitCode !== 0) return ""
+  const lines = r.stdout.toString().split("\n").map((l) => l.split("\t"))
+  return (lines.find(([, n]) => n === `refs/tags/${tag}^{}`) ?? lines.find(([, n]) => n === `refs/tags/${tag}`))?.[0] ?? ""
+}
+
 const args = process.argv.slice(2)
 const flag = (k: string) => {
   const i = args.indexOf(`--${k}`)
@@ -398,6 +410,13 @@ async function apply() {
     const line = of(harnessName, ref)
     const statusPath = path.join(modDir, "status.json")
     const checked = new Date().toISOString()
+    // The commit a new version pins is the release tag's, read here from the
+    // harness's repository, never taken from the check job, which runs the
+    // harness's own build code. A result that names another is not trusted.
+    if (r && !r.unchecked && r.applies === true && h?.repo) {
+      const tagged = await tagCommit(h.repo, String(r.ref ?? ""))
+      if (tagged !== r.commit) r.unchecked = tagged ? `the check reported commit ${String(r.commit).slice(0, 12)} for ${r.ref}, but its tag is ${tagged.slice(0, 12)}` : `could not read the commit of ${r.ref} from ${h.repo}`
+    }
     // Not checked: nothing is recorded against the mod, and the next run
     // tries again. The runs are counted, and after a few, a person is asked.
     if (!r || r.unchecked || r.applies === undefined) {

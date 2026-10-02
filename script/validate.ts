@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // Registry lint: every mod.json and harness json matches its schema-level
-// invariants, every listed patch exists, every commit is 40 hex chars, and
-// names match folders. Runs in CI on every PR; `openmods check` does the
+// invariants, every listed patch exists, every commit is the one its
+// release's tag names, and names match folders. Runs in CI on every PR; `openmods check` does the
 // expensive apply-and-build step per mod.
 import { existsSync, readdirSync, readFileSync } from "node:fs"
 import path from "node:path"
@@ -18,6 +18,35 @@ const harnesses = new Set(
     .filter((f) => f.endsWith(".json"))
     .map((f) => f.replace(/\.json$/, "")),
 )
+
+// A harness repository's tags and the commits they name, read once per run;
+// a message when they cannot be read.
+const tagCache = new Map<string, Map<string, string> | string>()
+function tagsOf(repo: string): Map<string, string> | string {
+  const known = tagCache.get(repo)
+  if (known) return known
+  // Asked twice: a remote that fails once should not fail an unrelated change.
+  const ask = () => Bun.spawnSync(["git", "ls-remote", "--tags", repo], { env: { ...process.env, GIT_TERMINAL_PROMPT: "0" }, timeout: 120_000 })
+  let r = ask()
+  if (r.exitCode !== 0) r = ask()
+  let tags: Map<string, string> | string
+  if (r.exitCode !== 0) tags = `could not read the tags of ${repo} to check its commit (${r.stderr.toString().trim().split("\n").at(-1) || `git exited with ${r.exitCode}`})`
+  else {
+    tags = new Map()
+    const peeled = new Map<string, string>()
+    for (const line of r.stdout.toString().split("\n")) {
+      const [sha, name] = line.split("\t")
+      if (!sha || !name?.startsWith("refs/tags/")) continue
+      const tag = name.slice("refs/tags/".length)
+      // An annotated tag's own line names the tag object; ^{} names its commit.
+      if (tag.endsWith("^{}")) peeled.set(tag.slice(0, -3), sha)
+      else tags.set(tag, sha)
+    }
+    for (const [tag, sha] of peeled) tags.set(tag, sha)
+  }
+  tagCache.set(repo, tags)
+  return tags
+}
 
 for (const id of harnesses) {
   const h = JSON.parse(readFileSync(path.join(root, "harnesses", `${id}.json`), "utf8"))
@@ -168,6 +197,14 @@ for (const owner of dirs(modsRoot)) {
         const vrel = `${hrel} ${v.ref ?? "(no ref)"}`
         if (!v.ref) errors.push(`${vrel}: missing ref`)
         if (!/^[0-9a-f]{40}$/.test(v.commit ?? "")) errors.push(`${vrel}: commit must be a full sha`)
+        else if (v.ref && harnesses.has(h)) {
+          // Users build the commit; it must be the release's own, never
+          // another the host serves by its id (a fork's, say).
+          const tags = tagsOf(JSON.parse(readFileSync(path.join(root, "harnesses", `${h}.json`), "utf8")).repo)
+          if (typeof tags === "string") errors.push(`${vrel}: ${tags}`)
+          else if (!tags.has(v.ref)) errors.push(`${vrel}: ${v.ref} is not a tag of the harness's repository`)
+          else if (tags.get(v.ref) !== v.commit) errors.push(`${vrel}: commit ${v.commit} is not ${v.ref}'s, which is ${tags.get(v.ref)}; repack with openmods pack`)
+        }
         if (!Array.isArray(v.patches) || v.patches.length === 0) errors.push(`${vrel}: patches must be a non-empty list`)
         if (!Number.isInteger(v.update) || (v.update as number) < 1) errors.push(`${vrel}: update must be a whole number from 1; openmods pack sets it`)
         if (v.note !== undefined && (typeof v.note !== "string" || v.note.length === 0 || v.note.length > 200)) errors.push(`${vrel}: note must be 1-200 characters`)

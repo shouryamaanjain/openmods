@@ -12,7 +12,7 @@ Treat installing a mod the way you treat building any program from source: read 
 - The mod's page on the site shows the full diff. So does `mods/<owner>/<mod>/<harness>/<release>/` in the registry, one folder per version.
 - A mod that adds network calls, reads files outside the project, or changes the agent's instructions should say so in its README. If the diff does something the README does not mention, do not install it, and open an issue.
 
-The registry only carries patches. Nothing is prebuilt: your machine compiles the harness from its release plus the mod's patches, so what you read is what you run.
+The registry only carries patches. Nothing is prebuilt: your machine compiles the harness from its release plus the mod's patches, so what you read is what you run. The release is the harness's own: the commit each version pins must be the one its release tag names, which the registry checks on every change and `openmods` checks again before it builds, so no mod can point you at a fork's commit.
 
 ## What the registry checks
 
@@ -20,7 +20,8 @@ The registry only carries patches. Nothing is prebuilt: your machine compiles th
 - CI applies and typechecks each version of a mod that a pull request changes, as users build it, against the release it names; a failure blocks the merge. The author builds it; CI does not.
 - Greptile reviews the code the patches add, for correctness and for security: anything malicious, and anything the README does not disclose. For an update, a comment shows what it changes compared with the published update, as plain code.
 - A registry maintainer reads the diff and the README and approves every pull request before it is merged. The release bot's own commits go straight to main: they only add versions CI has checked on a new release, and record the results.
-- The hourly job that moves mods to new releases never changes a mod's code: if a rebase would change the reviewed lines, the mod waits for its maintainer instead.
+- The hourly job that moves mods to new releases never changes a mod's code: if a rebase would change the reviewed lines, the mod waits for its maintainer instead. The job that runs the harness's build code to check a mod cannot write to the registry; the commit a new version pins is read from the harness's own tag, not taken from it.
+- OpenMods' own releases are `v*` tags, which only maintainers and the release workflow (with the release bot's deploy key) can create, move or delete.
 - When the harness ships a new release, the hourly check applies and typechecks every mod against it, so a mod cannot silently drift, and holds every mod if the release changed how the harness builds.
 - Your machine builds everything you install, from the release and the patches.
 - OpenMods adds nothing to a harness's code; modded builds are the release plus the mods you chose. The launcher passes a few of the harness's own switches for each run (listed in the README), which keep a modded build from sharing stock's background server, update notice or feedback upload. Report problems with a modded build here, after checking whether they also happen with `openmods off`.

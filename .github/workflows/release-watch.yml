@@ -28,8 +28,10 @@ concurrency:
   group: release-watch
   cancel-in-progress: false
 
+# The bot commits with its deploy key (apply), so the workflow's own token
+# never needs to write code or tags; it only opens and closes issues.
 permissions:
-  contents: write
+  contents: read
   issues: write
 
 jobs:
@@ -46,10 +48,10 @@ jobs:
       - id: plan
         env:
           GH_TOKEN: ${{ github.token }}
+          REF: ${{ inputs.ref }}
+          HARNESS: ${{ inputs.harness }}
         run: |
-          bun script/release-watch.ts plan --issues \
-            ${{ inputs.ref && format('--ref {0}', inputs.ref) || '' }} \
-            ${{ inputs.harness && format('--harness {0}', inputs.harness) || '' }}
+          bun script/release-watch.ts plan --issues ${REF:+--ref "$REF"} ${HARNESS:+--harness "$HARNESS"}
 
   check:
     name: ${{ matrix.mod }} on ${{ matrix.ref }}
@@ -57,12 +59,19 @@ jobs:
     needs: plan
     if: ${{ needs.plan.outputs.matrix != '[]' }}
     timeout-minutes: 120
+    # This job runs the harness's own build code (its dependencies' build
+    # scripts, a typecheck): its token can read and nothing more, and is not
+    # left on disk.
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         include: ${{ fromJson(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
