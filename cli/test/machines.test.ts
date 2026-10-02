@@ -83,8 +83,9 @@ describe("a kept build", () => {
     setBuild({ build: `${build} && printf extra > out/pkg/bin/extra`, artifact: "out/pkg/bin/greet", keep: undefined })
     const r = await cli(sb, "update", "fake", "--force")
     expect(r.code, r.all).toBe(0)
-    const [kept] = readdirSync(builds())
-    expect(readdirSync(path.join(builds(), kept!))).toEqual(["greet"])
+    // The build the launcher runs now; the one that ran until now stays beside it.
+    const runs = path.dirname(JSON.parse(readFileSync(path.join(sb.om, "state.json"), "utf8")).fake.artifact)
+    expect(readdirSync(runs)).toEqual(["greet"])
     expect(await greeting(sb)).toBe("hello from friendly")
   })
   test("clears out a crashed build's staging folder, not a running one's", async () => {

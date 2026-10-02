@@ -2,13 +2,14 @@
 // on, off and update; an update that leaves the build a running session uses;
 // and a shell startup file OpenMods cannot write.
 import { beforeAll, describe, expect, test } from "bun:test"
-import { chmodSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
+import { chmodSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { cli, createHarness, createMod, greeting, registerHarness, run, sandbox, setGreeting } from "./harness"
 
 const sb = sandbox("day-two")
 const builds = () => readdirSync(path.join(sb.om, "harnesses", "fake", "builds")).filter((d) => !d.startsWith(".")).sort()
 const helloRuns = () => readFileSync(path.join(sb.om, "bin", "hello"), "utf8")
+const running = () => path.dirname(JSON.parse(readFileSync(path.join(sb.om, "state.json"), "utf8")).fake.artifact)
 
 beforeAll(async () => {
   await createHarness(sb)
@@ -32,6 +33,13 @@ describe("a harness flag on on, off and update", () => {
     expect(helloRuns()).not.toContain("switched off")
     expect(r.out).not.toContain("Fake")
   })
+  test("a named harness and a flag together switch both", async () => {
+    const off = await cli(sb, "off", "fake", "--other")
+    expect(off.code, off.all).toBe(0)
+    expect([helloRuns().includes("switched off"), await greeting(sb)]).toEqual([true, "stock greet"])
+    expect((await cli(sb, "on", "--fake", "--other")).code).toBe(0)
+    expect(await greeting(sb)).toBe("hello from friendly")
+  })
   test("update --fake looks only at that harness", async () => {
     const r = await cli(sb, "update", "--fake")
     expect(r.code, r.all).toBe(0)
@@ -52,21 +60,44 @@ describe("a harness flag on on, off and update", () => {
 })
 
 describe("an update", () => {
-  test("keeps the build that ran until now, for sessions started from it", async () => {
-    const before = builds()
-    expect(before).toEqual(["1.0.0+friendly-1"])
-    await createMod(sb, "friendly", setGreeting("hello from friendly, update 2"))
-    const r = await cli(sb, "update", "fake")
-    expect(r.code, r.all).toBe(0)
-    expect(builds()).toEqual(["1.0.0+friendly-1", "1.0.0+friendly-2"])
-    expect(await greeting(sb)).toBe("hello from friendly, update 2")
+  test("keeps the build that ran until now, for sessions started from it, and only that one", async () => {
+    const start = path.basename(running())
+    await createMod(sb, "friendly", setGreeting("hello from friendly, next"))
+    expect((await cli(sb, "update", "fake")).code).toBe(0)
+    const second = path.basename(running())
+    expect(builds()).toEqual([start, second].sort())
+    await createMod(sb, "friendly", setGreeting("hello from friendly, after that"))
+    expect((await cli(sb, "update", "fake")).code).toBe(0)
+    const third = path.basename(running())
+    expect(builds()).toEqual([second, third].sort())
+    expect(await greeting(sb)).toBe("hello from friendly, after that")
   })
-  test("and only that one: the build before it goes", async () => {
-    await createMod(sb, "friendly", setGreeting("hello from friendly, update 3"))
-    const r = await cli(sb, "update", "fake")
+  test("keeps any build a running program was started from, however old, until it stops", async () => {
+    const old = path.basename(builds().find((d) => d !== path.basename(running()))!)
+    // A long session of that build: its path is in the program's command line.
+    const session = Bun.spawn(["sh", "-c", "sleep 60; true", path.join(sb.om, "harnesses", "fake", "builds", old, "greet")])
+    try {
+      await createMod(sb, "friendly", setGreeting("hello from friendly, while a session runs"))
+      expect((await cli(sb, "update", "fake")).code).toBe(0)
+      expect(builds()).toContain(old)
+      expect(builds().length).toBe(3)
+    } finally {
+      session.kill()
+      await session.exited
+    }
+    await createMod(sb, "friendly", setGreeting("hello from friendly, once it stopped"))
+    expect((await cli(sb, "update", "fake")).code).toBe(0)
+    expect(builds()).not.toContain(old)
+    expect(builds().length).toBe(2)
+  })
+  test("a forced rebuild of the same mods goes in a folder of its own, leaving the running one whole", async () => {
+    const before = running()
+    writeFileSync(path.join(before, "session-marker"), "still here\n")
+    const r = await cli(sb, "update", "fake", "--force")
     expect(r.code, r.all).toBe(0)
-    expect(builds()).toEqual(["1.0.0+friendly-2", "1.0.0+friendly-3"])
-    expect(await greeting(sb)).toBe("hello from friendly, update 3")
+    expect(running()).not.toBe(before)
+    expect(readFileSync(path.join(before, "session-marker"), "utf8")).toBe("still here\n")
+    expect(await greeting(sb)).toBe("hello from friendly, once it stopped")
   })
 })
 
@@ -82,7 +113,8 @@ describe.skipIf(process.getuid?.() === 0)("a shell startup file that cannot be w
       expect(r.out).toContain("Could not edit ~/.bashrc")
       expect(r.out).toContain(`export PATH="${sb.om.replace(sb.home, "$HOME")}/bin:$PATH"  # openmods`)
       expect(readFileSync(bashrc, "utf8")).toBe("# managed by another tool\n")
-      expect(existsSync(path.join(sb.home, ".profile"))).toBe(false)
+      // A login shell still gets ~/.openmods/bin first.
+      expect(readFileSync(path.join(sb.home, ".profile"), "utf8")).toContain("# openmods")
     } finally {
       chmodSync(bashrc, 0o644)
     }
