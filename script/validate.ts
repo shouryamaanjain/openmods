@@ -61,6 +61,11 @@ for (const id of harnesses) {
     errors.push(`harnesses/${id}.json: sharedServer needs "home", "binary" and "reset"`)
   const unless = h.argsUnless
   const words = (v: unknown) => Array.isArray(v) && v.length > 0 && v.every((a) => typeof a === "string" && a)
+  if (
+    h.stockMarker !== undefined &&
+    (typeof h.stockMarker !== "string" || !h.stockMarker || Bun.spawnSync(["grep", "-E", h.stockMarker, "/dev/null"]).exitCode === 2 || !(() => { try { return !!new RegExp(h.stockMarker) } catch { return false } })())
+  )
+    errors.push(`harnesses/${id}.json: stockMarker must be a pattern grep -E and JavaScript both take`)
   const same = h.sameRelease
   if (same !== undefined) {
     const obj = (v: unknown): v is Record<string, any> => typeof v === "object" && v !== null && !Array.isArray(v)

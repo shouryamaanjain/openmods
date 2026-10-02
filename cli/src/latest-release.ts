@@ -1,6 +1,9 @@
 // The newest release of a harness, as its users get it. Most harnesses
 // publish releases on GitHub, whose latest release is the answer: a repo can
-// carry tags for prereleases or a next major nobody is meant to install yet.
+// carry tags for prereleases, a next major nobody is meant to install yet, or
+// old numbers from before a reset (fx's v0.4.5 came before its v0.0.1). So
+// when GitHub cannot be asked, there is no answer; only a repo with no
+// releases at all is read from its tags.
 // A harness that publishes elsewhere names its own channel (latestRelease in
 // its definition): a URL answering JSON with a "version", and the tag that
 // version is released as. Anything else falls back to the newest release tag,
@@ -9,7 +12,7 @@ import { $ } from "bun"
 
 export type ReleaseSource = { repo: string; releaseTagPattern?: string; latestRelease?: { url: string; tag: string } }
 
-export async function latestRelease(h: ReleaseSource, newer: (a: string, b: string) => boolean): Promise<string> {
+export async function latestRelease(h: ReleaseSource, newer: (a: string, b: string) => boolean, api = "https://api.github.com"): Promise<string> {
   if (h.latestRelease) {
     const res = await fetch(h.latestRelease.url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(30_000) })
     if (!res.ok) throw new Error(`${h.latestRelease.url} answered ${res.status}`)
@@ -19,13 +22,17 @@ export async function latestRelease(h: ReleaseSource, newer: (a: string, b: stri
   }
   const gh = h.repo.match(/github\.com\/([^/]+)\/([^/.]+)/)
   if (gh) {
-    const res = await fetch(`https://api.github.com/repos/${gh[1]}/${gh[2]}/releases/latest`, {
+    const res = await fetch(`${api}/repos/${gh[1]}/${gh[2]}/releases/latest`, {
       headers: { accept: "application/vnd.github+json", ...(process.env.GH_TOKEN ? { authorization: `Bearer ${process.env.GH_TOKEN}` } : {}) },
+      signal: AbortSignal.timeout(30_000),
     })
     if (res.ok) {
       const tag = ((await res.json()) as { tag_name?: string }).tag_name
       if (tag) return tag
+      throw new Error("GitHub's latest release has no tag")
     }
+    // 404: the repo publishes no releases, so its tags are the releases.
+    if (res.status !== 404) throw new Error(`GitHub answered ${res.status} when asked for the latest release`)
   }
   const out = await $`git ls-remote --tags --refs ${h.repo} ${"refs/tags/" + (h.releaseTagPattern ?? "*")}`.text()
   const tags = out

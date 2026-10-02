@@ -15,6 +15,7 @@ import { lastRebuild, Progress, roughly } from "./progress"
 import { managerHere, missingMessage, type Requirement } from "./requirements"
 import { codeOf, withPrivateEmails } from "./private-email"
 import { sameRepo } from "./same-repo"
+import { getZig, usableZig, zigPin } from "./zig"
 
 type Harness = {
   id: string
@@ -60,6 +61,9 @@ type Harness = {
   // What changes when the stock harness is the modded build's own release;
   // see the schema.
   sameRelease?: SameRelease
+  // Found in the stock harness's program, to tell it from another program of
+  // the same name; see the schema.
+  stockMarker?: string
   releaseTagPattern?: string
 }
 type SameRelease = {
@@ -1065,11 +1069,12 @@ function containerMemory() {
 async function shell(cmd: string, cwd: string) {
   // With --json, stdout carries only the JSON result: a harness's install,
   // build and typecheck output goes to stderr instead.
-  // Bun's package and transpiler caches go in ~/.openmods too, unless you
+  // Bun's package and transpiler caches, and Zig's, go in ~/.openmods too, unless you
   // chose a place for them, so builds leave nothing behind outside it.
   const cache = {
     BUN_INSTALL_CACHE_DIR: process.env.BUN_INSTALL_CACHE_DIR ?? path.join(HOME, "cache", "bun"),
     BUN_RUNTIME_TRANSPILER_CACHE_PATH: process.env.BUN_RUNTIME_TRANSPILER_CACHE_PATH ?? path.join(HOME, "cache", "transpiler"),
+    ZIG_GLOBAL_CACHE_DIR: process.env.ZIG_GLOBAL_CACHE_DIR ?? path.join(HOME, "cache", "zig"),
   }
   const env = { ...process.env, ...cache, CARGO_BUILD_JOBS: cargoJobs(), ...buildEnv }
   let code: number
@@ -1095,12 +1100,42 @@ async function shell(cmd: string, cwd: string) {
   if (code !== 0) throw new CommandFailed(`command failed (${code}): ${cmd}`)
 }
 
-// A harness release pins its toolchain (package.json "packageManager":
-// "bun@1.3.14"). Building with a different version can produce a binary that
-// is subtly broken (Bun 1.4.2 miscompiles OpenCode 1.18.31, for one), so the
-// exact pinned version is installed under ~/.openmods/toolchains and put
-// first on PATH for the build. Nothing global changes.
+// A harness release pins its toolchain: Bun in package.json ("packageManager":
+// "bun@1.3.14"), Zig in build.zig.zon (minimum_zig_version, which its builds
+// use exactly: Zig changes between versions). Building with a different
+// version can produce a binary that is subtly broken (Bun 1.4.2 miscompiles
+// OpenCode 1.18.31, for one), or not build at all, so the exact pinned
+// version is installed under ~/.openmods/toolchains and put first on PATH
+// for the build. Nothing global changes.
 async function ensureToolchain(root: string): Promise<string | null> {
+  return (await ensureBun(root)) ?? (await ensureZig(root))
+}
+// The toolchains a checkout pins, as the folder names they get under
+// ~/.openmods/toolchains, for tidy to keep. Throws when a pin is there but
+// cannot be read.
+function pinnedToolchains(root: string): string[] {
+  const pins: string[] = []
+  const pkg = path.join(root, "package.json")
+  if (existsSync(pkg)) {
+    const bun = String(JSON.parse(readFileSync(pkg, "utf8")).packageManager ?? "").match(/^bun@(\d+\.\d+\.\d+)/)
+    if (bun) pins.push(`bun-${bun[1]}`)
+  }
+  const zig = zigPin(root)
+  if (zig) pins.push(`zig-${zig}`)
+  return pins
+}
+// Zig, from ziglang.org (see zig.ts); the one on PATH when it is the version.
+async function ensureZig(root: string): Promise<string | null> {
+  const want = zigPin(root)
+  if (!want) return null
+  const have = Bun.which("zig") ? (await $`zig version`.nothrow().text()).trim() : ""
+  if (have === want) return null
+  const dir = path.join(HOME, "toolchains", `zig-${want}`)
+  if (await usableZig(path.join(dir, "bin"), want)) return path.join(dir, "bin")
+  log(`Getting Zig ${want}, the version this release builds with (once, into ${pretty(dir)})`)
+  return getZig(want, dir).catch((e: unknown) => fail(`could not get Zig ${want}: ${e instanceof Error ? e.message : String(e)}`))
+}
+async function ensureBun(root: string): Promise<string | null> {
   const pkg = path.join(root, "package.json")
   if (!existsSync(pkg)) return null
   const pm = JSON.parse(readFileSync(pkg, "utf8")).packageManager as string | undefined
@@ -1530,15 +1565,17 @@ function stockSearchOf(h: Harness) {
 function stockFindOf(h: Harness) {
   const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
   const installed = (h.installer?.paths ?? []).map((p) => q(p.replace(/^~(?=\/|$)/, homedir())))
+  // Another program of the same name is not the stock harness.
+  const marker = h.stockMarker ? ` && LC_ALL=C grep -aqE ${q(h.stockMarker)} "$d/${h.binary}"` : ""
   return `STOCK_BIN=
 OLD_IFS=$IFS; IFS=:
 for d in $PATH; do
   IFS=$OLD_IFS
-  [ -z "$STOCK_BIN" ] && [ -n "$d" ] && [ -f "$d/${h.binary}" ] && [ -x "$d/${h.binary}" ] && ! [ "$d/${h.binary}" -ef ${q(path.join(BIN, h.binary))} ] && STOCK_BIN=$d/${h.binary}
+  [ -z "$STOCK_BIN" ] && [ -n "$d" ] && [ -f "$d/${h.binary}" ] && [ -x "$d/${h.binary}" ] && ! [ "$d/${h.binary}" -ef ${q(path.join(BIN, h.binary))} ]${marker} && STOCK_BIN=$d/${h.binary}
 done
 IFS=$OLD_IFS
 ${installed.length ? `for d in ${installed.join(" ")}; do
-  [ -z "$STOCK_BIN" ] && [ -f "$d/${h.binary}" ] && [ -x "$d/${h.binary}" ] && STOCK_BIN=$d/${h.binary}
+  [ -z "$STOCK_BIN" ] && [ -f "$d/${h.binary}" ] && [ -x "$d/${h.binary}" ]${marker} && STOCK_BIN=$d/${h.binary}
 done
 ` : ""}`
 }
@@ -1563,7 +1600,7 @@ function stockWhenOf(h: Harness) {
   const q = (v: string) => `'${v.replaceAll("'", "'\\''")}'`
   const install = h.installer?.command ? ` Install it (${h.installer.command}), then run this again.` : " Install it, then run this again."
   return `${matchArgsOf(h, h.stockWhen, "OPENMODS_STOCK")}if [ -n "$OPENMODS_STOCK" ]; then
-${stockSearchOf(h)}  printf '%s\n' ${q(`${h.binary}: this runs your stock ${h.name}, which was not found: it uses a background server your stock ${h.name} shares, so the modded build does not run it.${install}`)} >&2
+${stockSearchOf(h)}  printf '%s\n' ${q(`${h.binary}: this is for your stock ${h.name}, which was not found; the modded build leaves it to the stock one.${install}`)} >&2
   exit 127
 fi
 `
@@ -1578,9 +1615,19 @@ function stockBinary(h: Harness): string | null {
   ].filter((d) => d && path.resolve(d) !== BIN)
   for (const d of dirs) {
     const candidate = path.join(d, h.binary)
-    if (existsSync(candidate)) return candidate
+    if (existsSync(candidate) && isStock(h, candidate)) return candidate
   }
   return null
+}
+// Whether a program of the harness's name is the harness: it carries the
+// stockMarker, when the harness has one. Read, never run.
+function isStock(h: Harness, file: string) {
+  if (!h.stockMarker) return true
+  try {
+    return new RegExp(h.stockMarker).test(readFileSync(file).toString("latin1"))
+  } catch {
+    return false
+  }
 }
 
 async function versionOf(bin: string | null) {
@@ -2066,15 +2113,10 @@ async function tidy(root: string, ref: string, moved: boolean) {
     const own = existsSync(path.join(BIN, "openmods")) ? readFileSync(path.join(BIN, "openmods"), "utf8").match(/toolchains\/(bun-[^/\s]+)\//) : null
     if (own) keep.add(own[1]!)
     // A harness whose pin cannot be read might need any of them: none go.
-    for (const id of Object.keys(loadState())) {
-      const pkg = path.join(HOME, "harnesses", id, "src", "package.json")
-      if (!existsSync(pkg)) continue
-      const pin = String(JSON.parse(readFileSync(pkg, "utf8")).packageManager ?? "").match(/^bun@(\d+\.\d+\.\d+)/)
-      if (pin) keep.add(`bun-${pin[1]}`)
-    }
+    for (const id of Object.keys(loadState())) for (const pin of pinnedToolchains(path.join(HOME, "harnesses", id, "src"))) keep.add(pin)
     for (const d of Object.values(loadDev())) if (d.toolchain) keep.add(path.basename(path.dirname(d.toolchain)))
     for (const name of readdirSync(dir)) {
-      if (!name.startsWith("bun-") || keep.has(name)) continue
+      if (!/^(bun|zig)-/.test(name) || keep.has(name)) continue
       try {
         if (Date.now() - lstatSync(path.join(dir, name)).mtimeMs < 3_600_000) continue
         rmSync(path.join(dir, name), { recursive: true, force: true })

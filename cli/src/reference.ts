@@ -219,6 +219,7 @@ export const ENVIRONMENT: Flag[] = [
   { flag: "CARGO_BUILD_JOBS", description: "Rust build jobs at once. Default: one per 2.5 GB of memory, at most one per CPU." },
   { flag: "NO_COLOR, CI", description: "No colour; with CI set, build output streams as it is instead of the progress view." },
   { flag: "BUN_INSTALL_CACHE_DIR, BUN_RUNTIME_TRANSPILER_CACHE_PATH", description: "Where Bun's caches go, instead of ~/.openmods/cache." },
+  { flag: "ZIG_GLOBAL_CACHE_DIR", description: "Where Zig's build cache goes, instead of ~/.openmods/cache/zig." },
 ]
 
 export const FILES: Flag[] = [

@@ -39,6 +39,22 @@ describe("the newest release", () => {
       server.stop(true)
     }
   })
+  test("on GitHub, is its latest release, even when an older tag has a higher number", async () => {
+    const server = Bun.serve({ port: 0, fetch: () => Response.json({ tag_name: "v0.0.12" }) })
+    try {
+      expect(await latestRelease({ repo: "https://github.com/vercel-labs/fx", releaseTagPattern: "v[0-9]*" }, newer, `http://127.0.0.1:${server.port}`)).toBe("v0.0.12")
+    } finally {
+      server.stop(true)
+    }
+  })
+  test("on GitHub, when it cannot be asked, there is no answer rather than the highest tag", async () => {
+    const server = Bun.serve({ port: 0, fetch: () => new Response("rate limited", { status: 403 }) })
+    try {
+      await expect(latestRelease({ repo: "https://github.com/vercel-labs/fx", releaseTagPattern: "v[0-9]*" }, newer, `http://127.0.0.1:${server.port}`)).rejects.toThrow("GitHub answered 403")
+    } finally {
+      server.stop(true)
+    }
+  })
   test("without a channel or GitHub releases, is the newest release tag, never a prerelease", async () => {
     const repo = await repoWithTags(["v1.0.0", "v1.1.0", "v1.2.0-rc.1"])
     expect(await latestRelease({ repo, releaseTagPattern: "v*" }, newer)).toBe("v1.1.0")
