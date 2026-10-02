@@ -21,9 +21,12 @@ through codex-rollout's listing and loading code and never write to them.
   weakly. Excerpts (at most 320 bytes, markers included) come only from the
   user message or final reply; execution evidence is shown only by
   session_history_read with include_execution.
-- Bounds: newest first, at most 100 sessions, 10,000 turns, 2 MiB of text and
-  20 hits; rollouts over 32 MiB are not loaded, and loading stops once a
-  budget is spent. `truncated` reports when a bound applied.
+- Rollouts are streamed line by line, never loaded whole. Lines over 1 MiB
+  (inline images, huge outputs) have their long strings cut while streaming,
+  so turn boundaries and reference indices stay those of the full rollout.
+- Bounds: the current session first, then newest first; at most 100
+  sessions, 128 MiB of rollout bytes read, 10,000 turns, 2 MiB of text and 20
+  hits. `truncated` reports when a bound applied.
 - References are cxhr1:<session>:<turn>:<sha256>, binding the project, the
   session, the turn index and its content; reads re-check all of it.
 - Output is JSON labelled untrusted_historical_context.
@@ -73,15 +76,16 @@ index 2d0b6177e10efec4f4352acf9875b4d9e91382b2..210dd0c515f0ea2ee516eb7cb6a660c9
  pub(crate) use tool_search::ToolSearchHandlerCache;
 diff --git a/codex-rs/core/src/tools/handlers/session_history.rs b/codex-rs/core/src/tools/handlers/session_history.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2860dd463228fed939e750d7ba164fd2ac0e271a
+index 0000000000000000000000000000000000000000..dd34ea06d657a7caf650e419b36757126dee8554
 --- /dev/null
 +++ b/codex-rs/core/src/tools/handlers/session_history.rs
-@@ -0,0 +1,221 @@
+@@ -0,0 +1,224 @@
 +//! `session_history_search` and `session_history_read`: recover earlier user/assistant turns
 +//! of this project from Codex's saved rollouts, read-only.
 +
 +mod query;
 +mod score;
++mod stream;
 +#[cfg(test)]
 +mod test_fixtures;
 +mod turns;
@@ -106,6 +110,7 @@ index 0000000000000000000000000000000000000000..2860dd463228fed939e750d7ba164fd2
 +use query::CurrentSession;
 +use query::DEFAULT_LIMIT;
 +use query::HistoryScope;
++use query::READ_BUDGET_BYTES;
 +
 +const SESSION_HISTORY_SEARCH_TOOL_NAME: &str = "session_history_search";
 +const SESSION_HISTORY_READ_TOOL_NAME: &str = "session_history_read";
@@ -180,6 +185,7 @@ index 0000000000000000000000000000000000000000..2860dd463228fed939e750d7ba164fd2
 +            rollout_path,
 +            active_turn_id: invocation.turn.sub_id.clone(),
 +        },
++        read_budget_bytes: READ_BUDGET_BYTES,
 +    }
 +}
 +
@@ -300,10 +306,10 @@ index 0000000000000000000000000000000000000000..2860dd463228fed939e750d7ba164fd2
 +impl CoreToolRuntime for SessionHistoryReadHandler {}
 diff --git a/codex-rs/core/src/tools/handlers/session_history/query.rs b/codex-rs/core/src/tools/handlers/session_history/query.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..babd2ffe0f41b9c3ddf73ca6ba0a034a476a26cc
+index 0000000000000000000000000000000000000000..8f9fedff2836cf150c9706a6cb0a2a976cbf5e5e
 --- /dev/null
 +++ b/codex-rs/core/src/tools/handlers/session_history/query.rs
-@@ -0,0 +1,439 @@
+@@ -0,0 +1,437 @@
 +//! Bounded search and exact reads over the saved rollouts of the current project.
 +//!
 +//! The project is the current session's working directory, the same scope `codex resume`
@@ -314,9 +320,7 @@ index 0000000000000000000000000000000000000000..babd2ffe0f41b9c3ddf73ca6ba0a034a
 +use std::path::PathBuf;
 +
 +use codex_protocol::ThreadId;
-+use codex_protocol::protocol::EventMsg;
-+use codex_rollout::RolloutItem;
-+use codex_rollout::RolloutRecorder;
++use codex_protocol::protocol::SessionMeta;
 +use codex_rollout::ThreadSortKey;
 +use codex_utils_path::paths_match_after_normalization;
 +use serde::Serialize;
@@ -325,9 +329,12 @@ index 0000000000000000000000000000000000000000..babd2ffe0f41b9c3ddf73ca6ba0a034a
 +use super::score::Score;
 +use super::score::excerpt;
 +use super::score::score_turn;
++use super::stream::ReadBudget;
++use super::stream::StreamOptions;
++use super::stream::stream_rollout;
 +use super::turns::HistoryTurn;
++use super::turns::Retain;
 +use super::turns::TurnExecution;
-+use super::turns::extract_turns;
 +use super::turns::truncate_with_ellipsis;
 +
 +pub(super) const MAX_QUERY_BYTES: usize = 512;
@@ -337,7 +344,7 @@ index 0000000000000000000000000000000000000000..babd2ffe0f41b9c3ddf73ca6ba0a034a
 +const MAX_SESSIONS_SCANNED: usize = 100;
 +const MAX_TURNS_SCANNED: usize = 10_000;
 +const MAX_SEARCHABLE_BYTES: usize = 2 * 1024 * 1024;
-+const MAX_ROLLOUT_BYTES_SEARCHED: u64 = 32 * 1024 * 1024;
++pub(super) const READ_BUDGET_BYTES: u64 = 128 * 1024 * 1024;
 +const MAX_EXCERPT_BYTES: usize = 320;
 +const MAX_EVIDENCE_ENTRIES: usize = 50;
 +const MAX_EVIDENCE_TEXT_BYTES: usize = 2_000;
@@ -352,6 +359,8 @@ index 0000000000000000000000000000000000000000..babd2ffe0f41b9c3ddf73ca6ba0a034a
 +    pub(super) codex_home: PathBuf,
 +    pub(super) project_root: PathBuf,
 +    pub(super) current: CurrentSession,
++    /// File bytes one search may read across all rollouts.
++    pub(super) read_budget_bytes: u64,
 +}
 +
 +pub(super) struct CurrentSession {
@@ -373,6 +382,7 @@ index 0000000000000000000000000000000000000000..babd2ffe0f41b9c3ddf73ca6ba0a034a
 +    id: ThreadId,
 +    relation: Relation,
 +    turns: Vec<HistoryTurn>,
++    incomplete: bool,
 +}
 +
 +#[derive(Serialize)]
@@ -444,6 +454,7 @@ index 0000000000000000000000000000000000000000..babd2ffe0f41b9c3ddf73ca6ba0a034a
 +    let (paths, mut truncated) = candidate_rollouts(scope).await;
 +
 +    let mut hits: Vec<SearchHit> = Vec::new();
++    let mut budget = ReadBudget::new(scope.read_budget_bytes);
 +    let mut turns_scanned = 0usize;
 +    let mut searchable_bytes = 0usize;
 +    'sessions: for path in paths {
@@ -451,18 +462,16 @@ index 0000000000000000000000000000000000000000..babd2ffe0f41b9c3ddf73ca6ba0a034a
 +            truncated = true;
 +            break;
 +        }
-+        // Never load an oversized rollout just to search it.
-+        let too_large = tokio::fs::metadata(&path)
-+            .await
-+            .is_ok_and(|metadata| metadata.len() > MAX_ROLLOUT_BYTES_SEARCHED);
-+        if too_large {
++        if budget.is_spent() {
 +            truncated = true;
-+            continue;
++            break;
 +        }
-+        let Some(session) = load_scoped_session(scope, &path).await else {
++        let Some(session) = load_scoped_session(scope, &path, &mut budget, Retain::All).await
++        else {
 +            truncated = true;
 +            continue;
 +        };
++        truncated |= session.incomplete;
 +        let session_id = session.id.to_string();
 +        for (turn_index, turn) in session.turns.iter().enumerate().rev() {
 +            if turns_scanned >= MAX_TURNS_SCANNED {
@@ -539,7 +548,8 @@ index 0000000000000000000000000000000000000000..babd2ffe0f41b9c3ddf73ca6ba0a034a
 +        .flatten()
 +    };
 +    let path = path.ok_or_else(|| UNAVAILABLE.to_string())?;
-+    let session = load_scoped_session(scope, &path)
++    let mut budget = ReadBudget::new(u64::MAX);
++    let session = load_scoped_session(scope, &path, &mut budget, Retain::Only(turn_index))
 +        .await
 +        .filter(|session| session.id == session_id)
 +        .ok_or_else(|| UNAVAILABLE.to_string())?;
@@ -608,43 +618,37 @@ index 0000000000000000000000000000000000000000..babd2ffe0f41b9c3ddf73ca6ba0a034a
 +    (paths, truncated)
 +}
 +
-+/// Loads a rollout if it belongs to this project: the running session, or a saved root
++/// Streams a rollout if it belongs to this project: the running session, or a saved root
 +/// session recorded with the project's working directory.
-+async fn load_scoped_session(scope: &HistoryScope, path: &Path) -> Option<ScopedSession> {
-+    let (items, _thread_id, _parse_errors) =
-+        RolloutRecorder::load_rollout_items(path).await.ok()?;
-+    let meta = items.iter().find_map(|item| match item {
-+        RolloutItem::SessionMeta(line) => Some(&line.meta),
-+        _ => None,
-+    })?;
-+    let relation = if meta.id == scope.current.id {
-+        Relation::Current
-+    } else {
-+        Relation::Other
++async fn load_scoped_session(
++    scope: &HistoryScope,
++    path: &Path,
++    budget: &mut ReadBudget,
++    retain: Retain,
++) -> Option<ScopedSession> {
++    let mut relation = Relation::Other;
++    let accept = |meta: &SessionMeta| {
++        if meta.id == scope.current.id {
++            relation = Relation::Current;
++            return true;
++        }
++        !meta.source.is_non_root_agent()
++            && paths_match_after_normalization(&meta.cwd, &scope.project_root)
 +    };
-+    if relation == Relation::Other
-+        && (meta.source.is_non_root_agent()
-+            || !paths_match_after_normalization(&meta.cwd, &scope.project_root))
-+    {
-+        return None;
-+    }
-+    let saved_end = match relation {
-+        Relation::Current => items
-+            .iter()
-+            .position(|item| {
-+                matches!(
-+                    item,
-+                    RolloutItem::EventMsg(EventMsg::TurnStarted(event))
-+                        if event.turn_id == scope.current.active_turn_id
-+                )
-+            })
-+            .unwrap_or(items.len()),
-+        Relation::Other => items.len(),
++    let options = StreamOptions {
++        retain,
++        // Turn ids are unique, so this only ever stops inside the running session.
++        stop_at_turn: Some(scope.current.active_turn_id.as_str()),
 +    };
++    let rollout = stream_rollout(path, budget, options, accept)
++        .await
++        .ok()
++        .flatten()?;
 +    Some(ScopedSession {
-+        id: meta.id,
++        id: rollout.meta.id,
 +        relation,
-+        turns: extract_turns(&items[..saved_end]),
++        turns: rollout.turns,
++        incomplete: rollout.incomplete,
 +    })
 +}
 +
@@ -745,10 +749,10 @@ index 0000000000000000000000000000000000000000..babd2ffe0f41b9c3ddf73ca6ba0a034a
 +mod tests;
 diff --git a/codex-rs/core/src/tools/handlers/session_history/query_tests.rs b/codex-rs/core/src/tools/handlers/session_history/query_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1a0230f08826b157ed4c02ef4e0c4ffbf77f6102
+index 0000000000000000000000000000000000000000..5b2ec7d75f89deb1460f897a010316fce97e97d0
 --- /dev/null
 +++ b/codex-rs/core/src/tools/handlers/session_history/query_tests.rs
-@@ -0,0 +1,549 @@
+@@ -0,0 +1,630 @@
 +use std::path::Path;
 +use std::path::PathBuf;
 +
@@ -760,11 +764,13 @@ index 0000000000000000000000000000000000000000..1a0230f08826b157ed4c02ef4e0c4ffb
 +use serde_json::json;
 +use tempfile::TempDir;
 +
++use super::super::stream::MAX_LINE_BYTES;
 +use super::super::test_fixtures::assistant;
 +use super::super::test_fixtures::compacted;
 +use super::super::test_fixtures::event;
 +use super::super::test_fixtures::function_call;
 +use super::super::test_fixtures::function_output;
++use super::super::test_fixtures::line;
 +use super::super::test_fixtures::session_meta;
 +use super::super::test_fixtures::user;
 +use super::super::test_fixtures::user_event;
@@ -792,6 +798,7 @@ index 0000000000000000000000000000000000000000..1a0230f08826b157ed4c02ef4e0c4ffb
 +                rollout_path: Some(self.current_path.clone()),
 +                active_turn_id: "active-turn".to_string(),
 +            },
++            read_budget_bytes: READ_BUDGET_BYTES,
 +        }
 +    }
 +}
@@ -883,6 +890,31 @@ index 0000000000000000000000000000000000000000..1a0230f08826b157ed4c02ef4e0c4ffb
 +        older,
 +        outside,
 +    }
++}
++
++/// The current session with one "cobalt" turn of exactly `bytes` searchable bytes, spread
++/// over tool calls so no rollout line is near the line cap.
++fn turn_of_bytes(fixture: &Fixture, bytes: usize) -> Vec<Value> {
++    let question = "cobalt question";
++    let answer = "ok";
++    let calls = 3;
++    let name = "exec_command";
++    let arguments = bytes - question.len() - answer.len() - calls * name.len();
++    let mut lines = vec![
++        session_meta(fixture.current, &fixture.project_a, cli()),
++        user(question),
++        user_event(question),
++    ];
++    for call in 0..calls {
++        let size = arguments / calls + usize::from(call < arguments % calls);
++        lines.push(function_call(
++            name,
++            &"y".repeat(size),
++            &format!("call-{call}"),
++        ));
++    }
++    lines.push(assistant(answer, "final_answer"));
++    lines
 +}
 +
 +fn parse_json(text: &str) -> Value {
@@ -1101,12 +1133,11 @@ index 0000000000000000000000000000000000000000..1a0230f08826b157ed4c02ef4e0c4ffb
 +#[tokio::test]
 +async fn oversized_turns_exceed_the_scan_budget_and_mark_truncated() {
 +    let fixture = fixture();
-+    let huge = format!("cobalt {}", "x".repeat(MAX_SEARCHABLE_BYTES));
 +    write_rollout(
 +        &fixture.codex_home,
 +        fixture.current,
 +        /*age_secs*/ 10,
-+        &conversation(fixture.current, &fixture.project_a, cli(), &[(&huge, "ok")]),
++        &turn_of_bytes(&fixture, MAX_SEARCHABLE_BYTES + 1),
 +    );
 +
 +    let output = parse_json(
@@ -1234,56 +1265,110 @@ index 0000000000000000000000000000000000000000..1a0230f08826b157ed4c02ef4e0c4ffb
 +}
 +
 +#[tokio::test]
-+async fn oversized_rollouts_are_skipped_without_loading() {
++async fn huge_lines_do_not_hide_turns_or_shift_references() {
 +    let fixture = fixture();
-+    let path = codex_rollout::find_thread_path_by_id_str(
-+        &fixture.codex_home,
-+        &fixture.older.to_string(),
-+        /*state_db_ctx*/ None,
-+    )
-+    .await
-+    .expect("find rollout")
-+    .expect("rollout exists");
-+    let file = std::fs::OpenOptions::new()
-+        .write(true)
-+        .open(&path)
-+        .expect("open rollout");
-+    file.set_len(MAX_ROLLOUT_BYTES_SEARCHED + 1)
-+        .expect("grow rollout");
-+    file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(100))
-+        .expect("keep rollout older");
-+
-+    let output = parse_json(
-+        &search(&fixture.scope(), "cobalt", MAX_LIMIT)
-+            .await
-+            .expect("search"),
++    let image = format!("data:image/png;base64,{}", "A".repeat(3 * MAX_LINE_BYTES));
++    let mut lines = conversation(
++        fixture.current,
++        &fixture.project_a,
++        cli(),
++        &[("first cobalt question", "first answer")],
 +    );
++    lines.push(line(
++        "response_item",
++        json!({ "type": "message", "role": "user", "content": [
++            { "type": "input_text", "text": "look at this cobalt screenshot" },
++            { "type": "input_image", "image_url": image },
++        ] }),
++    ));
++    lines.push(function_call(
++        "exec_command",
++        r#"{"cmd":"cat big.log"}"#,
++        "call-big",
++    ));
++    lines.push(function_output("call-big", &"x".repeat(2 * MAX_LINE_BYTES)));
++    lines.push(assistant("second answer", "final_answer"));
++    lines.push(user("third cobalt question"));
++    lines.push(assistant("third answer", "final_answer"));
++    write_rollout(
++        &fixture.codex_home,
++        fixture.current,
++        /*age_secs*/ 10,
++        &lines,
++    );
++    let scope = fixture.scope();
++
++    let output = parse_json(&search(&scope, "cobalt", MAX_LIMIT).await.expect("search"));
++
++    let current_hits: Vec<(String, String)> = output["hits"]
++        .as_array()
++        .expect("hits")
++        .iter()
++        .filter(|hit| hit["session_id"] == fixture.current.to_string())
++        .map(|hit| {
++            (
++                hit["reference"].as_str().unwrap_or_default().to_string(),
++                hit["excerpt"].as_str().unwrap_or_default().to_string(),
++            )
++        })
++        .collect();
++    let indices: Vec<&str> = current_hits
++        .iter()
++        .map(|(reference, _)| reference.split(':').nth(2).unwrap_or_default())
++        .collect();
++    assert_eq!(indices, vec!["2", "1", "0"]);
++    assert_eq!(current_hits[1].1, "look at this cobalt screenshot");
++    for (reference, _) in &current_hits {
++        let record = parse_json(
++            &read(&scope, reference, /*include_execution*/ true)
++                .await
++                .expect("read"),
++        );
++        assert_eq!(record["session_relation"], "current");
++    }
++    let middle = parse_json(
++        &read(&scope, &current_hits[1].0, /*include_execution*/ true)
++            .await
++            .expect("read"),
++    );
++    assert_eq!(middle["conversation"]["assistant"], "second answer");
++    assert_eq!(
++        middle["execution"]["tool_results"][0]["name"],
++        "exec_command"
++    );
++}
++
++#[tokio::test]
++async fn the_read_budget_stops_the_search_and_marks_truncated() {
++    let fixture = fixture();
++    let mut scope = fixture.scope();
++    let current_bytes = std::fs::metadata(&fixture.current_path)
++        .expect("current rollout")
++        .len();
++    scope.read_budget_bytes = current_bytes;
++
++    let output = parse_json(&search(&scope, "cobalt", MAX_LIMIT).await.expect("search"));
 +
 +    assert_eq!(
 +        hit_identities(&output),
 +        vec![(fixture.current.to_string(), "current".to_string())]
 +    );
 +    assert_eq!(output["truncated"], true);
++
++    scope.read_budget_bytes = current_bytes / 2;
++    let output = parse_json(&search(&scope, "cobalt", MAX_LIMIT).await.expect("search"));
++    assert_eq!(output["hits"], json!([]));
++    assert_eq!(output["truncated"], true);
 +}
 +
 +#[tokio::test]
 +async fn no_more_rollouts_load_once_the_text_budget_is_spent() {
 +    let fixture = fixture();
-+    let answer = "ok";
-+    let question = format!(
-+        "cobalt {}",
-+        "x".repeat(MAX_SEARCHABLE_BYTES - answer.len() - 7)
-+    );
 +    write_rollout(
 +        &fixture.codex_home,
 +        fixture.current,
 +        /*age_secs*/ 10,
-+        &conversation(
-+            fixture.current,
-+            &fixture.project_a,
-+            cli(),
-+            &[(&question, answer)],
-+        ),
++        &turn_of_bytes(&fixture, MAX_SEARCHABLE_BYTES),
 +    );
 +
 +    let output = parse_json(
@@ -1677,6 +1762,390 @@ index 0000000000000000000000000000000000000000..d8c2572ac6b690d448b8190300eebc64
 +    assert!(cut.contains("部署使用钴蓝"));
 +    assert!(cut.len() <= 320);
 +}
+diff --git a/codex-rs/core/src/tools/handlers/session_history/stream.rs b/codex-rs/core/src/tools/handlers/session_history/stream.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..a494eecddbb17778b1df2424a9780294f7b1a34f
+--- /dev/null
++++ b/codex-rs/core/src/tools/handlers/session_history/stream.rs
+@@ -0,0 +1,292 @@
++//! Streams a rollout one line at a time within byte bounds, never loading the whole file.
++//!
++//! A line over [`MAX_LINE_BYTES`] (an inline image, a huge tool output) is not held in memory:
++//! while it streams, each of its JSON string values is cut to [`MAX_KEPT_STRING_BYTES`]. The
++//! record keeps its type, role and the start of its text, so turn boundaries and indices are
++//! the same as in a full read. A line still over the cap after that is skipped and counted.
++
++use std::io;
++use std::path::Path;
++
++use codex_protocol::protocol::EventMsg;
++use codex_protocol::protocol::SessionMeta;
++use codex_rollout::RolloutItem;
++use codex_rollout::RolloutLineReader;
++use tokio::io::AsyncBufReadExt;
++use tokio::io::BufReader;
++
++use super::turns::HistoryTurn;
++use super::turns::Retain;
++use super::turns::TurnExtractor;
++
++pub(super) const MAX_LINE_BYTES: usize = 1024 * 1024;
++const MAX_KEPT_STRING_BYTES: usize = 16 * 1024;
++const CUT_MARKER: &[u8] = b"...";
++
++/// File bytes one history request may still read, across all the rollouts it opens.
++pub(super) struct ReadBudget {
++    remaining: u64,
++}
++
++impl ReadBudget {
++    pub(super) fn new(bytes: u64) -> Self {
++        Self { remaining: bytes }
++    }
++
++    pub(super) fn is_spent(&self) -> bool {
++        self.remaining == 0
++    }
++
++    fn charge(&mut self, bytes: u64) {
++        self.remaining = self.remaining.saturating_sub(bytes);
++    }
++}
++
++pub(super) struct StreamedRollout {
++    pub(super) meta: SessionMeta,
++    pub(super) turns: Vec<HistoryTurn>,
++    /// Lines were skipped, or reading stopped at the budget and the newest turn was dropped.
++    pub(super) incomplete: bool,
++}
++
++/// What [`stream_rollout`] reads and keeps.
++pub(super) struct StreamOptions<'a> {
++    pub(super) retain: Retain,
++    /// Stop at this turn's `TurnStarted`: it is still running, so it is not saved history.
++    pub(super) stop_at_turn: Option<&'a str>,
++}
++
++/// Streams the rollout at `path`. `accept` sees the rollout's own `SessionMeta` (its first one)
++/// and can reject the rollout before anything else is read; `Ok(None)` then, or when the file
++/// has no session meta.
++pub(super) async fn stream_rollout(
++    path: &Path,
++    budget: &mut ReadBudget,
++    options: StreamOptions<'_>,
++    accept: impl FnOnce(&SessionMeta) -> bool,
++) -> io::Result<Option<StreamedRollout>> {
++    let mut lines = RolloutLines::open(path).await?;
++    let mut accept = Some(accept);
++    let mut meta: Option<SessionMeta> = None;
++    let mut extractor = TurnExtractor::new(options.retain);
++    let mut incomplete = false;
++    let mut stopped_early = false;
++    loop {
++        let Some(line) = lines.next().await? else {
++            break;
++        };
++        if budget.is_spent() {
++            // More of the file is left than the budget allows.
++            stopped_early = true;
++            break;
++        }
++        budget.charge(line.consumed);
++        let Some(bytes) = line.content else {
++            incomplete = true;
++            continue;
++        };
++        if bytes.iter().all(u8::is_ascii_whitespace) {
++            continue;
++        }
++        let Ok(parsed) = codex_rollout::parse_rollout_line_bytes(&bytes) else {
++            continue;
++        };
++        let item = parsed.item;
++        if meta.is_none() {
++            if let RolloutItem::SessionMeta(line) = &item {
++                let accepted = accept.take().is_some_and(|accept| accept(&line.meta));
++                if !accepted {
++                    return Ok(None);
++                }
++                meta = Some(line.meta.clone());
++            }
++            continue;
++        }
++        if let (Some(stop_at), RolloutItem::EventMsg(EventMsg::TurnStarted(event))) =
++            (options.stop_at_turn, &item)
++            && event.turn_id == stop_at
++        {
++            break;
++        }
++        extractor.push(&item);
++    }
++    let Some(meta) = meta else {
++        return Ok(None);
++    };
++    if stopped_early {
++        extractor.drop_last();
++    }
++    Ok(Some(StreamedRollout {
++        meta,
++        turns: extractor.finish(),
++        incomplete: incomplete || stopped_early,
++    }))
++}
++
++struct Line {
++    /// File bytes consumed, newline included.
++    consumed: u64,
++    /// The line, with long strings cut if it was over the cap; `None` when it still was.
++    content: Option<Vec<u8>>,
++}
++
++enum RolloutLines {
++    Plain(BufReader<tokio::fs::File>),
++    /// `.jsonl.zst` rollouts go through codex-rollout's decompressing reader.
++    Compressed(RolloutLineReader),
++}
++
++impl RolloutLines {
++    async fn open(path: &Path) -> io::Result<Self> {
++        match tokio::fs::File::open(codex_rollout::plain_rollout_path(path)).await {
++            Ok(file) => Ok(Self::Plain(BufReader::new(file))),
++            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(Self::Compressed(
++                codex_rollout::open_rollout_line_reader(path).await?,
++            )),
++            Err(err) => Err(err),
++        }
++    }
++
++    async fn next(&mut self) -> io::Result<Option<Line>> {
++        match self {
++            Self::Plain(reader) => next_plain_line(reader).await,
++            Self::Compressed(reader) => Ok(reader.next_line().await?.map(|line| {
++                let consumed = u64::try_from(line.len())
++                    .unwrap_or(u64::MAX)
++                    .saturating_add(1);
++                let content = if line.len() <= MAX_LINE_BYTES {
++                    Some(line.into_bytes())
++                } else {
++                    let mut shrinker = LineShrinker::default();
++                    shrinker.feed(line.as_bytes());
++                    shrinker.finish()
++                };
++                Line { consumed, content }
++            })),
++        }
++    }
++}
++
++async fn next_plain_line(reader: &mut BufReader<tokio::fs::File>) -> io::Result<Option<Line>> {
++    let mut raw: Vec<u8> = Vec::new();
++    let mut shrinker: Option<LineShrinker> = None;
++    let mut consumed = 0u64;
++    loop {
++        let available = reader.fill_buf().await?;
++        if available.is_empty() {
++            break;
++        }
++        let newline = available.iter().position(|byte| *byte == b'\n');
++        let chunk = &available[..newline.unwrap_or(available.len())];
++        match shrinker.as_mut() {
++            Some(shrinker) => shrinker.feed(chunk),
++            None => {
++                raw.extend_from_slice(chunk);
++                if raw.len() > MAX_LINE_BYTES {
++                    let mut started = LineShrinker::default();
++                    started.feed(&raw);
++                    raw = Vec::new();
++                    shrinker = Some(started);
++                }
++            }
++        }
++        let used = chunk.len() + usize::from(newline.is_some());
++        reader.consume(used);
++        consumed = consumed.saturating_add(u64::try_from(used).unwrap_or(u64::MAX));
++        if newline.is_some() {
++            break;
++        }
++    }
++    if consumed == 0 {
++        return Ok(None);
++    }
++    let content = match shrinker {
++        Some(shrinker) => shrinker.finish(),
++        None => Some(raw),
++    };
++    Ok(Some(Line { consumed, content }))
++}
++
++/// Copies a JSON line while cutting every string value to [`MAX_KEPT_STRING_BYTES`], only
++/// ever at a character or escape boundary, so the output stays valid JSON and UTF-8.
++#[derive(Default)]
++struct LineShrinker {
++    out: Vec<u8>,
++    in_string: bool,
++    /// 0: none; `ESCAPE_START`: just saw a backslash; 1..=4: `\u` hex digits left.
++    escape: u8,
++    kept: usize,
++    dropping: bool,
++    overflow: bool,
++}
++
++const ESCAPE_START: u8 = u8::MAX;
++
++impl LineShrinker {
++    fn feed(&mut self, bytes: &[u8]) {
++        for &byte in bytes {
++            if self.overflow {
++                return;
++            }
++            self.push(byte);
++            if self.out.len() > MAX_LINE_BYTES {
++                self.overflow = true;
++                self.out = Vec::new();
++            }
++        }
++    }
++
++    fn push(&mut self, byte: u8) {
++        if !self.in_string {
++            self.out.push(byte);
++            if byte == b'"' {
++                self.in_string = true;
++                self.kept = 0;
++                self.dropping = false;
++            }
++            return;
++        }
++        if self.escape == ESCAPE_START {
++            self.escape = if byte == b'u' { 4 } else { 0 };
++            self.keep(byte);
++            return;
++        }
++        if self.escape > 0 {
++            self.escape -= 1;
++            self.keep(byte);
++            return;
++        }
++        if byte == b'"' {
++            if self.dropping {
++                self.out.extend_from_slice(CUT_MARKER);
++            }
++            self.out.push(byte);
++            self.in_string = false;
++            return;
++        }
++        // Only start cutting at the first byte of a character or escape.
++        let continuation = byte & 0b1100_0000 == 0b1000_0000;
++        if !self.dropping && !continuation && self.kept >= MAX_KEPT_STRING_BYTES {
++            self.dropping = true;
++        }
++        if byte == b'\\' {
++            self.escape = ESCAPE_START;
++        }
++        self.keep(byte);
++    }
++
++    fn keep(&mut self, byte: u8) {
++        if !self.dropping {
++            self.out.push(byte);
++            self.kept += 1;
++        }
++    }
++
++    fn finish(self) -> Option<Vec<u8>> {
++        (!self.overflow).then_some(self.out)
++    }
++}
++
++#[cfg(test)]
++#[path = "stream_tests.rs"]
++mod tests;
+diff --git a/codex-rs/core/src/tools/handlers/session_history/stream_tests.rs b/codex-rs/core/src/tools/handlers/session_history/stream_tests.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..9a477d59d58310c0d131d7553a1c652fafb39b9b
+--- /dev/null
++++ b/codex-rs/core/src/tools/handlers/session_history/stream_tests.rs
+@@ -0,0 +1,80 @@
++use pretty_assertions::assert_eq;
++use serde_json::Value;
++use serde_json::json;
++
++use super::*;
++
++fn shrink(line: &str) -> Option<Vec<u8>> {
++    let mut shrinker = LineShrinker::default();
++    shrinker.feed(line.as_bytes());
++    shrinker.finish()
++}
++
++#[test]
++fn shrinking_cuts_long_strings_and_keeps_valid_json() {
++    let long = format!(
++        "{}\\n\\u00e9\\\"{}",
++        "é".repeat(MAX_KEPT_STRING_BYTES),
++        "z".repeat(10)
++    );
++    let line = format!(r#"{{"type":"message","role":"user","text":"{long}","short":"kept"}}"#);
++
++    let shrunk = shrink(&line).expect("fits after shrinking");
++    let value: Value = serde_json::from_slice(&shrunk).expect("still valid JSON");
++
++    let text = value["text"].as_str().expect("text");
++    assert!(text.ends_with("..."));
++    assert!(text.len() <= MAX_KEPT_STRING_BYTES + 4);
++    assert_eq!(value["short"], "kept");
++    assert_eq!(value["role"], "user");
++}
++
++#[test]
++fn shrinking_never_splits_an_escape_sequence() {
++    let boundary = "a".repeat(MAX_KEPT_STRING_BYTES - 1);
++    for escape in ["\\u00e9", "\\n", "\\\"", "\\\\"] {
++        let line = format!(r#"{{"text":"{boundary}{escape}{}"}}"#, "b".repeat(50));
++        let shrunk = shrink(&line).expect("fits");
++        let value: Value = serde_json::from_slice(&shrunk).expect("valid JSON");
++        assert!(
++            value["text"]
++                .as_str()
++                .is_some_and(|text| text.ends_with("..."))
++        );
++    }
++}
++
++#[test]
++fn lines_with_too_much_left_after_shrinking_are_rejected() {
++    let many = (0..MAX_LINE_BYTES / 8)
++        .map(|index| format!("\"k{index}\":1"))
++        .collect::<Vec<_>>()
++        .join(",");
++    assert_eq!(shrink(&format!("{{{many}}}")), None);
++}
++
++#[tokio::test]
++async fn huge_lines_stream_without_breaking_the_lines_around_them() {
++    let dir = tempfile::TempDir::new().expect("tempdir");
++    let path = dir.path().join("rollout.jsonl");
++    let huge = json!({ "blob": "x".repeat(3 * MAX_LINE_BYTES) }).to_string();
++    std::fs::write(&path, format!("{{\"a\":1}}\n{huge}\n{{\"b\":2}}")).expect("write");
++
++    let mut lines = RolloutLines::open(&path).await.expect("open");
++    let mut seen = Vec::new();
++    while let Some(line) = lines.next().await.expect("read") {
++        seen.push((
++            line.consumed,
++            line.content.map(|bytes| bytes.len() < MAX_LINE_BYTES),
++        ));
++    }
++
++    assert_eq!(
++        seen,
++        vec![
++            (8, Some(true)),
++            (u64::try_from(huge.len() + 1).expect("len"), Some(true)),
++            (7, Some(true)),
++        ]
++    );
++}
 diff --git a/codex-rs/core/src/tools/handlers/session_history/test_fixtures.rs b/codex-rs/core/src/tools/handlers/session_history/test_fixtures.rs
 new file mode 100644
 index 0000000000000000000000000000000000000000..d3fe1d75926fb476c9bc53b6ebf5d11f65b069b0
@@ -1809,10 +2278,10 @@ index 0000000000000000000000000000000000000000..d3fe1d75926fb476c9bc53b6ebf5d11f
 +}
 diff --git a/codex-rs/core/src/tools/handlers/session_history/turns.rs b/codex-rs/core/src/tools/handlers/session_history/turns.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b994ce43da7a54e57c37b598cbcff741a8ea431c
+index 0000000000000000000000000000000000000000..a2595e98ee79b228e297dd185adce6c70be57030
 --- /dev/null
 +++ b/codex-rs/core/src/tools/handlers/session_history/turns.rs
-@@ -0,0 +1,396 @@
+@@ -0,0 +1,437 @@
 +//! Rebuilds saved user/assistant turns from rollout items.
 +//!
 +//! A turn starts at a real user message, the same boundary Codex uses for rollback and
@@ -1918,6 +2387,7 @@ index 0000000000000000000000000000000000000000..b994ce43da7a54e57c37b598cbcff741
 +}
 +
 +struct TurnBuilder {
++    retained: bool,
 +    user: String,
 +    interrupted: bool,
 +    assistant_messages: Vec<(String, Option<MessagePhase>)>,
@@ -1926,9 +2396,10 @@ index 0000000000000000000000000000000000000000..b994ce43da7a54e57c37b598cbcff741
 +}
 +
 +impl TurnBuilder {
-+    fn new(user: String) -> Self {
++    fn new(user: String, retained: bool) -> Self {
 +        Self {
-+            user,
++            retained,
++            user: if retained { user } else { String::new() },
 +            interrupted: false,
 +            assistant_messages: Vec::new(),
 +            execution: TurnExecution::default(),
@@ -1955,6 +2426,9 @@ index 0000000000000000000000000000000000000000..b994ce43da7a54e57c37b598cbcff741
 +    }
 +
 +    fn absorb(&mut self, item: &ResponseItem) {
++        if !self.retained {
++            return;
++        }
 +        match item {
 +            ResponseItem::Message {
 +                role,
@@ -2094,27 +2568,54 @@ index 0000000000000000000000000000000000000000..b994ce43da7a54e57c37b598cbcff741
 +    }
 +}
 +
-+/// Rebuilds the saved turns of one rollout, oldest first.
-+pub(super) fn extract_turns(items: &[RolloutItem]) -> Vec<HistoryTurn> {
-+    let mut turns: Vec<TurnBuilder> = Vec::new();
-+    let mut current: Option<usize> = None;
-+    for item in items {
++/// Which turns keep their content while a rollout streams by; the others are only counted,
++/// so indices stay the same either way.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub(super) enum Retain {
++    All,
++    Only(usize),
++}
++
++/// Rebuilds the saved turns of one rollout, oldest first, one rollout item at a time.
++pub(super) struct TurnExtractor {
++    retain: Retain,
++    turns: Vec<TurnBuilder>,
++    current: Option<usize>,
++}
++
++impl TurnExtractor {
++    pub(super) fn new(retain: Retain) -> Self {
++        Self {
++            retain,
++            turns: Vec::new(),
++            current: None,
++        }
++    }
++
++    pub(super) fn push(&mut self, item: &RolloutItem) {
 +        match item {
 +            RolloutItem::ResponseItem(envelope) => {
 +                if let Some(user) = real_user_message(&envelope.item) {
-+                    turns.push(TurnBuilder::new(user));
-+                    current = Some(turns.len() - 1);
-+                } else if let Some(turn) = current.and_then(|index| turns.get_mut(index)) {
++                    let index = self.turns.len();
++                    let retained = match self.retain {
++                        Retain::All => true,
++                        Retain::Only(wanted) => wanted == index,
++                    };
++                    self.turns.push(TurnBuilder::new(user, retained));
++                    self.current = Some(index);
++                } else if let Some(turn) = self.current.and_then(|index| self.turns.get_mut(index))
++                {
 +                    turn.absorb(&envelope.item);
 +                }
 +            }
 +            RolloutItem::EventMsg(EventMsg::ThreadRolledBack(rollback)) => {
 +                let removed = usize::try_from(rollback.num_turns).unwrap_or(usize::MAX);
-+                turns.truncate(turns.len().saturating_sub(removed));
-+                current = None;
++                self.turns
++                    .truncate(self.turns.len().saturating_sub(removed));
++                self.current = None;
 +            }
 +            RolloutItem::EventMsg(EventMsg::TurnAborted(_)) => {
-+                if let Some(turn) = current.and_then(|index| turns.get_mut(index)) {
++                if let Some(turn) = self.current.and_then(|index| self.turns.get_mut(index)) {
 +                    turn.interrupted = true;
 +                }
 +            }
@@ -2122,7 +2623,16 @@ index 0000000000000000000000000000000000000000..b994ce43da7a54e57c37b598cbcff741
 +            _ => {}
 +        }
 +    }
-+    turns.into_iter().map(TurnBuilder::finish).collect()
++
++    /// Drops the newest turn, which may be incomplete when reading stopped early.
++    pub(super) fn drop_last(&mut self) {
++        self.turns.pop();
++        self.current = None;
++    }
++
++    pub(super) fn finish(self) -> Vec<HistoryTurn> {
++        self.turns.into_iter().map(TurnBuilder::finish).collect()
++    }
 +}
 +
 +fn real_user_message(item: &ResponseItem) -> Option<String> {
@@ -2211,10 +2721,10 @@ index 0000000000000000000000000000000000000000..b994ce43da7a54e57c37b598cbcff741
 +mod tests;
 diff --git a/codex-rs/core/src/tools/handlers/session_history/turns_tests.rs b/codex-rs/core/src/tools/handlers/session_history/turns_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..303ed74502de548e060db9027b6ed36950e6aea0
+index 0000000000000000000000000000000000000000..ddcbb0ff87fa7eaa2b46f4c1ad61b1da86f52753
 --- /dev/null
 +++ b/codex-rs/core/src/tools/handlers/session_history/turns_tests.rs
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,153 @@
 +use pretty_assertions::assert_eq;
 +use serde_json::json;
 +
@@ -2228,6 +2738,14 @@ index 0000000000000000000000000000000000000000..303ed74502de548e060db9027b6ed369
 +use super::super::test_fixtures::parse;
 +use super::super::test_fixtures::user;
 +use super::*;
++
++fn extract_turns(items: &[RolloutItem]) -> Vec<HistoryTurn> {
++    let mut extractor = TurnExtractor::new(Retain::All);
++    for item in items {
++        extractor.push(item);
++    }
++    extractor.finish()
++}
 +
 +fn turn(user: &str, assistant: Option<&str>) -> HistoryTurn {
 +    HistoryTurn {
