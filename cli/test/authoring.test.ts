@@ -1,6 +1,6 @@
 // The author's side: pack, local mods, and the site generator.
 import { beforeAll, describe, expect, test } from "bun:test"
-import { existsSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { addFile, cli, CLI, createHarness, createMod, git, greeting, sandbox, script, setGreeting, SITE } from "./harness"
 
@@ -32,6 +32,22 @@ describe("pack", () => {
     await createMod(sb, "kept", setGreeting("hello from kept, again"))
     const meta = JSON.parse(readFileSync(metaFile, "utf8"))
     expect([meta.internal, meta.tags]).toEqual([true, ["tui"]])
+  })
+  test("starts a mod with the harness's license, and keeps the author's once set", async () => {
+    const def = path.join(sb.reg, "harnesses", "fake.json")
+    const before = readFileSync(def, "utf8")
+    writeFileSync(def, JSON.stringify({ ...JSON.parse(before), license: "Apache-2.0" }))
+    try {
+      const dir = await createMod(sb, "licensed", setGreeting("hello from licensed"))
+      const metaFile = path.join(dir, "..", "mod.json")
+      expect(JSON.parse(readFileSync(metaFile, "utf8")).license).toBe("Apache-2.0")
+      writeFileSync(metaFile, JSON.stringify({ ...JSON.parse(readFileSync(metaFile, "utf8")), license: "MIT" }))
+      await createMod(sb, "licensed", setGreeting("hello from licensed, again"))
+      expect(JSON.parse(readFileSync(metaFile, "utf8")).license).toBe("MIT")
+    } finally {
+      writeFileSync(def, before)
+      rmSync(path.join(sb.reg, "mods", "t", "licensed"), { recursive: true, force: true })
+    }
   })
   test("refuses a bad name", async () => {
     expect((await cli(sb, "pack", sb.harness, "--name", "Bad_Name", "--owner", "t", "--harness", "fake")).code).toBe(1)

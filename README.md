@@ -82,6 +82,14 @@ openmods pack . --name my-mod --registry ../openmods    # into your fork of this
 
 Then open a pull request. [CONTRIBUTING.md](CONTRIBUTING.md) walks through it, including Codex and what review checks.
 
+If you write mods with a coding agent, give it the **openmods** skill ([skills/openmods](skills/openmods/SKILL.md)): the workflow, where each harness keeps its commands, panels, keys and tools, how to keep a mod small enough to install next to others and survive new releases, and how to publish and update it. It works in Claude Code, Codex, OpenCode and fx:
+
+```sh
+npx skills add shouryamaanjain/openmods --skill openmods -g
+```
+
+Or copy `skills/openmods` into `~/.agents/skills/` (Codex, OpenCode and fx read it there) and link it into `~/.claude/skills/` for Claude Code.
+
 ## Security
 
 A mod is code that runs with your permissions, like anything you build from source. Read it before you install it: `openmods info` lists every file a mod touches, each mod's page on [openmods.dev](https://openmods.dev) shows the diff, and its README has a Permissions section saying what it does with the network, files, commands and the agent's instructions. Because your machine builds from the release plus those patches, what you read is what you run. [SECURITY.md](SECURITY.md) explains how mods are reviewed and how to report a problem.
