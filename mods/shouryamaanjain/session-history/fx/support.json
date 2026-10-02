@@ -1,0 +1,13 @@
+{
+  "$schema": "../../../../schema/support.schema.json",
+  "versions": [
+    {
+      "ref": "v0.0.12",
+      "commit": "4c83d5e23c427790cef64d7e6e008ed25d3fe070",
+      "patches": [
+        "v0.0.12/0001-feat-session-add-project-scoped-session-history-tool.patch"
+      ],
+      "update": 1
+    }
+  ]
+}
