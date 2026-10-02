@@ -100,4 +100,4 @@ Almost every fx feature touches the same few files: `command_specs.zig`, `comman
 - keep the feature itself in new files;
 - don't reformat neighbouring lines.
 
-Two fx mods that each add a slash command still collide on the pinned command counts and order tests, so they can't be installed together on the same release: publishing the first doesn't remove that overlap. Say so in the README (and list the other mod under `conflicts` if you know of it).
+Two fx mods that each add a slash command still collide on the pinned command counts and order tests, so they can't be installed together on the same release: publishing the first doesn't remove that overlap. Say so in the README; OpenMods finds overlapping lines itself and names them, so don't list the other mod under `conflicts` for that.
