@@ -2,7 +2,7 @@
 // on, off and update; an update that leaves the build a running session uses;
 // and a shell startup file OpenMods cannot write.
 import { beforeAll, describe, expect, test } from "bun:test"
-import { chmodSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
+import { chmodSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { cli, createHarness, createMod, greeting, registerHarness, run, sandbox, setGreeting } from "./harness"
 
@@ -118,5 +118,19 @@ describe.skipIf(process.getuid?.() === 0)("a shell startup file that cannot be w
     } finally {
       chmodSync(bashrc, 0o644)
     }
+  })
+})
+
+describe("a shell startup file that is a link to a file not made yet", () => {
+  test("stays a link, and the line goes in the file it points to", async () => {
+    const bashrc = path.join(sb.home, ".bashrc")
+    const dotfiles = path.join(sb.home, "dotfiles")
+    rmSync(bashrc, { force: true })
+    mkdirSync(dotfiles, { recursive: true })
+    symlinkSync(path.join(dotfiles, "bashrc"), bashrc)
+    const r = await run(sb, { path: true, env: { SHELL: "/bin/bash" } }, "on", "fake")
+    expect(r.code, r.all).toBe(0)
+    expect(lstatSync(bashrc).isSymbolicLink()).toBe(true)
+    expect(readFileSync(path.join(dotfiles, "bashrc"), "utf8")).toContain("# openmods")
   })
 })

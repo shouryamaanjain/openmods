@@ -7,7 +7,7 @@
 // The stock install of the harness is never touched.
 
 import { $ } from "bun"
-import { accessSync, constants, cpSync, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
+import { accessSync, constants, cpSync, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
 import { cpus, homedir, tmpdir, totalmem } from "node:os"
 import path from "node:path"
 import { footprint, incompatibility as whyNot, type Footprint } from "./overlap"
@@ -1266,11 +1266,16 @@ function keepBuild(h: Harness, harnessId: string, root: string, stamp: string, p
 // execs a build by its full path, so it is in the program's command line.
 // When ps cannot say, none: the build that ran until now is kept anyway.
 function buildsInUse(builds: string): Set<string> {
-  const r = Bun.spawnSync(["ps", "-A", "-ww", "-o", "command="])
   const used = new Set<string>()
+  let r: ReturnType<typeof Bun.spawnSync>
+  try {
+    r = Bun.spawnSync(["ps", "-A", "-ww", "-o", "command="])
+  } catch {
+    return used // no ps on this machine
+  }
   if (r.exitCode !== 0) return used
   const prefix = path.resolve(builds) + path.sep
-  for (const line of r.stdout.toString().split("\n")) {
+  for (const line of String(r.stdout ?? "").split("\n")) {
     const at = line.indexOf(prefix)
     if (at >= 0) used.add(line.slice(at + prefix.length).split(path.sep)[0]!.split(/\s/)[0]!)
   }
@@ -1723,7 +1728,15 @@ function setupPath(): PathEdit[] {
   const write = (rc: string, text: string, moved: boolean) => {
     try {
       mkdirSync(path.dirname(rc), { recursive: true })
-      const target = existsSync(rc) ? realpathSync(rc) : rc
+      // A link whose target does not exist yet is written through too.
+      const link = (() => {
+        try {
+          return lstatSync(rc).isSymbolicLink()
+        } catch {
+          return false
+        }
+      })()
+      const target = existsSync(rc) ? realpathSync(rc) : link ? path.resolve(path.dirname(rc), readlinkSync(rc)) : rc
       const mode = existsSync(target) ? (accessSync(target, constants.W_OK), statSync(target).mode & 0o7777) : 0o644
       const tmp = `${target}.openmods-${process.pid}`
       try {
@@ -2130,9 +2143,12 @@ function lockOwnerRuns(pid: number, written: number) {
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "EPERM") return false
   }
-  const r = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)])
-  const started = Date.parse(r.stdout.toString().trim())
-  if (r.exitCode !== 0 || Number.isNaN(started)) return Date.now() - written < 12 * 3_600_000
+  let r: ReturnType<typeof Bun.spawnSync> | undefined
+  try {
+    r = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)])
+  } catch {} // no ps on this machine
+  const started = r ? Date.parse(String(r.stdout ?? "").trim()) : Number.NaN
+  if (!r || r.exitCode !== 0 || Number.isNaN(started)) return Date.now() - written < 12 * 3_600_000
   // ps gives the second, and on Linux can be a second early.
   return started <= written + 2000
 }
