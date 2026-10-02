@@ -29,7 +29,8 @@ through codex-rollout's listing and loading code and never write to them.
   sessions, 10,000 turns, 2 MiB of text and 20 hits. `truncated` reports when
   a bound applied.
 - References are cxhr1:<session>:<turn>:<sha256>, binding the project, the
-  session, the turn index and its content; reads re-check all of it.
+  session, the turn index and its content; reads re-check all of it. The
+  scope is checked from a rollout's session meta before the rest is loaded.
 - Output is JSON labelled untrusted_historical_context.
 - Not offered in ephemeral sessions, except ephemeral forks, which keep
   their parent's tools and prompt cache; not offered to sub-agents or with
@@ -306,10 +307,10 @@ index 0000000000000000000000000000000000000000..a58c594c6fb24d49c32de418a3865669
 +impl CoreToolRuntime for SessionHistoryReadHandler {}
 diff --git a/codex-rs/core/src/tools/handlers/session_history/query.rs b/codex-rs/core/src/tools/handlers/session_history/query.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..434daec90692c5821b4786085d5a2a737ce96c1f
+index 0000000000000000000000000000000000000000..6dba50ecad5615d5839fa001c1513989b485bdf0
 --- /dev/null
 +++ b/codex-rs/core/src/tools/handlers/session_history/query.rs
-@@ -0,0 +1,464 @@
+@@ -0,0 +1,471 @@
 +//! Bounded search and exact reads over the saved rollouts of the current project.
 +//!
 +//! The project is the current session's working directory, the same scope `codex resume`
@@ -478,7 +479,7 @@ index 0000000000000000000000000000000000000000..434daec90692c5821b4786085d5a2a73
 +            }
 +            budget_left -= size;
 +        }
-+        let Some(session) = load_scoped_session(scope, &path, Retain::All).await else {
++        let Ok(Some(session)) = load_scoped_session(scope, &path, Retain::All).await else {
 +            truncated = true;
 +            continue;
 +        };
@@ -559,7 +560,7 @@ index 0000000000000000000000000000000000000000..434daec90692c5821b4786085d5a2a73
 +    };
 +    let path = path.ok_or_else(|| UNAVAILABLE.to_string())?;
 +    let session = load_scoped_session(scope, &path, Retain::Only(turn_index))
-+        .await
++        .await?
 +        .filter(|session| session.id == session_id)
 +        .ok_or_else(|| UNAVAILABLE.to_string())?;
 +    let turn = session
@@ -638,18 +639,18 @@ index 0000000000000000000000000000000000000000..434daec90692c5821b4786085d5a2a73
 +
 +/// Loads a rollout whole with Codex's own reader, as resume and fork do, if it belongs to
 +/// this project: the running session, or a saved root session recorded with the project's
-+/// working directory.
++/// working directory. The scope is checked from the rollout's session meta (its head) before
++/// the rest is read. `Ok(None)` means out of scope; `Err` means an in-scope rollout failed to
++/// load.
 +async fn load_scoped_session(
 +    scope: &HistoryScope,
 +    path: &Path,
 +    retain: Retain,
-+) -> Option<ScopedSession> {
-+    let (items, _thread_id, _parse_errors) =
-+        RolloutRecorder::load_rollout_items(path).await.ok()?;
-+    let meta = items.iter().find_map(|item| match item {
-+        RolloutItem::SessionMeta(line) => Some(&line.meta),
-+        _ => None,
-+    })?;
++) -> Result<Option<ScopedSession>, String> {
++    let Ok(head) = codex_rollout::read_session_meta_line(path).await else {
++        return Ok(None);
++    };
++    let meta = head.meta;
 +    let relation = if meta.id == scope.current.id {
 +        Relation::Current
 +    } else {
@@ -659,7 +660,14 @@ index 0000000000000000000000000000000000000000..434daec90692c5821b4786085d5a2a73
 +        && (meta.source.is_non_root_agent()
 +            || !paths_match_after_normalization(&meta.cwd, &scope.project_root))
 +    {
-+        return None;
++        return Ok(None);
++    }
++    let (items, thread_id, _parse_errors) = RolloutRecorder::load_rollout_items(path)
++        .await
++        .map_err(|err| format!("failed to load saved session {}: {err}", meta.id))?;
++    // The file could have been replaced between the two reads.
++    if thread_id != Some(meta.id) {
++        return Ok(None);
 +    }
 +    let mut extractor = TurnExtractor::new(retain);
 +    for item in &items {
@@ -672,11 +680,11 @@ index 0000000000000000000000000000000000000000..434daec90692c5821b4786085d5a2a73
 +        }
 +        extractor.push(item);
 +    }
-+    Some(ScopedSession {
++    Ok(Some(ScopedSession {
 +        id: meta.id,
 +        relation,
 +        turns: extractor.finish(),
-+    })
++    }))
 +}
 +
 +/// `cxhr1:<session id>:<turn index>:<sha256>`, where the digest binds the project, the
@@ -776,10 +784,10 @@ index 0000000000000000000000000000000000000000..434daec90692c5821b4786085d5a2a73
 +mod tests;
 diff --git a/codex-rs/core/src/tools/handlers/session_history/query_tests.rs b/codex-rs/core/src/tools/handlers/session_history/query_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5727b076e29cd95a133f3e1eacacb74d29a13b3b
+index 0000000000000000000000000000000000000000..d86b51cca098a97d6876feb7780abb3b4ade2a3a
 --- /dev/null
 +++ b/codex-rs/core/src/tools/handlers/session_history/query_tests.rs
-@@ -0,0 +1,657 @@
+@@ -0,0 +1,689 @@
 +use std::path::Path;
 +use std::path::PathBuf;
 +
@@ -1436,6 +1444,38 @@ index 0000000000000000000000000000000000000000..5727b076e29cd95a133f3e1eacacb74d
 +        vec![(fixture.current.to_string(), "current".to_string())]
 +    );
 +    assert_eq!(output["truncated"], true);
++}
++
++#[tokio::test]
++async fn foreign_references_are_rejected_before_the_rollout_is_loaded() {
++    let fixture = fixture();
++    let scope = fixture.scope();
++    let mut foreign_scope = fixture.scope();
++    foreign_scope.project_root = fixture.project_b.clone();
++    let reference = reference_for(&foreign_scope, "cobalt", fixture.outside).await;
++    let path = codex_rollout::find_thread_path_by_id_str(
++        &fixture.codex_home,
++        &fixture.outside.to_string(),
++        /*state_db_ctx*/ None,
++    )
++    .await
++    .expect("find rollout")
++    .expect("rollout exists");
++    // Past its session meta, the foreign rollout can no longer be loaded at all.
++    let mut file = std::fs::OpenOptions::new()
++        .append(true)
++        .open(&path)
++        .expect("open rollout");
++    std::io::Write::write_all(&mut file, b"\xff\xfe not utf-8\n").expect("corrupt rollout");
++
++    assert_eq!(
++        read(&scope, &reference, /*include_execution*/ false).await,
++        Err(UNAVAILABLE.to_string())
++    );
++    let in_scope_error = read(&foreign_scope, &reference, /*include_execution*/ false)
++        .await
++        .expect_err("the corrupt rollout fails to load in its own project");
++    assert!(in_scope_error.starts_with("failed to load saved session"));
 +}
 diff --git a/codex-rs/core/src/tools/handlers/session_history/score.rs b/codex-rs/core/src/tools/handlers/session_history/score.rs
 new file mode 100644
