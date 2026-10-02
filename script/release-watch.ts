@@ -34,7 +34,9 @@ import { latestRelease } from "../cli/src/latest-release"
 // "" when it cannot be told.
 async function tagCommit(repo: string, tag: string): Promise<string> {
   if (!/^[\w.+-]+$/.test(tag)) return ""
-  const r = await $`git ls-remote --tags ${repo} ${`refs/tags/${tag}`} ${`refs/tags/${tag}^{}`}`.env({ ...process.env, GIT_TERMINAL_PROMPT: "0" }).nothrow().quiet()
+  // At most a minute: a remote that stalls leaves the mod not checked, and
+  // the others go on.
+  const r = Bun.spawnSync(["git", "ls-remote", "--tags", repo, `refs/tags/${tag}`, `refs/tags/${tag}^{}`], { env: { ...process.env, GIT_TERMINAL_PROMPT: "0" }, timeout: 60_000 })
   if (r.exitCode !== 0) return ""
   const lines = r.stdout.toString().split("\n").map((l) => l.split("\t"))
   return (lines.find(([, n]) => n === `refs/tags/${tag}^{}`) ?? lines.find(([, n]) => n === `refs/tags/${tag}`))?.[0] ?? ""

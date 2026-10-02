@@ -1994,6 +1994,12 @@ async function rebuild(reg: string, harnessId: string, all: Mod[], off: string[]
   const dev = devOf(harnessId)
   if (dev) await ask(`\`${h.binary}\` runs your clone at ${pretty(dev.path)} (openmods dev). This switches it to the modded build. Go ahead?`)
   const mods = set.map((m) => at(m, release)!)
+  // One build, one release: every mod's version for it must pin the same
+  // commit, the release's own (checked against its tag before the build).
+  // A version that pins another, a local mod's say, is not built.
+  const odd = mods.find((m) => m.upstream.commit !== mods[0]!.upstream.commit)
+  if (odd)
+    fail(`${odd.id} pins ${h.name} ${rel(release)} as commit ${odd.upstream.commit.slice(0, 12)}, but ${mods[0]!.id} pins ${mods[0]!.upstream.commit.slice(0, 12)}; a release has one commit, so nothing was changed. Pack ${odd.id} again on the release's tag.`)
   for (const m of mods) {
     const r = revocationOf(reg, m.id, m.update)
     if (r) fail(`${m.id} was removed from OpenMods: ${r.reason} It cannot be built. \`openmods uninstall ${m.id}\` removes it.`)

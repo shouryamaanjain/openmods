@@ -25,7 +25,10 @@ const tagCache = new Map<string, Map<string, string> | string>()
 function tagsOf(repo: string): Map<string, string> | string {
   const known = tagCache.get(repo)
   if (known) return known
-  const r = Bun.spawnSync(["git", "ls-remote", "--tags", repo], { env: { ...process.env, GIT_TERMINAL_PROMPT: "0" }, timeout: 120_000 })
+  // Asked twice: a remote that fails once should not fail an unrelated change.
+  const ask = () => Bun.spawnSync(["git", "ls-remote", "--tags", repo], { env: { ...process.env, GIT_TERMINAL_PROMPT: "0" }, timeout: 120_000 })
+  let r = ask()
+  if (r.exitCode !== 0) r = ask()
   let tags: Map<string, string> | string
   if (r.exitCode !== 0) tags = `could not read the tags of ${repo} to check its commit (${r.stderr.toString().trim().split("\n").at(-1) || `git exited with ${r.exitCode}`})`
   else {

@@ -128,6 +128,19 @@ describe("a mod's pinned commit", () => {
       writeFileSync(file, before)
     }
   })
+  test("is the same for every mod in a build: a second mod pinning another commit for that release is not built", async () => {
+    const sup = JSON.parse(readFileSync(path.join(friendlyDir(), "support.json"), "utf8"))
+    const ref: string = sup.versions[0].ref
+    await createMod(sb, "second", addFile("SECOND.md", "second\n"), { base: ref })
+    const file = path.join(sb.reg, "mods", "t", "second", "fake", "support.json")
+    const second = JSON.parse(readFileSync(file, "utf8"))
+    second.versions[0].commit = (await $`git -C ${sb.harness} rev-parse fork`.text()).trim()
+    writeFileSync(file, JSON.stringify(second, null, 2))
+    const r = await cli(sb, "install", "t/friendly", "t/second")
+    rmSync(path.join(sb.reg, "mods", "t", "second"), { recursive: true, force: true })
+    expect(r.code).not.toBe(0)
+    expect(r.all).toContain("a release has one commit, so nothing was changed")
+  })
 })
 
 describe("a harness definition", () => {
