@@ -78,8 +78,11 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             ~/.openmods/cache/bun
+            ~/.openmods/cache/zig
+            ~/.openmods/toolchains
             work/${{ matrix.harness }}/codex-rs/target
             work/${{ matrix.harness }}/node_modules
+            work/${{ matrix.harness }}/.zig-cache
           key: typecheck-${{ matrix.harness }}-${{ matrix.ref }}
           restore-keys: |
             typecheck-${{ matrix.harness }}-

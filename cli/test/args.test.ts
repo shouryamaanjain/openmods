@@ -113,7 +113,7 @@ describe("a harness's stockWhen", () => {
       const r = await run("agents")
       expect(r.code).toBe(127)
       expect(r.out).toBe("")
-      expect(r.err).toContain("this runs your stock Fake, which was not found")
+      expect(r.err).toContain("this is for your stock Fake, which was not found")
       expect((await run("hi")).out).toBe("args:[hi]")
     } finally {
       renameSync(`${stock}.away`, stock)
@@ -293,6 +293,52 @@ describe("a harness's sameRelease", () => {
       writeFileSync(stock(), before, { mode: 0o755 })
       set(undefined)
       await cli(sb, "status")
+    }
+  })
+})
+
+describe("a harness's stockMarker", () => {
+  const stock = () => path.join(sb.home, ".greet", "bin", "greet")
+  const setMarker = (marker: string | undefined) => {
+    const { stockMarker: _m, ...rest } = JSON.parse(readFileSync(definition, "utf8"))
+    writeFileSync(definition, JSON.stringify(marker ? { ...rest, stockMarker: marker } : rest))
+  }
+  // Another program of the same name, first on PATH.
+  const other = path.join(sb.T, "other-bin")
+  const run = async (...a: string[]) => {
+    const r = await $`sh ${path.join(sb.om, "bin", "greet")} ${a}`.env({ ...process.env, PATH: `${other}:${process.env.PATH}` }).nothrow().quiet()
+    return { code: r.exitCode, out: r.stdout.toString().trim(), err: r.stderr.toString() }
+  }
+  let before = ""
+  test("only a program carrying it is the stock harness: a namesake first on PATH is passed over", async () => {
+    before = readFileSync(stock(), "utf8")
+    mkdirSync(other, { recursive: true })
+    writeFileSync(path.join(other, "greet"), "#!/bin/sh\necho a namesake\n", { mode: 0o755 })
+    writeFileSync(stock(), "#!/bin/sh\n# made by greet.example\necho stock greet\n", { mode: 0o755 })
+    setMarker("greet\\.example")
+    expect((await cli(sb, "off")).code).toBe(0)
+    expect((await run()).out).toBe("stock greet")
+  })
+  test("without it, nothing is the stock harness", async () => {
+    writeFileSync(stock(), "#!/bin/sh\necho stock greet\n", { mode: 0o755 })
+    const r = await run()
+    expect(r.code).toBe(127)
+    expect(r.err).toContain("your stock Fake was not found")
+    expect((await cli(sb, "status")).out).not.toContain(".greet/bin/greet")
+  })
+  test("setup puts no launcher in front of a namesake", async () => {
+    setMarker("greet\\.example")
+    const launcher = path.join(sb.om, "bin", "greet")
+    const kept = readFileSync(launcher, "utf8")
+    rmSync(launcher)
+    try {
+      await cli(sb, "setup")
+      expect(existsSync(launcher)).toBe(false)
+    } finally {
+      writeFileSync(launcher, kept, { mode: 0o755 })
+      writeFileSync(stock(), before, { mode: 0o755 })
+      setMarker(undefined)
+      expect((await cli(sb, "on")).code).toBe(0)
     }
   })
 })

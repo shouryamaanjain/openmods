@@ -1,0 +1,72 @@
+{
+  "$schema": "../schema/harness.schema.json",
+  "id": "fx",
+  "name": "fx",
+  "repo": "https://github.com/vercel-labs/fx",
+  "homepage": "https://fx.sh",
+  "license": "Apache-2.0",
+  "language": "Zig",
+  "binary": "fx",
+  "installer": {
+    "command": "curl -fsSL https://fx.sh/setup.sh | bash",
+    "paths": [
+      "~/.local/bin"
+    ]
+  },
+  "stockMarker": "releases\\.fx\\.sh",
+  "requirements": [
+    {
+      "command": "git",
+      "hint": "git",
+      "name": "git",
+      "packages": {
+        "apt": "git",
+        "dnf": "git",
+        "brew": "git"
+      }
+    },
+    {
+      "command": "xz",
+      "os": "linux",
+      "hint": "xz, to unpack the Zig release this fx release builds with",
+      "name": "xz",
+      "packages": {
+        "apt": "xz-utils",
+        "dnf": "xz"
+      }
+    }
+  ],
+  "install": "zig build --fetch",
+  "typecheck": "zig build -Doptimize=Debug --prefix .zig-cache/openmods-check $([ \"$(uname -s)\" = Linux ] && echo \"-Dtarget=$(uname -m)-linux\")",
+  "build": "zig build -Doptimize=ReleaseSafe $([ \"$(uname -s)\" = Linux ] && echo \"-Dtarget=$(uname -m)-linux\")",
+  "artifact": "zig-out/bin/fx",
+  "dev": "R={root}; (cd \"$R\" && zig build -Doptimize=Debug --prefix \"$R/.zig-cache/openmods-dev\") || exit 1; exec \"$R/.zig-cache/openmods-dev/bin/fx\"",
+  "env": {
+    "FX_AUTO_UPGRADE": "0"
+  },
+  "stockWhen": [
+    "upgrade"
+  ],
+  "valueOptions": [
+    "--context-limit",
+    "--add-dir",
+    "--provider",
+    "--provider-order",
+    "--model",
+    "--effort"
+  ],
+  "recipe": [
+    {
+      "file": "build.zig.zon"
+    },
+    {
+      "file": "build.zig",
+      "lines": "standardOptimizeOption|standardTargetOptions|b\\.option\\(|\\.name = \"fx\"|installArtifact\\(exe\\)|readAppVersion|addExecutable\\("
+    },
+    {
+      "file": ".github/workflows/release.yml",
+      "lines": "version: \"|zig build"
+    }
+  ],
+  "releaseTagPattern": "v[0-9]*"
+}

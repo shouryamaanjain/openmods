@@ -13,10 +13,10 @@ on:
   workflow_dispatch:
     inputs:
       harness:
-        description: "Harness id, e.g. opencode or codex"
+        description: "Harness id, e.g. opencode, codex or fx"
         required: true
       ref:
-        description: "Release tag to build, e.g. v1.18.31 or rust-v0.155.1"
+        description: "Release tag to build, e.g. v1.18.31, rust-v0.155.1 or v0.0.12"
         required: true
       record:
         description: "On success, record the recipe as verified at this release (stock builds only)"
