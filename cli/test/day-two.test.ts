@@ -101,8 +101,10 @@ describe("an update", () => {
   })
 })
 
-// (Root writes any file, so there the startup file cannot be made read-only.)
-describe.skipIf(process.getuid?.() === 0)("a shell startup file that cannot be written", () => {
+// bash's startup files as on Linux (~/.bashrc, then the login file); on macOS
+// bash reads ~/.bash_profile. (Root writes any file, so there the startup file
+// cannot be made read-only.)
+describe.skipIf(process.platform !== "linux" || process.getuid?.() === 0)("a shell startup file that cannot be written", () => {
   test("is left alone, and the line to add is shown, without failing the command", async () => {
     const bashrc = path.join(sb.home, ".bashrc")
     writeFileSync(bashrc, "# managed by another tool\n")
@@ -121,7 +123,7 @@ describe.skipIf(process.getuid?.() === 0)("a shell startup file that cannot be w
   })
 })
 
-describe("a shell startup file that is a link to a file not made yet", () => {
+describe.skipIf(process.platform !== "linux")("a shell startup file that is a link to a file not made yet", () => {
   test("stays a link, and the line goes in the file it points to", async () => {
     const bashrc = path.join(sb.home, ".bashrc")
     const dotfiles = path.join(sb.home, "dotfiles")
