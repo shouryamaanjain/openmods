@@ -1,0 +1,19 @@
+{
+  "$schema": "../../../schema/mod.schema.json",
+  "owner": "shouryamaanjain",
+  "name": "session-history",
+  "description": "Adds session_history_search and session_history_read: the agent can find and reread earlier turns from this project's saved sessions, after compaction or from other sessions.",
+  "author": {
+    "name": "Shouryamaan Jain",
+    "github": "shouryamaanjain"
+  },
+  "maintainers": [
+    "shouryamaanjain"
+  ],
+  "license": "Apache-2.0",
+  "tags": [
+    "tools",
+    "sessions",
+    "memory"
+  ]
+}

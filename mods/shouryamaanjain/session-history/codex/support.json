@@ -1,0 +1,13 @@
+{
+  "$schema": "../../../../schema/support.schema.json",
+  "versions": [
+    {
+      "ref": "rust-v0.160.0",
+      "commit": "a956835d020762cb2b570053af06f643a11c0ecc",
+      "patches": [
+        "rust-v0.160.0/0001-feat-core-add-session_history_search-and-session_his.patch"
+      ],
+      "update": 1
+    }
+  ]
+}
