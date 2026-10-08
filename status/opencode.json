@@ -1,5 +1,5 @@
 {
-  "tested": "v2.0.25",
+  "tested": "v2.0.26",
   "from": "v2.0.24",
   "recipe": "changed",
   "changes": [
@@ -91,5 +91,5 @@
     "packages/script/src/index.ts: +  if (/^[a-zA-Z0-9]/.test(channel)) return channel",
     "packages/script/src/index.ts: +  return `branch-${channel}`"
   ],
-  "checked": "2026-10-08T09:28:13.621Z"
+  "checked": "2026-10-08T20:25:06.476Z"
 }
