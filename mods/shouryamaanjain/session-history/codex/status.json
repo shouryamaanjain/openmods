@@ -1,7 +1,7 @@
 {
-  "tested": "rust-v0.162.0",
+  "tested": "rust-v0.162.1",
   "supports": "rust-v0.161.0",
   "ok": false,
   "error": "error: Failed to merge in the changes.\nhint: Use 'git am --show-current-patch=diff' to see the failed patch\nhint: When you have resolved this problem, run \"git am --continue\".\nhint: If you prefer to skip this patch, run \"git am --skip\" instead.\nhint: To restore the original branch and stop patching, run \"git am --abort\".\nhint: Disable this message with \"git config set advice.mergeConflict false\"\nPatch failed at 0001 feat(core): add session_history_search and session_history_read tools",
-  "checked": "2026-10-08T19:27:50.992Z"
+  "checked": "2026-10-09T20:30:09.751Z"
 }

@@ -1,6 +1,6 @@
 {
-  "tested": "rust-v0.162.0",
-  "from": "rust-v0.161.0",
+  "tested": "rust-v0.162.1",
+  "from": "rust-v0.162.0",
   "recipe": "unchanged",
-  "checked": "2026-10-08T19:27:43.362Z"
+  "checked": "2026-10-09T20:30:08.269Z"
 }
