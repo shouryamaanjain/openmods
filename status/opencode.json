@@ -1,9 +1,12 @@
 {
-  "tested": "v2.0.27",
+  "tested": "v2.0.28",
   "from": "v2.0.24",
   "recipe": "changed",
   "changes": [
+    "packages/cli/script/build.ts: +import { embed } from \"@opencode/script/highlights\"",
     "packages/cli/script/build.ts: +import { discoverPluginRuntimeSpecifiers, pluginRuntimeLoaderCode } from \"@opencode/plugin/runtime-modules\"",
+    "packages/cli/script/build.ts: +import { NativeArch } from \"../../../script/native-arch\"",
+    "packages/cli/script/build.ts: +const highlights = Script.preview ? undefined : embed(process.env.OPENCODE_RELEASE_NOTES)",
     "packages/cli/script/build.ts: -const appArchive = await buildAppArchive(Script.channel, { skipBuild: skipWebUi })",
     "packages/cli/script/build.ts: +const appArchive = path.join(dir, \".cache\", \"bun-app-archive.bin\")",
     "packages/cli/script/build.ts: +await Bun.write(appArchive, await buildAppArchive(Script.channel, { skipBuild: skipWebUi }))",
@@ -45,6 +48,8 @@
     "packages/cli/script/build.ts: +      pluginRuntimePlugin,",
     "packages/cli/script/build.ts: +      simulationGraphPlugin,",
     "packages/cli/script/build.ts: +    ],",
+    "packages/cli/script/build.ts: +      ...(highlights ? { OPENCODE_RELEASE_HIGHLIGHTS: JSON.stringify(highlights) } : {}),",
+    "packages/cli/script/build.ts: +  await NativeArch.verify(path.join(outdir, name, \"bin\", item.os === \"win32\" ? `${binary}.exe` : binary), item.arch)",
     "packages/cli/script/app-assets.ts: -import { brotliCompressSync, constants } from \"node:zlib\"",
     "packages/cli/script/app-assets.ts: +import { promisify } from \"node:util\"",
     "packages/cli/script/app-assets.ts: +import { brotliCompress, constants } from \"node:zlib\"",
@@ -91,5 +96,5 @@
     "packages/script/src/index.ts: +  if (/^[a-zA-Z0-9]/.test(channel)) return channel",
     "packages/script/src/index.ts: +  return `branch-${channel}`"
   ],
-  "checked": "2026-10-12T04:34:40.159Z"
+  "checked": "2026-10-13T08:35:59.006Z"
 }
