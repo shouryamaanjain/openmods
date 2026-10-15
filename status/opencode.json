@@ -1,5 +1,5 @@
 {
-  "tested": "v2.0.29",
+  "tested": "v2.0.30",
   "from": "v2.0.24",
   "recipe": "changed",
   "changes": [
@@ -94,7 +94,10 @@
     "packages/script/src/index.ts: +  if (!branch) return \"detached\"",
     "packages/script/src/index.ts: +  const channel = branch.replace(/[^a-zA-Z0-9._-]/g, \"-\")",
     "packages/script/src/index.ts: +  if (/^[a-zA-Z0-9]/.test(channel)) return channel",
-    "packages/script/src/index.ts: +  return `branch-${channel}`"
+    "packages/script/src/index.ts: +  return `branch-${channel}`",
+    "turbo.json: -    \"@opencode/enterprise#typecheck\": {",
+    "turbo.json: -      \"dependsOn\": [\"@opencode/core#typecheck\"]",
+    "turbo.json: -    },"
   ],
-  "checked": "2026-10-14T09:25:07.484Z"
+  "checked": "2026-10-15T20:19:59.490Z"
 }
