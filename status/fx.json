@@ -1,6 +1,14 @@
 {
-  "tested": "v0.0.13",
-  "from": "v0.0.12",
-  "recipe": "unchanged",
-  "checked": "2026-10-04T22:22:38.439Z"
+  "tested": "v0.0.14",
+  "from": "v0.0.13",
+  "recipe": "changed",
+  "changes": [
+    "build.zig.zon: -    .minimum_zig_version = \"0.16.0\",",
+    "build.zig.zon: +    .minimum_zig_version = \"0.17.0\",",
+    ".github/workflows/release.yml: -version: \"0.16.0\"",
+    ".github/workflows/release.yml: -version: \"0.16.0\"",
+    ".github/workflows/release.yml: +version: \"0.17.0\"",
+    ".github/workflows/release.yml: +version: \"0.17.0\""
+  ],
+  "checked": "2026-10-16T08:28:34.822Z"
 }
