@@ -1,5 +1,5 @@
 {
-  "tested": "v2.1.2",
+  "tested": "v2.1.3",
   "from": "v2.0.24",
   "recipe": "changed",
   "changes": [
@@ -95,6 +95,8 @@
     "packages/script/src/index.ts: +  const channel = branch.replace(/[^a-zA-Z0-9._-]/g, \"-\")",
     "packages/script/src/index.ts: +  if (/^[a-zA-Z0-9]/.test(channel)) return channel",
     "packages/script/src/index.ts: +  return `branch-${channel}`",
+    "package.json: -\"packageManager\": \"bun@1.4.2\"",
+    "package.json: +\"packageManager\": \"bun@1.4.4\"",
     "turbo.json: -    \".github/workflows/test.yml\"",
     "turbo.json: +    \".github/workflows/test.yml\",",
     "turbo.json: +    \"package.json\"",
@@ -155,5 +157,5 @@
     "turbo.json: -      \"outputs\": []",
     "turbo.json: -    },"
   ],
-  "checked": "2026-10-21T04:25:44.425Z"
+  "checked": "2026-10-22T13:24:52.342Z"
 }
