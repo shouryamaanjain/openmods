@@ -1,8 +1,11 @@
 {
-  "tested": "rust-v0.163.0",
+  "tested": "rust-v0.164.0",
   "from": "rust-v0.162.1",
   "recipe": "changed",
   "changes": [
+    "codex-rs/rust-toolchain.toml: -channel = \"1.95.0\"",
+    "codex-rs/rust-toolchain.toml: +channel = \"1.99.1\"",
+    "codex-rs/cli/Cargo.toml: +path = \"tests/app_server_daemon/package.rs\"",
     "scripts/codex_package/cli.py: +from .symbols import strip_binary",
     "scripts/codex_package/cli.py: -from .zsh import resolve_zsh_bin",
     "scripts/codex_package/cli.py: +    return create_parser().parse_args()",
@@ -67,5 +70,5 @@
     "scripts/codex_package/cli.py: +def archive_package(package_dir: Path, args: argparse.Namespace) -> None:",
     "scripts/codex_package/cli.py: -    return 0"
   ],
-  "checked": "2026-10-15T22:20:47.503Z"
+  "checked": "2026-10-23T05:21:34.229Z"
 }
