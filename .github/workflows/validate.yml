@@ -9,10 +9,10 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: latest
+          bun-version: 1.4.5
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun run validate
@@ -24,12 +24,12 @@ jobs:
     outputs:
       mods: ${{ steps.list.outputs.mods }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: latest
+          bun-version: 1.4.5
       # Each mod version the change touches, and every mod's newest version
       # for a CLI or harness change
       # (script/changed-versions.ts). The selection runs as the base branch
@@ -68,17 +68,17 @@ jobs:
       - name: Install git and curl
         if: ${{ (endsWith(matrix.mod, '/opencode') || endsWith(matrix.mod, '/fx')) }}
         run: apt-get update -qq && apt-get install -y -qq git curl ca-certificates xz-utils >/dev/null
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Bun, as install.sh sets it up
         if: ${{ (endsWith(matrix.mod, '/opencode') || endsWith(matrix.mod, '/fx')) }}
         run: |
           v=$(sed -n 's/^BUN_VERSION=//p' install.sh)
           sh cli/get-bun.sh "$v" "$HOME/.openmods/toolchains/bun-$v"
           echo "$HOME/.openmods/toolchains/bun-$v/bin" >> "$GITHUB_PATH"
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         if: ${{ !(endsWith(matrix.mod, '/opencode') || endsWith(matrix.mod, '/fx')) }}
         with:
-          bun-version: latest
+          bun-version: 1.4.5
       - name: Free disk space
         if: ${{ endsWith(matrix.mod, '/codex') }}
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup || true
@@ -90,7 +90,7 @@ jobs:
         env:
           MOD: ${{ matrix.mod }}
         run: echo "id=$(echo "$MOD" | cut -d/ -f4)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
