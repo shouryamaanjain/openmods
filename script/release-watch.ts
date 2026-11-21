@@ -187,6 +187,7 @@ async function closeFixed() {
 }
 
 async function plan() {
+  const planFile = has("plan") ? flag("plan") || fail("--plan needs a file") : undefined
   await closeFixed()
   const latest: Record<string, string> = {}
   const matrix: { mod: string; harness: string; ref: string }[] = []
@@ -232,7 +233,6 @@ async function plan() {
   // silently drops an output it takes for a secret, such as a build script's
   // `Authorization: Bearer ${token}`. Outputs carry only what CI must branch on.
   const record = recipe.filter((r) => r.state !== "held")
-  const planFile = flag("plan")
   if (planFile) {
     mkdirSync(path.dirname(path.resolve(planFile)), { recursive: true })
     writeJson(planFile, { matrix, recipe: record })
@@ -246,7 +246,7 @@ type Planned = { mod: string; harness: string; ref: string }
 
 // Stops the run before anything is recorded.
 function fail(message: string): never {
-  console.error(`release-watch apply: ${message}`)
+  console.error(`release-watch ${args[0]}: ${message}`)
   process.exit(1)
 }
 
@@ -263,8 +263,8 @@ function readPlan(): { recipe: RecipeCheck[]; matrix: Planned[] } {
       fail(`${what} is not JSON: ${e instanceof Error ? e.message : e}`)
     }
   }
-  const file = flag("plan")
-  if (file) {
+  if (has("plan")) {
+    const file = flag("plan") || fail("--plan needs a file")
     if (!existsSync(file)) fail(`the plan ${file} is missing: the plan job's artifact did not arrive`)
     const plan = parse(readFileSync(file, "utf8"), `the plan ${file}`)
     if (!Array.isArray(plan?.recipe) || !Array.isArray(plan?.matrix)) fail(`the plan ${file} has no recipe and matrix lists`)

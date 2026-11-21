@@ -126,6 +126,7 @@ describe("the plan, from the plan job to apply", () => {
       [["--plan", partial], "has no recipe and matrix lists"],
       [["--recipe", ""], "--recipe is empty"],
       [["--recipe", "[{"], "--recipe is not JSON"],
+      [["--plan", ""], "--plan needs a file"],
     ]
     for (const [a, message] of cases) {
       const r = await watch("apply", path.join(sb.T, "results-bad"), ...a)
@@ -134,5 +135,8 @@ describe("the plan, from the plan job to apply", () => {
       expect(r.err).toContain(message)
     }
     expect(readFileSync(path.join(sb.reg, "status", "fake.json"), "utf8")).toBe(before)
+    const p = await watch("plan", "--ref", "v1.5.0", "--plan", "")
+    expect(p.code).toBe(1)
+    expect(p.err).toContain("release-watch plan: --plan needs a file")
   })
 })
