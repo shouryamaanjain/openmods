@@ -1,17 +1,6 @@
 {
   "tested": "v0.0.17",
   "from": "v0.0.13",
-  "recipe": "changed",
-  "changes": [
-    "build.zig.zon: -    .minimum_zig_version = \"0.16.0\",",
-    "build.zig.zon: +    .minimum_zig_version = \"0.17.0\",",
-    "build.zig: -const mcp_dispatcher_e2e = b.addExecutable(.{",
-    "build.zig: +const sanitize_thread = b.option(",
-    "build.zig: +const fuzz_target = b.option(",
-    ".github/workflows/release.yml: -version: \"0.16.0\"",
-    ".github/workflows/release.yml: -run: zig build -Doptimize=ReleaseSafe -Dtarget=${{ matrix.target }}",
-    ".github/workflows/release.yml: -version: \"0.16.0\"",
-    ".github/workflows/release.yml: +version: \"0.17.0\""
-  ],
-  "checked": "2026-11-21T17:11:42.021Z"
+  "recipe": "verified",
+  "checked": "2026-11-21T23:32:50.163Z"
 }
