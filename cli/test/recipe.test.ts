@@ -81,3 +81,58 @@ describe("a release", () => {
     expect(j.recipe[0]!.changes).toEqual([`package.json: -"packageManager": "pnpm@9.0.0"`, `package.json: +"packageManager": "pnpm@10.0.0"`])
   })
 })
+
+// In CI the plan job hands apply its plan as a file. A job output would not
+// do: GitHub drops an output it takes for a secret, and build scripts hold
+// lines like this one.
+describe("the plan, from the plan job to apply", () => {
+  const secretish = "Authorization: `Bearer ${token}`"
+  const planFile = path.join(sb.T, "plan", "plan.json")
+  const outputs = path.join(sb.T, "github-output")
+  const watch = async (...a: string[]) => {
+    const p = Bun.spawn(["bun", WATCH, ...a, "--registry", sb.reg], { cwd: sb.reg, env: { ...process.env, GITHUB_OUTPUT: outputs }, stdout: "pipe", stderr: "pipe" })
+    const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()])
+    return { code: await p.exited, out, err }
+  }
+
+  test("goes as a file, and the job outputs carry no recipe change", async () => {
+    await release(sb, "v1.5.0", (dir) => writeFileSync(path.join(dir, "build.cfg"), `compiler=2\n${secretish}\n`))
+    writeFileSync(outputs, "")
+    const p = await watch("plan", "--ref", "v1.5.0", "--plan", planFile)
+    expect(p.code, p.err).toBe(0)
+    const written = JSON.parse(readFileSync(planFile, "utf8"))
+    expect(written.matrix).toEqual([])
+    expect(written.recipe).toMatchObject([{ state: "changed", to: "v1.5.0" }])
+    expect(written.recipe[0].changes).toContain(`build.cfg: +${secretish}`)
+    const out = readFileSync(outputs, "utf8")
+    expect(out).toContain("matrix=[]\n")
+    expect(out).toContain("recipes=1\n")
+    expect(out).not.toContain("Bearer")
+    const r = await watch("apply", path.join(sb.T, "results-file"), "--plan", planFile)
+    expect(r.code, r.err).toBe(0)
+    expect(status()).toMatchObject({ tested: "v1.5.0", recipe: "changed" })
+    expect(status().changes).toContain(`build.cfg: +${secretish}`)
+  })
+
+  test("apply stops, recording nothing, when the plan is missing, empty or not a plan", async () => {
+    const before = readFileSync(path.join(sb.reg, "status", "fake.json"), "utf8")
+    const empty = path.join(sb.T, "plan", "empty.json")
+    const partial = path.join(sb.T, "plan", "partial.json")
+    writeFileSync(empty, "")
+    writeFileSync(partial, JSON.stringify({ matrix: [] }))
+    const cases: [string[], string][] = [
+      [["--plan", path.join(sb.T, "plan", "absent.json")], "is missing"],
+      [["--plan", empty], "is empty"],
+      [["--plan", partial], "has no recipe and matrix lists"],
+      [["--recipe", ""], "--recipe is empty"],
+      [["--recipe", "[{"], "--recipe is not JSON"],
+    ]
+    for (const [a, message] of cases) {
+      const r = await watch("apply", path.join(sb.T, "results-bad"), ...a)
+      expect(r.code, a.join(" ")).toBe(1)
+      expect(r.err).toContain("release-watch apply: ")
+      expect(r.err).toContain(message)
+    }
+    expect(readFileSync(path.join(sb.reg, "status", "fake.json"), "utf8")).toBe(before)
+  })
+})

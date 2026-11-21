@@ -39,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
-      recipe: ${{ steps.plan.outputs.recipe }}
+      recipes: ${{ steps.plan.outputs.recipes }}
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -51,7 +51,15 @@ jobs:
           REF: ${{ inputs.ref }}
           HARNESS: ${{ inputs.harness }}
         run: |
-          bun script/release-watch.ts plan --issues ${REF:+--ref "$REF"} ${HARNESS:+--harness "$HARNESS"}
+          bun script/release-watch.ts plan --issues --plan plan/plan.json ${REF:+--ref "$REF"} ${HARNESS:+--harness "$HARNESS"}
+      # The plan reaches apply as an artifact, not a job output: its recipe
+      # changes are upstream text, and GitHub drops an output that looks like
+      # a secret (OpenCode's build script has `Authorization: Bearer ${token}`).
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plan
+          path: plan/plan.json
+          if-no-files-found: error
 
   check:
     name: ${{ matrix.mod }} on ${{ matrix.ref }}
@@ -116,7 +124,7 @@ jobs:
     runs-on: ubuntu-latest
     # plan must be listed: a job can only read outputs of the jobs it needs.
     needs: [plan, check]
-    if: ${{ always() && needs.plan.result == 'success' && (needs.plan.outputs.matrix != '[]' || needs.plan.outputs.recipe != '[]') }}
+    if: ${{ always() && needs.plan.result == 'success' && (needs.plan.outputs.matrix != '[]' || needs.plan.outputs.recipes != '0') }}
     steps:
       # Pushes with the release bot's deploy key: main requires a reviewed pull
       # request, and this key is the one bypass besides maintainers. The bot
@@ -129,15 +137,17 @@ jobs:
           bun-version: latest
       - uses: actions/download-artifact@v4
         with:
+          name: plan
+          path: plan
+      - uses: actions/download-artifact@v4
+        with:
           pattern: result-*
           merge-multiple: true
           path: results
       - name: Bump what passed, mark what failed, hold changed recipes, tell maintainers
         env:
           GH_TOKEN: ${{ github.token }}
-          RECIPE: ${{ needs.plan.outputs.recipe }}
-          MATRIX: ${{ needs.plan.outputs.matrix }}
-        run: bun script/release-watch.ts apply results --issues
+        run: bun script/release-watch.ts apply results --plan plan/plan.json --issues
       - name: Commit
         run: |
           git config user.name "openmods bot"

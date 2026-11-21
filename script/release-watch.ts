@@ -1,8 +1,10 @@
 #!/usr/bin/env bun
 // Release watch, the registry's reaction to a harness release.
 //
-//   plan   [--harness <id>] [--ref <tag>]    what to check against which release (JSON)
-//   apply  <results-dir> [--recipe <json>] [--issues]
+//   plan   [--harness <id>] [--ref <tag>] [--plan <file>]
+//                                            what to check against which release (JSON),
+//                                            also written to <file> for apply
+//   apply  <results-dir> [--plan <file>] [--issues]
 //                                            bump the mods that passed, mark the ones
 //                                            that failed, hold a harness whose recipe
 //                                            changed, open or update issues
@@ -225,9 +227,56 @@ async function plan() {
   }
   const out = { latest, matrix, recipe }
   console.log(JSON.stringify(out, null, 2))
-  if (process.env.GITHUB_OUTPUT) {
-    writeFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify(matrix)}\nrecipe=${JSON.stringify(recipe.filter((r) => r.state !== "held"))}\nlatest=${JSON.stringify(latest)}\n`, { flag: "a" })
+  // What apply records goes to it as a file (CI hands it over as an artifact),
+  // never as a job output: the recipe changes are upstream text, and GitHub
+  // silently drops an output it takes for a secret, such as a build script's
+  // `Authorization: Bearer ${token}`. Outputs carry only what CI must branch on.
+  const record = recipe.filter((r) => r.state !== "held")
+  const planFile = flag("plan")
+  if (planFile) {
+    mkdirSync(path.dirname(path.resolve(planFile)), { recursive: true })
+    writeJson(planFile, { matrix, recipe: record })
   }
+  if (process.env.GITHUB_OUTPUT) {
+    writeFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify(matrix)}\nrecipes=${record.length}\nlatest=${JSON.stringify(latest)}\n`, { flag: "a" })
+  }
+}
+
+type Planned = { mod: string; harness: string; ref: string }
+
+// Stops the run before anything is recorded.
+function fail(message: string): never {
+  console.error(`release-watch apply: ${message}`)
+  process.exit(1)
+}
+
+// What the plan asked for: the file `plan --plan` wrote, or --recipe and
+// --matrix given as JSON; neither, and nothing was planned. One that was given
+// but is missing, empty or not a plan stops the run: read as nothing planned,
+// it would quietly record nothing, hour after hour.
+function readPlan(): { recipe: RecipeCheck[]; matrix: Planned[] } {
+  const parse = (text: string, what: string) => {
+    if (!text.trim()) fail(`${what} is empty`)
+    try {
+      return JSON.parse(text)
+    } catch (e) {
+      fail(`${what} is not JSON: ${e instanceof Error ? e.message : e}`)
+    }
+  }
+  const file = flag("plan")
+  if (file) {
+    if (!existsSync(file)) fail(`the plan ${file} is missing: the plan job's artifact did not arrive`)
+    const plan = parse(readFileSync(file, "utf8"), `the plan ${file}`)
+    if (!Array.isArray(plan?.recipe) || !Array.isArray(plan?.matrix)) fail(`the plan ${file} has no recipe and matrix lists`)
+    return plan
+  }
+  const list = (k: string) => {
+    if (!has(k)) return []
+    const value = parse(flag(k) ?? "", `--${k}`)
+    if (!Array.isArray(value)) fail(`--${k} is not a list`)
+    return value
+  }
+  return { recipe: list("recipe"), matrix: list("matrix") }
 }
 
 function maintainersOf(mod: any): string[] {
@@ -361,9 +410,8 @@ async function uncheckedIssue(id: string, name: string, ref: string, error: stri
 
 async function apply() {
   const dir = args[1] ?? "results"
-  const recipe: RecipeCheck[] = JSON.parse(flag("recipe") ?? process.env.RECIPE ?? "[]")
   // What the plan asked to check, so a check that left no result is known.
-  const planned: { mod: string; harness: string; ref: string }[] = JSON.parse(flag("matrix") ?? process.env.MATRIX ?? "[]")
+  const { recipe, matrix: planned } = readPlan()
   mkdirSync(path.join(root, "status"), { recursive: true })
   // What happened, per harness, for the commit message.
   const report = new Map<string, { ref: string; bumped: string[]; broken: string[]; unchecked: string[]; recipe?: string }>()
@@ -523,6 +571,6 @@ if (cmd === "plan") await plan()
 else if (cmd === "apply") await apply()
 else if (cmd === "verify") await verify()
 else {
-  console.error("usage: release-watch plan [--harness <id>] [--ref <tag>] [--retest] | apply <results-dir> [--recipe <json>] [--issues] | verify <harness> <ref>   (--registry <dir> to run against another checkout)")
+  console.error("usage: release-watch plan [--harness <id>] [--ref <tag>] [--retest] [--plan <file>] | apply <results-dir> [--plan <file> | --recipe <json> --matrix <json>] [--issues] | verify <harness> <ref>   (--registry <dir> to run against another checkout)")
   process.exit(1)
 }
