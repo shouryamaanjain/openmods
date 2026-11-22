@@ -2212,7 +2212,7 @@ index ee2ce0196abadc0954c0275010928d21fc314d31..d2c88c7e1de0eea392b16addc8566c23
      const root = createRoot();
      const gateway = startFakeGateway([
 diff --git a/tests/e2e/conditional-guidance-oracle.ts b/tests/e2e/conditional-guidance-oracle.ts
-index fd6158c1c55828ac953aee3c6ace8a0d4a068813..65d250a1dd3657fd5fcb655823fe29f5ee501ff9 100644
+index fd6158c1c55828ac953aee3c6ace8a0d4a068813..e1c54298cf49538d296045554c1d142af326bdc4 100644
 --- a/tests/e2e/conditional-guidance-oracle.ts
 +++ b/tests/e2e/conditional-guidance-oracle.ts
 @@ -2,6 +2,8 @@ export const CANONICAL_BUILTIN_NAMES = [
@@ -2224,7 +2224,16 @@ index fd6158c1c55828ac953aee3c6ace8a0d4a068813..65d250a1dd3657fd5fcb655823fe29f5
    "edit_file",
    "write_file",
    "shell",
-@@ -46,6 +48,8 @@ export const READ_ONLY_SERIALIZED_TOOL_NAMES = [
+@@ -26,6 +28,8 @@ export const DEFAULT_SERIALIZED_BUILTIN_NAMES = [
+   "read_file",
+   "glob_files",
+   "grep_files",
++  "session_history_search",
++  "session_history_read",
+   "edit_file",
+   "write_file",
+   "shell",
+@@ -46,6 +50,8 @@ export const READ_ONLY_SERIALIZED_TOOL_NAMES = [
    "read_file",
    "glob_files",
    "grep_files",
@@ -2233,7 +2242,7 @@ index fd6158c1c55828ac953aee3c6ace8a0d4a068813..65d250a1dd3657fd5fcb655823fe29f5
  ] as const;
  
  export const VERIFY_SERIALIZED_TOOL_NAMES = [
-@@ -67,7 +71,9 @@ export const AUTO_EXA_SERIALIZED_TOOL_NAMES = DEFAULT_SERIALIZED_BUILTIN_NAMES.m
+@@ -67,7 +73,9 @@ export const AUTO_EXA_SERIALIZED_TOOL_NAMES = DEFAULT_SERIALIZED_BUILTIN_NAMES.m
  // shell actions remain available without a session store.
  export const AUTO_EXA_WITHOUT_DURABLE_TOOLS_SERIALIZED_TOOL_NAMES =
    AUTO_EXA_SERIALIZED_TOOL_NAMES.filter((name) =>
