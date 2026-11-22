@@ -1,6 +1,7 @@
 {
-  "tested": "v2.0.24",
+  "tested": "v2.3.2",
   "supports": "v2.0.24",
-  "ok": true,
-  "checked": "2026-10-06T03:31:45.993Z"
+  "ok": false,
+  "error": "error: Failed to merge in the changes.\nhint: Use 'git am --show-current-patch=diff' to see the failed patch\nhint: When you have resolved this problem, run \"git am --continue\".\nhint: If you prefer to skip this patch, run \"git am --skip\" instead.\nhint: To restore the original branch and stop patching, run \"git am --abort\".\nhint: Disable this message with \"git config set advice.mergeConflict false\"\nPatch failed at 0001 feat(core): add project-scoped session history tools",
+  "checked": "2026-11-22T00:39:40.437Z"
 }
