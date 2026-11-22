@@ -2,6 +2,15 @@
   "$schema": "../../../../schema/support.schema.json",
   "versions": [
     {
+      "ref": "v0.0.17",
+      "commit": "d1d4a883382daf8f2e7447dc361978312cf403d2",
+      "patches": [
+        "v0.0.17/0001-feat-session-add-project-scoped-session-history-tool.patch"
+      ],
+      "update": 2,
+      "note": "Works on fx 0.0.17: the same two tools, moved onto its v2 session store, argument decoder and tool placement"
+    },
+    {
       "ref": "v0.0.12",
       "commit": "4c83d5e23c427790cef64d7e6e008ed25d3fe070",
       "patches": [

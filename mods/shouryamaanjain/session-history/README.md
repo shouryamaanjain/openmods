@@ -22,7 +22,7 @@ The tools have the same names, parameters, descriptions and search and record fo
 
 ## What it changes
 
-OpenCode (2.0.22):
+OpenCode (2.3.2):
 
 | file | change |
 | --- | --- |
@@ -40,12 +40,12 @@ Codex CLI (0.160.0):
 | `codex-rs/core/src/tools/handlers/session_history/*_tests.rs`, `core/tests/suite/session_history.rs` | New. Tests, including a mocked model calling both tools. |
 | `codex-rs/core/tests/suite/*` and their snapshots | Tool lists now include them. |
 
-fx (0.0.12):
+fx (0.0.17):
 
 | file | change |
 | --- | --- |
 | `src/core/session/session_history_query.zig`, `session_history_provider.zig`, `src/tools/session/session_history.zig` | New. The tools, from fx#534. |
-| `src/builtins/tools.zig`, `src/core/tooling/*`, `src/core/agent/runtime/parallel_execution.zig`, `src/core/app/app_agent_runtime.zig`, `src/core/cli/cli_ask.zig`, `src/acp/prompt.zig`, `src/main.zig` | Registers them where a session is saved. |
+| `src/builtins/tools.zig`, `src/core/tooling/*`, `src/core/config/tool_placement.zig`, `src/core/agent/runtime/parallel_execution.zig`, `src/core/app/app_agent_runtime.zig`, `src/core/cli/cli_ask.zig`, `src/acp/prompt.zig`, `src/main.zig` | Registers them where a session is saved, and lets `tool_placement` move them like fx's other built-in tools. |
 | `src/core/shared/lexical_relevance.zig`, `src/core/session/session.zig` | Scoring shared with fx's other searches. |
 | `tests/e2e/*`, `README.md` | Tests and fx's own docs. |
 
