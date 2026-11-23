@@ -1,5 +1,5 @@
 {
-  "tested": "v2.4.0",
+  "tested": "v2.4.1",
   "from": "v2.3.2",
   "recipe": "changed",
   "changes": [
@@ -22,5 +22,5 @@
     "packages/cli/script/build.ts: +    entrypoints: [\"./src/index.ts\", \"./src/photon-worker.ts\", \"./src/claude-folder-worker.ts\"],",
     "packages/cli/script/build.ts: +      irohBindingPlugin,"
   ],
-  "checked": "2026-11-23T09:20:15.509Z"
+  "checked": "2026-11-23T16:14:59.297Z"
 }
