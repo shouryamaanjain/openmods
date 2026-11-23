@@ -1,6 +1,26 @@
 {
-  "tested": "v2.3.2",
-  "from": "v2.0.24",
-  "recipe": "unchanged",
-  "checked": "2026-11-22T00:39:35.762Z"
+  "tested": "v2.4.0",
+  "from": "v2.3.2",
+  "recipe": "changed",
+  "changes": [
+    "packages/cli/script/build.ts: +  // The machine link's Iroh binding: this target's native package is embedded, and a target with none (Intel Macs)",
+    "packages/cli/script/build.ts: +  // gets `undefined`, which the server takes as Iroh being unavailable.",
+    "packages/cli/script/build.ts: +  const irohPackage =",
+    "packages/cli/script/build.ts: +    item.os === \"darwin\" && item.arch === \"x64\"",
+    "packages/cli/script/build.ts: +      ? undefined",
+    "packages/cli/script/build.ts: +      : `@number0/iroh-${item.os}-${item.arch}${item.os === \"linux\" ? `-${item.abi === \"musl\" ? \"musl\" : \"gnu\"}` : item.os === \"win32\" ? \"-msvc\" : \"\"}`",
+    "packages/cli/script/build.ts: +  const irohBindingPlugin: BunPlugin = {",
+    "packages/cli/script/build.ts: +    name: \"iroh-binding\",",
+    "packages/cli/script/build.ts: +    setup(build) {",
+    "packages/cli/script/build.ts: +      build.onLoad({ filter: /machine[/\\\\]iroh-binding\\.ts$/ }, () => ({",
+    "packages/cli/script/build.ts: +        contents: `export default async () => ${irohPackage ? `require(${JSON.stringify(irohPackage)})` : \"undefined\"}`,",
+    "packages/cli/script/build.ts: +        loader: \"js\",",
+    "packages/cli/script/build.ts: +      }))",
+    "packages/cli/script/build.ts: +    },",
+    "packages/cli/script/build.ts: +  }",
+    "packages/cli/script/build.ts: -    entrypoints: [\"./src/index.ts\", \"./src/photon-worker.ts\"],",
+    "packages/cli/script/build.ts: +    entrypoints: [\"./src/index.ts\", \"./src/photon-worker.ts\", \"./src/claude-folder-worker.ts\"],",
+    "packages/cli/script/build.ts: +      irohBindingPlugin,"
+  ],
+  "checked": "2026-11-23T09:20:15.509Z"
 }
