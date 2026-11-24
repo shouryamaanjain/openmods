@@ -1,5 +1,5 @@
 {
-  "tested": "rust-v0.171.0",
+  "tested": "rust-v0.172.0",
   "from": "rust-v0.162.1",
   "recipe": "changed",
   "changes": [
@@ -100,5 +100,5 @@
     "scripts/codex_package/cargo.py: +        binaries.append(\"codex-exec-server\")",
     "scripts/codex_package/cargo.py: +        outputs.exec_server_bin,"
   ],
-  "checked": "2026-11-21T17:11:48.158Z"
+  "checked": "2026-11-24T00:32:08.370Z"
 }
