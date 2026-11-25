@@ -1,6 +1,12 @@
 {
-  "tested": "v0.0.17",
-  "from": "v0.0.12",
-  "recipe": "unchanged",
-  "checked": "2026-11-22T00:39:40.023Z"
+  "tested": "v0.0.18",
+  "from": "v0.0.17",
+  "recipe": "changed",
+  "changes": [
+    "build.zig.zon: -    .minimum_zig_version = \"0.17.0\",",
+    "build.zig.zon: +    .minimum_zig_version = \"0.17.1\",",
+    ".github/workflows/release.yml: -version: \"0.17.0\"",
+    ".github/workflows/release.yml: +version: \"0.17.1\""
+  ],
+  "checked": "2026-11-25T17:12:17.589Z"
 }
